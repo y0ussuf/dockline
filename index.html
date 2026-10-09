@@ -3886,12 +3886,15 @@ async function exportOrderExcel(orderId){
    in local variables for the lifetime of this screen. Re-uses the same header-detection and
    product-matching logic as a normal order import (locateOrderHeaderRow, matchExcelRow) so
    it recognizes the file the same way picking does, but keeps its own separate flow. */
-function exportSplitterExcel(groups, sourceLabel){
+function exportSplitterExcel(groups, sourceLabel, sourceCode){
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Dockline';
   wb.created = new Date();
   const ws = wb.addWorksheet('Order by warehouse');
-  ws.columns = [{width:7},{width:52},{width:12},{width:14}];
+  ws.columns = [{width:8},{width:52},{width:12},{width:14}];
+  // Sr./Qty/Unit read as short numbers-and-labels, so centering them makes the sheet scannable;
+  // Description stays left-aligned since it's the one column people actually read line by line.
+  const CENTER_COLS = [1,3,4];
 
   if(sourceLabel){
     const r = ws.addRow([sourceLabel]);
@@ -3909,18 +3912,21 @@ function exportSplitterExcel(groups, sourceLabel){
     hc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF1B6B93'}};
     hc.alignment = {vertical:'middle', horizontal:'left', indent:1};
 
-    const colRow = ws.addRow(['No.','Description','Qty','Unit']);
-    colRow.eachCell(cc=>{
+    const colRow = ws.addRow(['Sr.','Description','Qty','Unit']);
+    colRow.eachCell((cc,colNum)=>{
       cc.font = {bold:true, color:{argb:'FF12202B'}};
       cc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFEDEAE1'}};
       cc.border = {bottom:{style:'thin', color:{argb:'FFDBD6C9'}}};
+      cc.alignment = {vertical:'middle', horizontal: CENTER_COLS.includes(colNum) ? 'center' : 'left'};
     });
 
-    g.items.forEach((item,i)=>{
-      const row = ws.addRow([i+1, item.desc, item.qty, item.unit]);
-      row.eachCell({includeEmpty:true}, cc=>{
+    g.items.forEach(item=>{
+      // the sheet's own Sr. number (e.g. 75), not a per-warehouse recount — so it still matches
+      // the original uploaded order when someone's cross-checking the two side by side
+      const row = ws.addRow([item.sr || '', item.desc, item.qty, item.unit]);
+      row.eachCell({includeEmpty:true}, (cc,colNum)=>{
         cc.border = {bottom:{style:'hair', color:{argb:'FFEDEAE1'}}};
-        cc.alignment = {vertical:'middle'};
+        cc.alignment = {vertical:'middle', horizontal: CENTER_COLS.includes(colNum) ? 'center' : 'left'};
       });
     });
     ws.addRow([]);
@@ -3928,8 +3934,8 @@ function exportSplitterExcel(groups, sourceLabel){
 
   return wb.xlsx.writeBuffer().then(buffer=>{
     const blob = new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-    const fname = (sourceLabel || 'order').trim().replace(/[^a-z0-9\-_]+/ig,'_').slice(0,60) || 'order';
-    return saveFile(`${fname}-by-warehouse.xlsx`, blob);
+    const base = (sourceCode || sourceLabel || 'order').trim().replace(/[^a-z0-9\-_]+/ig,'_').slice(0,60) || 'order';
+    return saveFile(`${base}-split.xlsx`, blob);
   });
 }
 
@@ -3938,7 +3944,8 @@ route('splitter', async ()=>{
   const whById = Object.fromEntries(warehouses.map(w=>[w.id,w]));
 
   let fileRows = null;           // null until a file's been processed; else array of {id, sr, desc, qty, unit, productId, warehouseId}
-  let sourceLabel = '';          // vessel/order code pulled from the sheet, used for the export title & filename
+  let sourceLabel = '';          // vessel + order code pulled from the sheet, shown as the title inside the export
+  let sourceCode = '';           // just the order code (e.g. "AMR-ALL-6") — used for the exported file's name
   let includedWarehouses = new Set(); // group ids (warehouse id, or 'unassigned') currently checked for export
 
   function groupRows(){
@@ -3964,6 +3971,7 @@ route('splitter', async ()=>{
     if(!headerInfo){ showAlert('Could not find a "Description" column anywhere in the first rows of this file — please check the file format.'); return false; }
     const fromSheet = extractVesselAndCodeFromSheet(aoa, headerInfo.rowIndex);
     sourceLabel = fromSheet ? [fromSheet.vessel, fromSheet.code].filter(Boolean).join(' · ') : '';
+    sourceCode = fromSheet ? (fromSheet.code || '') : '';
     const { kSr, kDesc, kQty, kUnit } = headerInfo;
     const dataRows = aoa.slice(headerInfo.rowIndex+1);
 
@@ -4059,13 +4067,13 @@ route('splitter', async ()=>{
       if(cb.checked) includedWarehouses.add(cb.dataset.gid); else includedWarehouses.delete(cb.dataset.gid);
     });
 
-    $('#sp_reset').onclick = ()=>{ fileRows=null; sourceLabel=''; includedWarehouses=new Set(); draw(); };
+    $('#sp_reset').onclick = ()=>{ fileRows=null; sourceLabel=''; sourceCode=''; includedWarehouses=new Set(); draw(); };
     $('#sp_export').onclick = async ()=>{
       const chosen = groups.filter(g=>includedWarehouses.has(g.id));
       if(!chosen.length){ showAlert('Choose at least one warehouse to export.'); return; }
       const btn = $('#sp_export');
       btn.disabled = true; btn.textContent = 'Exporting…';
-      await exportSplitterExcel(chosen, sourceLabel);
+      await exportSplitterExcel(chosen, sourceLabel, sourceCode);
       btn.disabled = false; btn.textContent = '⬇ Export selected to Excel';
     };
   }
