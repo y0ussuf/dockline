@@ -197,7 +197,7 @@ textarea{resize:vertical; min-height:70px;}
 .cand-list{display:flex; flex-direction:column; gap:6px; margin-top:10px;}
 .cand-btn{text-align:left; padding:9px 12px; border-radius:8px; border:1.5px solid var(--line); background:var(--paper); font-weight:600; font-size:.9rem;}
 .cand-btn:hover{border-color:var(--sea);}
-/* ---- site password gate (deterrent only — see SITE_PASSWORD below for why) ---- */
+/* ---- login gate (real Supabase accounts — see the LOGIN section in the script) ---- */
 #authGate{position:fixed; inset:0; z-index:9999; background:var(--paper); display:flex; align-items:center; justify-content:center; padding:20px;}
 #authGate.hidden{display:none;}
 body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, body.locked #modal-root{display:none !important;}
@@ -210,10 +210,12 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 <div id="authGate" class="hidden">
   <div class="authbox">
     <div class="brand">Dock<span>line</span></div>
-    <p class="subtle" style="margin-top:0;">This tool is for the crew only — enter the password to continue.</p>
-    <div class="field"><input type="password" id="authPw" placeholder="Password" autocomplete="off"></div>
-    <p id="authErr" class="subtle" style="color:var(--danger); display:none; margin-top:-8px;">Wrong password — try again.</p>
-    <button class="btn btn-signal btn-lg" id="authSubmit" style="width:100%; margin-top:6px;">Enter</button>
+    <p class="subtle" style="margin-top:0;">Log in with the account your admin set up for you.</p>
+    <div class="field"><label>Email</label><input type="email" id="authEmail" placeholder="you@example.com" autocomplete="username"></div>
+    <div class="field"><label>Password</label><input type="password" id="authPw" placeholder="Password" autocomplete="current-password"></div>
+    <p id="authErr" class="subtle" style="color:var(--danger); display:none; margin-top:-8px;">Wrong email or password — try again.</p>
+    <button class="btn btn-signal btn-lg" id="authSubmit" style="width:100%; margin-top:6px;">Log in</button>
+    <p class="subtle" style="margin-top:14px; margin-bottom:0;">No account yet? Ask your admin to create one for you — this app doesn't let anyone sign themselves up.</p>
   </div>
 </div>
 <div id="mobileTopbar">
@@ -243,46 +245,6 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
    Core workflow build: Products / Warehouses & Sections / Excel Import
    + Matching / Sorting / Picking Mode. Data is local-first (IndexedDB).
    ====================================================================== */
-
-/* ---------------------------------- access ----------------------------------
-   A deterrent, not real security: this just stops a random person who stumbles
-   onto the link from opening the app. Anyone who views this page's source can
-   read SITE_PASSWORD in plain text, same as anyone determined enough can get
-   past any client-side-only password screen — so don't rely on this alone for
-   anything truly sensitive. Change the password any time by editing the line
-   below and re-publishing. Once someone's entered it correctly on a device, it
-   stays unlocked on that device (doesn't ask again) until "Lock this device"
-   is used from Home, or the browser's site data is cleared. */
-const SITE_PASSWORD = 'dockline2026'; // ← change this to whatever you like
-function isUnlocked(){
-  try{ return localStorage.getItem('dockline_auth')==='ok'; }catch(e){ return false; }
-}
-function lockThisDevice(){
-  try{ localStorage.removeItem('dockline_auth'); }catch(e){}
-  location.reload();
-}
-function showAuthGate(onSuccess){
-  document.body.classList.add('locked');
-  const gate = document.getElementById('authGate');
-  gate.classList.remove('hidden');
-  const pwInput = document.getElementById('authPw');
-  const err = document.getElementById('authErr');
-  function tryLogin(){
-    if(pwInput.value === SITE_PASSWORD){
-      try{ localStorage.setItem('dockline_auth','ok'); }catch(e){}
-      document.body.classList.remove('locked');
-      gate.classList.add('hidden');
-      onSuccess();
-    } else {
-      err.style.display = 'block';
-      pwInput.value = '';
-      pwInput.focus();
-    }
-  }
-  document.getElementById('authSubmit').onclick = tryLogin;
-  pwInput.onkeydown = e=>{ if(e.key==='Enter') tryLogin(); };
-  pwInput.focus();
-}
 
 /* ---------------------------- tiny utils ---------------------------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -581,7 +543,11 @@ async function getSyncConfig(){ return await getOne('settings','syncConfig'); }
 async function setSyncConfig(cfg){ await rawPut('settings', Object.assign({id:'syncConfig'}, cfg)); }
 async function getSyncStatus(){ return await getOne('settings','syncStatus') || {}; }
 function syncHeaders(cfg){
-  return {'Content-Type':'application/json', 'apikey':cfg.key, 'Authorization':'Bearer '+cfg.key};
+  // apikey is always the project's public key (required by Supabase's gateway); once someone's
+  // logged in, Authorization carries THEIR token instead, so row-level-security policies can see
+  // who's actually making the request (auth.uid()/auth.jwt()), not just "someone with the key".
+  const token = (AUTH && AUTH.access_token) || cfg.key;
+  return {'Content-Type':'application/json', 'apikey':cfg.key, 'Authorization':'Bearer '+token};
 }
 function syncBaseUrl(cfg){ return cfg.url.replace(/\/+$/,''); }
 
@@ -602,6 +568,7 @@ async function pushChanges(cfg){
       method:'POST', headers:Object.assign(syncHeaders(cfg),{'Prefer':'resolution=merge-duplicates,return=minimal'}),
       body: JSON.stringify([body])
     });
+    if(res.status===401){ const e=new Error('unauthorized'); e.code='unauthorized'; throw e; }
     if(!res.ok) throw new Error('push failed: HTTP '+res.status);
     await rawDel('syncQueue', q.key);
     await rawPut('syncMeta', {key:q.key, store:q.store, id:q.id, updatedAt:now});
@@ -616,6 +583,7 @@ async function pullChanges(cfg){
   while(true){
     const url = syncBaseUrl(cfg)+'/records?updated_at=gt.'+encodeURIComponent(cursor)+'&order=updated_at.asc&limit=500';
     const res = await fetch(url, {headers:syncHeaders(cfg)});
+    if(res.status===401){ const e=new Error('unauthorized'); e.code='unauthorized'; throw e; }
     if(!res.ok) throw new Error('pull failed: HTTP '+res.status);
     const rows = await res.json();
     if(!rows.length) break;
@@ -646,11 +614,21 @@ async function syncNow(){
   syncInFlight = true;
   renderSyncIndicator('syncing');
   try{
+    const fresh = await ensureFreshSession(); // keeps the access token from going stale on a long-open tab
+    if(fresh) AUTH = fresh;
     await pushChanges(cfg);
     await pullChanges(cfg);
     await rawPut('settings', {id:'syncStatus', lastSyncedAt:new Date().toISOString(), ok:true, error:null});
     renderSyncIndicator('ok');
   }catch(e){
+    if(e && e.code==='unauthorized'){
+      // the session's been revoked or genuinely expired (refresh didn't save it) — rather than
+      // spin forever on sync errors, send them back to the login screen to re-establish it
+      await clearAuthSession();
+      syncInFlight = false;
+      location.reload();
+      return;
+    }
     await rawPut('settings', {id:'syncStatus', lastSyncedAt:(await getSyncStatus()).lastSyncedAt||null, ok:false, error:String(e.message||e)});
     renderSyncIndicator('error');
   }finally{
@@ -680,6 +658,130 @@ async function renderSyncIndicator(liveState){
   else if(status.lastSyncedAt){ dot='#2E7D4F'; label='Synced · last '+new Date(status.lastSyncedAt).toLocaleTimeString(); }
   else{ dot='#B8860B'; label='Not synced yet'; }
   el.innerHTML = `<span style="display:inline-flex; align-items:center; gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span>${label}</span>${pendingCount?` <span class="subtle">· ${pendingCount} change${pendingCount===1?'':'s'} waiting to send</span>`:''}`;
+}
+
+/* ==================================== LOGIN (Supabase Auth) ====================================
+   Real per-person accounts, replacing the old shared-password screen. Nobody can sign themselves
+   up from inside this app — accounts only exist because an admin created them from the Supabase
+   dashboard (Authentication → Users → Add user), so "who's allowed in" is controlled entirely
+   there, same spirit as before but for real this time.
+
+   Role (admin vs staff) lives in that Supabase user's app_metadata — deliberately NOT in
+   user_metadata, because user_metadata can be changed by the signed-in user themselves through
+   the API, which would let a staff account quietly promote itself. app_metadata can only be
+   changed by an admin from the Supabase dashboard, so a staff account can never touch its own
+   role. Set it there as: {"role": "admin"} — anyone without that is treated as regular staff.
+
+   The session (access token + refresh token) is kept in IndexedDB so a device stays logged in
+   across visits; "Log out" from Home clears it. The access token is short-lived (Supabase
+   defaults to ~1 hour) — it's refreshed automatically on every sync tick and re-checked at
+   startup, so a crew member basically never has to re-enter their password day to day. ==== */
+let AUTH = null; // {access_token, refresh_token, expires_at, email, role} once logged in, else null
+
+function authBaseUrl(cfg){ return cfg.url.replace(/\/rest\/v1\/?$/,'').replace(/\/+$/,''); }
+
+// Supabase's JWT carries app_metadata right in the token itself, so the role can be read
+// straight out of it client-side — no extra network call needed just to find out who's an admin.
+function decodeJwt(token){
+  try{
+    const payload = token.split('.')[1];
+    const json = decodeURIComponent(atob(payload.replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>
+      '%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)
+    ).join(''));
+    return JSON.parse(json);
+  }catch(e){ return null; }
+}
+function sessionFromTokenResponse(tok){
+  const claims = decodeJwt(tok.access_token) || {};
+  const appMeta = claims.app_metadata || {};
+  return {
+    access_token: tok.access_token,
+    refresh_token: tok.refresh_token,
+    expires_at: Date.now() + (tok.expires_in||3600)*1000,
+    email: claims.email || (tok.user && tok.user.email) || '',
+    role: appMeta.role==='admin' ? 'admin' : 'staff'
+  };
+}
+async function getAuthSession(){ return await getOne('settings','authSession'); }
+async function setAuthSession(sess){ await rawPut('settings', Object.assign({id:'authSession'}, sess)); return sess; }
+async function clearAuthSession(){ await rawDel('settings','authSession'); AUTH=null; }
+
+async function authLogin(email, password){
+  const cfg = await getSyncConfig();
+  if(!cfg || !cfg.url || !cfg.key) throw new Error("Sync isn't set up on this device yet — see Home → Crew sync.");
+  const res = await fetch(authBaseUrl(cfg)+'/auth/v1/token?grant_type=password', {
+    method:'POST',
+    headers:{'Content-Type':'application/json', 'apikey':cfg.key},
+    body: JSON.stringify({email, password})
+  });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error_description || data.msg || data.error || 'Wrong email or password.');
+  const sess = await setAuthSession(sessionFromTokenResponse(data));
+  AUTH = sess;
+  return sess;
+}
+async function authRefresh(){
+  const cfg = await getSyncConfig();
+  const sess = await getAuthSession();
+  if(!cfg || !sess || !sess.refresh_token) return null;
+  try{
+    const res = await fetch(authBaseUrl(cfg)+'/auth/v1/token?grant_type=refresh_token', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'apikey':cfg.key},
+      body: JSON.stringify({refresh_token: sess.refresh_token})
+    });
+    if(!res.ok) return null;
+    const data = await res.json();
+    const newSess = await setAuthSession(sessionFromTokenResponse(data));
+    AUTH = newSess;
+    return newSess;
+  }catch(e){ return null; } // offline, most likely — keep using the still-current token until it's reachable again
+}
+async function ensureFreshSession(){
+  let sess = await getAuthSession();
+  if(!sess) return null;
+  if(sess.expires_at - Date.now() < 5*60*1000){ // refresh a bit before it actually expires
+    const refreshed = await authRefresh();
+    if(refreshed) sess = refreshed;
+  }
+  AUTH = sess;
+  return sess;
+}
+function isAdmin(){ return !!(AUTH && AUTH.role==='admin'); }
+
+function showAuthGate(onSuccess){
+  document.body.classList.add('locked');
+  const gate = document.getElementById('authGate');
+  gate.classList.remove('hidden');
+  const emailInput = document.getElementById('authEmail');
+  const pwInput = document.getElementById('authPw');
+  const err = document.getElementById('authErr');
+  const btn = document.getElementById('authSubmit');
+  async function tryLogin(){
+    err.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Logging in…';
+    try{
+      await authLogin(emailInput.value.trim(), pwInput.value);
+      document.body.classList.remove('locked');
+      gate.classList.add('hidden');
+      onSuccess();
+    }catch(e){
+      err.textContent = e.message || 'Wrong email or password — try again.';
+      err.style.display = 'block';
+      pwInput.value = '';
+      pwInput.focus();
+    }finally{
+      btn.disabled = false; btn.textContent = 'Log in';
+    }
+  }
+  btn.onclick = tryLogin;
+  pwInput.onkeydown = e=>{ if(e.key==='Enter') tryLogin(); };
+  emailInput.onkeydown = e=>{ if(e.key==='Enter') pwInput.focus(); };
+  emailInput.focus();
+}
+async function logOut(){
+  await clearAuthSession();
+  location.reload();
 }
 
 /* ------------------------------ seed data ----------------------------- */
@@ -977,28 +1079,29 @@ route('home', async ()=>{
         </div>`).join('') : `<div class="empty"><div class="ic">🚢</div>No orders yet. Start with “+ New Order”.</div>`}
     </div>
     <div class="card" style="margin-top:24px;">
+      <div class="section-title">Account</div>
+      <p class="subtle">Logged in as <b>${esc(AUTH ? AUTH.email : '')}</b> ${isAdmin()?'<span class="badge b-completed">admin</span>':'<span class="badge b-pending">staff</span>'}</p>
+      <button class="btn btn-ghost btn-sm" id="doLogout" style="margin-top:4px;">Log out</button>
+    </div>
+    <div class="card" style="margin-top:24px;">
       <div class="section-title">Backup &amp; restore</div>
       <p class="subtle">Everything lives on this device, whether or not crew sync (below) is on. Download a backup before updating the app or trying something new, and keep the file somewhere safe.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
         <button class="btn btn-signal btn-sm" id="doBackup">⬇ Download backup</button>
-        <label class="btn btn-ghost btn-sm" style="cursor:pointer;">⬆ Restore from backup<input type="file" id="restoreFile" accept=".json" style="display:none;"></label>
+        ${isAdmin() ? `<label class="btn btn-ghost btn-sm" style="cursor:pointer;">⬆ Restore from backup<input type="file" id="restoreFile" accept=".json" style="display:none;"></label>` : `<span class="subtle">Restoring a backup is admin-only — it overwrites everything on this device.</span>`}
       </div>
-    </div>
-    <div class="card" style="margin-top:24px;">
-      <div class="section-title">Access</div>
-      <p class="subtle">This device stays unlocked once the password's been entered. Lock it again before handing the device to someone else, or if you just want to double-check the password screen still works.</p>
-      <button class="btn btn-ghost btn-sm" id="doLock" style="margin-top:12px;">🔒 Lock this device</button>
     </div>
     <div class="card" style="margin-top:24px;" id="syncCard">
       <div class="section-title">Crew sync</div>
       <p class="subtle">Share one live set of products, warehouses and orders with the rest of the crew. Everything still works with no signal — changes made offline send themselves as soon as a connection comes back.</p>
       <p id="syncIndicator" style="margin:12px 0;"></p>
       <div class="field"><label>Your name (shown as who made each change)</label><input type="text" id="syncCrewName" placeholder="e.g. Ahmed" value="${esc(syncCfgCache.crewName||'')}"></div>
+      ${isAdmin() ? `
       <details ${syncCfgCache.url?'':'open'}>
         <summary class="subtle" style="cursor:pointer; margin-bottom:10px;">Connection details</summary>
         <div class="field"><label>Supabase project URL</label><input type="text" id="syncUrl" placeholder="https://xxxx.supabase.co/rest/v1" value="${esc(syncCfgCache.url||'')}"></div>
         <div class="field"><label>Supabase API key</label><input type="text" id="syncKey" placeholder="sb_publishable_…" value="${esc(syncCfgCache.key||'')}"></div>
-      </details>
+      </details>` : ''}
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn btn-signal btn-sm" id="syncSave">Save &amp; sync now</button>
         ${syncCfgCache.url?'<button class="btn btn-ghost btn-sm" id="syncOff">Turn off sync on this device</button>':''}
@@ -1016,13 +1119,13 @@ route('home', async ()=>{
       </div>
     </div>`;
   $('#doBackup').onclick = downloadBackup;
-  $('#restoreFile').onchange = e=>{
+  if($('#restoreFile')) $('#restoreFile').onchange = e=>{
     const file = e.target.files[0];
     if(file) restoreBackupFile(file);
     e.target.value = '';
   };
-  $('#doLock').onclick = ()=>{
-    showConfirm('Lock this device? You\'ll need the password again to get back in.', lockThisDevice);
+  $('#doLogout').onclick = ()=>{
+    showConfirm("Log out? You'll need your password again to get back in.", logOut);
   };
   $('#themeSwatches').querySelectorAll('[data-color]').forEach(b=>b.onclick=async ()=>{
     await saveAccent(b.dataset.color);
@@ -1039,10 +1142,13 @@ route('home', async ()=>{
   };
   renderSyncIndicator();
   $('#syncSave').onclick = async ()=>{
-    const url = $('#syncUrl').value.trim();
-    const key = $('#syncKey').value.trim();
     const crewName = $('#syncCrewName').value.trim();
-    if(!url || !key){ showAlert('Enter both the project URL and the API key — your crew admin can give you these once.'); return; }
+    let url = syncCfgCache.url, key = syncCfgCache.key;
+    if($('#syncUrl') && $('#syncKey')){ // only present for admins — staff can't see or change the connection itself
+      url = $('#syncUrl').value.trim();
+      key = $('#syncKey').value.trim();
+      if(!url || !key){ showAlert('Enter both the project URL and the API key.'); return; }
+    }
     await setSyncConfig({url, key, crewName});
     startSyncLoop();
     routes['home']([]);
@@ -1424,9 +1530,10 @@ route('warehouses', async ()=>{
   warehouses.sort((a,b)=>a.priority-b.priority);
 
   function render(){
+    const admin = isAdmin();
     $('#main').innerHTML = `
-      <div class="topbar"><h1>Warehouses</h1><button class="btn btn-signal" id="addWh">+ Add warehouse</button></div>
-      <p class="subtle" style="margin-top:-10px; margin-bottom:18px;">Drag ⠿ to reorder. Warehouse order and section order set the picking sequence.</p>
+      <div class="topbar"><h1>Warehouses</h1>${admin?'<button class="btn btn-signal" id="addWh">+ Add warehouse</button>':''}</div>
+      <p class="subtle" style="margin-top:-10px; margin-bottom:18px;">Drag ⠿ to reorder. Warehouse order and section order set the picking sequence.${admin?'':' Adding, renaming or deleting warehouses/sections is admin-only — ask your admin if something here needs to change.'}</p>
       <div id="whList"></div>`;
     const list = $('#whList');
     list.innerHTML = warehouses.map(w=>{
@@ -1437,8 +1544,7 @@ route('warehouses', async ()=>{
           <div style="flex:1;"><b style="font-family:var(--font-d); font-size:1.05rem;">${esc(w.name)}</b>
             <div class="subtle">${secs.length} section${secs.length===1?'':'s'} · ${products.filter(p=>p.warehouseId===w.id).length} products</div>
           </div>
-          <button class="iconbtn" data-editwh="${w.id}">✎</button>
-          <button class="iconbtn" data-delwh="${w.id}">✕</button>
+          ${admin ? `<button class="iconbtn" data-editwh="${w.id}">✎</button><button class="iconbtn" data-delwh="${w.id}">✕</button>` : ''}
         </div>
         <div data-sec-sortable="${w.id}" style="padding-left:8px; border-left:2px solid var(--line);">
         ${secs.map(s=>{
@@ -1448,8 +1554,7 @@ route('warehouses', async ()=>{
             <div class="list-row">
               <span class="drag-handle">⠿</span>
               <div style="flex:1; cursor:pointer;" data-togglesec="${s.id}">${esc(s.name)}<span class="subtle"> · ${secProducts.length} product${secProducts.length===1?'':'s'}</span></div>
-              <button class="iconbtn" data-editsec="${s.id}">✎</button>
-              <button class="iconbtn" data-delsec="${s.id}">✕</button>
+              ${admin ? `<button class="iconbtn" data-editsec="${s.id}">✎</button><button class="iconbtn" data-delsec="${s.id}">✕</button>` : ''}
             </div>
             ${expanded ? `
               <div style="padding:2px 0 12px 44px;">
@@ -1478,7 +1583,7 @@ route('warehouses', async ()=>{
           </div>`;
         }).join('') || `<div class="subtle" style="padding:10px 0;">No sections yet.</div>`}
         </div>
-        <button class="btn btn-ghost btn-sm" data-addsec="${w.id}" style="margin-top:10px;">+ Add section</button>
+        ${admin ? `<button class="btn btn-ghost btn-sm" data-addsec="${w.id}" style="margin-top:10px;">+ Add section</button>` : ''}
       </div>`;
     }).join('');
 
@@ -1572,8 +1677,6 @@ route('warehouses', async ()=>{
   }
   window.closeModal = closeModal;
   $('#main').innerHTML=''; render();
-  $('#addWh').onclick = ()=>{}; // placeholder, reattached below
-  document.addEventListener('click', function attach(e){}, {once:true});
   $('#main').querySelector('#addWh')?.addEventListener('click', ()=>whForm(null));
 });
 
@@ -4032,6 +4135,7 @@ async function restoreBackupFile(file){
 
 /* ------------------------------- boot ------------------------------- */
 (async function boot(){
+  await seedSyncConfigIfEmpty(); // pre-fills the crew's shared connection so there's something to log in against
   async function startApp(){
     await seedIfEmpty();
     await seedBoxTypesIfEmpty();
@@ -4040,10 +4144,10 @@ async function restoreBackupFile(file){
     if(!location.hash) location.hash = '#/';
     render();
     compressExistingImages(); // background, non-blocking — shrinks any oversized photos already stored
-    await seedSyncConfigIfEmpty(); // pre-fills the crew's shared connection so sync works out of the box
     startSyncLoop();
   }
-  if(isUnlocked()) await startApp();
+  const sess = await ensureFreshSession();
+  if(sess){ AUTH = sess; await startApp(); }
   else showAuthGate(startApp);
 })();
 </script>
