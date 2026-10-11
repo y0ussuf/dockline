@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- asks browsers/proxies not to hold onto a stale copy of this page — not every browser
+     honors this for a direct navigation, which is why there's also an in-app update check
+     (see APP_VERSION / checkForUpdate() in the script) that catches it regardless -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Dockline — Provisioning &amp; Picking</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -204,6 +210,11 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .authbox{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:30px; max-width:360px; width:100%; box-shadow:0 10px 34px rgba(18,32,43,.14);}
 .authbox .brand{font-family:var(--font-d); font-weight:700; font-size:1.3rem; margin-bottom:6px;}
 .authbox .brand span{color:var(--signal);}
+/* ---- "a newer version is live" banner (see checkForUpdate() near boot()) ---- */
+#updateBanner{position:fixed; left:0; right:0; bottom:0; z-index:9998; display:none; justify-content:center; padding:14px env(safe-area-inset-right,14px) calc(14px + env(safe-area-inset-bottom,0px)) env(safe-area-inset-left,14px);}
+#updateBanner.show{display:flex;}
+#updateBanner .box{background:var(--ink); color:var(--paper); border-radius:12px; padding:12px 14px; display:flex; align-items:center; gap:12px; max-width:480px; width:100%; box-shadow:0 10px 30px rgba(0,0,0,.25); flex-wrap:wrap;}
+#updateBanner .box span{flex:1; font-size:.9rem; min-width:160px;}
 </style>
 </head>
 <body>
@@ -238,6 +249,7 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
   <main id="main"></main>
 </div>
 <div id="modal-root"></div>
+<div id="updateBanner"><div class="box"><span>A newer version of Dockline is available.</span><button type="button" class="btn btn-signal btn-sm" id="updateBannerReload">Reload</button><button type="button" class="btn btn-ghost btn-sm" id="updateBannerDismiss">Later</button></div></div>
 
 <script>
 /* ======================================================================
@@ -458,6 +470,10 @@ async function applyStockDeductions(items){
 }
 
 /* ------------------------------ storage ------------------------------ */
+/* Bump this string every time the app is published (date + a counter for that day is enough,
+   e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
+   the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
+const APP_VERSION = '2026-10-11.1';
 const DB_NAME='dockline_db', DB_VER=7;
 const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
@@ -4200,6 +4216,35 @@ async function restoreBackupFile(file){
   }, {danger:true, yesLabel:'Restore & overwrite'});
 }
 
+/* ---------------------------- update check ----------------------------
+   GitHub Pages (and most phone browsers on top of it) cache this file far more
+   aggressively than feels reasonable for a single HTML page with no versioned
+   filenames — the symptom is "I uploaded a new copy but the site still looks
+   old until I clear the browser's cache/data". Since there's no build step to
+   give each release its own filename, this instead re-fetches the page's own
+   HTML straight from the network (cache:'no-store' + a cache-busting query
+   string, so nothing in between can serve a stale copy of THIS request),
+   reads the APP_VERSION baked into it, and compares it to the version this
+   tab is actually running. If they differ, a small banner offers a one-tap
+   reload instead of a manual cache wipe. Runs shortly after load, again
+   whenever the tab regains focus (covers a phone left open for days), and
+   every 10 minutes while it stays open and visible. */
+async function checkForUpdate(){
+  try{
+    const url = location.pathname + '?_=' + Date.now();
+    const res = await fetch(url, {cache:'no-store'});
+    if(!res.ok) return;
+    const text = await res.text();
+    const m = text.match(/const APP_VERSION\s*=\s*'([^']+)'/);
+    if(m && m[1] && m[1] !== APP_VERSION){
+      $('#updateBanner').classList.add('show');
+    }
+  }catch(e){ /* offline or blocked — just skip this round, no harm done */ }
+}
+function reloadToLatest(){
+  location.href = location.pathname + '?_=' + Date.now();
+}
+
 /* ------------------------------- boot ------------------------------- */
 (async function boot(){
   await seedSyncConfigIfEmpty(); // pre-fills the crew's shared connection so there's something to log in against
@@ -4212,6 +4257,11 @@ async function restoreBackupFile(file){
     render();
     compressExistingImages(); // background, non-blocking — shrinks any oversized photos already stored
     startSyncLoop();
+    setTimeout(checkForUpdate, 4000);
+    setInterval(()=>{ if(document.visibilityState==='visible') checkForUpdate(); }, 10*60*1000);
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') checkForUpdate(); });
+    $('#updateBannerReload').onclick = reloadToLatest;
+    $('#updateBannerDismiss').onclick = ()=> $('#updateBanner').classList.remove('show');
   }
   const sess = await ensureFreshSession();
   if(sess){ AUTH = sess; await startApp(); }
