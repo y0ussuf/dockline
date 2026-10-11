@@ -474,7 +474,7 @@ async function applyStockDeductions(items){
 /* Bump this string every time the app is published (date + a counter for that day is enough,
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
-const APP_VERSION = '2026-10-11.2';
+const APP_VERSION = '2026-10-11.3';
 const DB_NAME='dockline_db', DB_VER=7;
 const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
@@ -3876,6 +3876,14 @@ function modNote(it){
   if(it.status==='modified') return `Ordered ${it.requestedQty} × ${it.requestedUnit} — picked ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
   if(it.status==='substituted') return `Substituted with "${it.replacementName||'—'}" — ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
   if(it.status==='not_available') return 'Not available';
+  // "completed" items can still have been converted on the spot — e.g. ordered as 10 x 100gm
+  // but the database product is kept in 200gm units, so it was auto-converted to 5 x 200gm and
+  // picked as that. That conversion was only ever shown on-screen while picking; it never made
+  // it into the exported report, which is the gap this fills.
+  if(it.status==='completed' && it.actualQty!=null && it.requestedQty!=null &&
+     (round2(it.actualQty)!==round2(it.requestedQty) || normalize(it.actualUnit)!==normalize(it.requestedUnit))){
+    return `Ordered ${it.requestedQty} × ${it.requestedUnit} — converted to ${it.actualQty} × ${it.actualUnit||''} (database unit)`;
+  }
   return '';
 }
 
