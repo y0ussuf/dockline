@@ -245,6 +245,7 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
     <a class="navlink" data-route="#/warehouse" href="#/warehouse"><span class="ic">▣</span> Warehouse Mgmt</a>
     <a class="navlink" data-route="#/suppliers" href="#/suppliers"><span class="ic">☏</span> Suppliers</a>
     <a class="navlink" data-route="#/history" href="#/history"><span class="ic">◔</span> History</a>
+    <a class="navlink" data-route="#/settings" href="#/settings"><span class="ic">⚙</span> Settings</a>
   </nav>
   <main id="main"></main>
 </div>
@@ -473,7 +474,7 @@ async function applyStockDeductions(items){
 /* Bump this string every time the app is published (date + a counter for that day is enough,
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
-const APP_VERSION = '2026-10-11.1';
+const APP_VERSION = '2026-10-11.2';
 const DB_NAME='dockline_db', DB_VER=7;
 const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
@@ -529,7 +530,7 @@ async function del(store,id){
 }
 
 /* ============================== CREW SYNC ==============================
-   Optional: if a Supabase URL + key are configured (Home → Crew sync),
+   Optional: if a Supabase URL + key are configured (Settings → Crew sync),
    every change to these tables is queued locally and pushed up, and
    changes from other crew members' devices are pulled down — so everyone
    shares one live product/warehouse/order database. The app is fully
@@ -724,7 +725,7 @@ async function clearAuthSession(){ await rawDel('settings','authSession'); AUTH=
 
 async function authLogin(email, password){
   const cfg = await getSyncConfig();
-  if(!cfg || !cfg.url || !cfg.key) throw new Error("Sync isn't set up on this device yet — see Home → Crew sync.");
+  if(!cfg || !cfg.url || !cfg.key) throw new Error("Sync isn't set up on this device yet — see Settings → Crew sync.");
   const res = await fetch(authBaseUrl(cfg)+'/auth/v1/token?grant_type=password', {
     method:'POST',
     headers:{'Content-Type':'application/json', 'apikey':cfg.key},
@@ -1065,9 +1066,7 @@ function showAlert(message, title){
 
 /* ==================================== HOME ==================================== */
 route('home', async ()=>{
-  const [orders, products, warehouses, themeRec, syncCfgRaw] = await Promise.all([getAll('orders'), getAll('products'), getAll('warehouses'), getOne('settings','theme'), getSyncConfig()]);
-  const syncCfgCache = syncCfgRaw || {};
-  const currentAccent = (themeRec && themeRec.accent) ? themeRec.accent.toLowerCase() : DEFAULT_ACCENT.toLowerCase();
+  const [orders, products, warehouses] = await Promise.all([getAll('orders'), getAll('products'), getAll('warehouses')]);
   const active = orders.filter(o=>o.status==='picking').length;
   const today = todayISO();
   const completedToday = orders.filter(o=>o.status==='completed' && (o.completedAt||'').slice(0,10)===today).length;
@@ -1101,9 +1100,24 @@ route('home', async ()=>{
     <div class="card" style="margin-top:24px;">
       <div class="section-title">Account</div>
       <p class="subtle">Logged in as <b>${esc(AUTH ? AUTH.email : '')}</b> ${isAdmin()?'<span class="badge b-completed">admin</span>':'<span class="badge b-pending">staff</span>'}</p>
-      <button class="btn btn-ghost btn-sm" id="doLogout" style="margin-top:4px;">Log out</button>
-    </div>
-    <div class="card" style="margin-top:24px;">
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px;">
+        <a href="#/settings" class="btn btn-ghost btn-sm">⚙ Settings</a>
+        <button class="btn btn-ghost btn-sm" id="doLogout">Log out</button>
+      </div>
+    </div>`;
+  $('#doLogout').onclick = ()=>{
+    showConfirm("Log out? You'll need your password again to get back in.", logOut);
+  };
+});
+
+/* ==================================== SETTINGS ==================================== */
+route('settings', async ()=>{
+  const [themeRec, syncCfgRaw] = await Promise.all([getOne('settings','theme'), getSyncConfig()]);
+  const syncCfgCache = syncCfgRaw || {};
+  const currentAccent = (themeRec && themeRec.accent) ? themeRec.accent.toLowerCase() : DEFAULT_ACCENT.toLowerCase();
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Settings</h1></div>
+    <div class="card">
       <div class="section-title">Backup &amp; restore</div>
       <p class="subtle">Everything lives on this device, whether or not crew sync (below) is on. Download a backup before updating the app or trying something new, and keep the file somewhere safe.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
@@ -1144,21 +1158,18 @@ route('home', async ()=>{
     if(file) restoreBackupFile(file);
     e.target.value = '';
   };
-  $('#doLogout').onclick = ()=>{
-    showConfirm("Log out? You'll need your password again to get back in.", logOut);
-  };
   $('#themeSwatches').querySelectorAll('[data-color]').forEach(b=>b.onclick=async ()=>{
     await saveAccent(b.dataset.color);
-    routes['home']([]);
+    routes['settings']([]);
   });
   $('#themeCustom').onchange = async e=>{
     await saveAccent(e.target.value);
-    routes['home']([]);
+    routes['settings']([]);
   };
   $('#themeCustom').oninput = e=> applyAccent(e.target.value); // live preview while dragging the picker
   $('#themeReset').onclick = async ()=>{
     await saveAccent(DEFAULT_ACCENT);
-    routes['home']([]);
+    routes['settings']([]);
   };
   renderSyncIndicator();
   $('#syncSave').onclick = async ()=>{
@@ -1171,13 +1182,13 @@ route('home', async ()=>{
     }
     await setSyncConfig({url, key, crewName});
     startSyncLoop();
-    routes['home']([]);
+    routes['settings']([]);
   };
   if($('#syncOff')) $('#syncOff').onclick = ()=>{
     showConfirm('This device will stop sending and receiving crew changes. Everything already on this device stays — this only turns off the connection.', async ()=>{
       await rawDel('settings','syncConfig');
       if(syncIntervalHandle){ clearInterval(syncIntervalHandle); syncIntervalHandle=null; }
-      routes['home']([]);
+      routes['settings']([]);
     });
   };
 });
