@@ -51,7 +51,7 @@ input,select,textarea{font-family:var(--font-b); font-size:1rem;}
   width:230px; flex-shrink:0; border-right:1px solid var(--line); padding:22px 14px;
   display:flex; flex-direction:column; gap:4px; position:sticky; top:0; height:100vh;
 }
-#sidebar .brand{font-family:var(--font-d); font-weight:700; font-size:1.3rem; padding:4px 10px 22px;}
+#sidebar .brand{font-family:var(--font-d); font-weight:700; font-size:1.3rem; padding:4px 10px 22px; display:block; text-decoration:none; color:inherit;}
 #sidebar .brand span{color:var(--signal);}
 .navlink{display:flex; align-items:center; gap:10px; padding:11px 12px; border-radius:8px; color:var(--ink-soft); text-decoration:none; font-weight:600; font-size:.95rem;}
 .navlink .ic{font-size:1.15rem; width:22px; text-align:center;}
@@ -67,7 +67,7 @@ input,select,textarea{font-family:var(--font-b); font-size:1rem;}
     padding:calc(12px + env(safe-area-inset-top,0px)) 14px 12px;
   }
   #mobileTopbar #sidebarToggle{background:transparent; border:none; font-size:1.4rem; line-height:1; color:var(--ink); padding:4px 6px;}
-  #mobileTopbar .brand{font-family:var(--font-d); font-weight:700; font-size:1.2rem; padding:0;}
+  #mobileTopbar .brand{font-family:var(--font-d); font-weight:700; font-size:1.2rem; padding:0; text-decoration:none; color:inherit;}
   #mobileTopbar .brand span{color:var(--signal);}
   #shell{display:block;}
   #sidebar{
@@ -121,7 +121,7 @@ input,select,textarea{font-family:var(--font-b); font-size:1rem;}
 /* ---------- Forms ---------- */
 label{display:block; font-weight:600; font-size:.82rem; color:var(--ink-soft); margin:0 0 5px;}
 .field{margin-bottom:14px;}
-input[type=text],input[type=number],input[type=date],select,textarea{
+input[type=text],input[type=number],input[type=date],input[type=email],input[type=password],select,textarea{
   width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:8px; background:var(--paper); color:var(--ink);
 }
 input:focus,select:focus,textarea:focus{outline:2px solid var(--signal); outline-offset:1px;}
@@ -220,12 +220,12 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 </div>
 <div id="mobileTopbar">
   <button type="button" id="sidebarToggle" aria-label="Open menu">☰</button>
-  <div class="brand">Dock<span>line</span></div>
+  <a class="brand" href="#/">Dock<span>line</span></a>
 </div>
 <div id="sidebarBackdrop"></div>
 <div id="shell">
   <nav id="sidebar">
-    <div class="brand">Dock<span>line</span></div>
+    <a class="brand" href="#/">Dock<span>line</span></a>
     <a class="navlink" data-route="#/" href="#/"><span class="ic">◧</span> Home</a>
     <a class="navlink" data-route="#/orders" href="#/orders"><span class="ic">▤</span> Orders</a>
     <a class="navlink" data-route="#/splitter" href="#/splitter"><span class="ic">▦</span> Order Splitter</a>
@@ -1064,7 +1064,11 @@ route('home', async ()=>{
       <div class="stat"><b>${products.length}</b><div class="lbl">Products in database</div></div>
       <div class="stat"><b>${warehouses.length}</b><div class="lbl">Warehouses</div></div>
     </div>
-    <a href="#/order/new" class="btn btn-signal btn-lg" style="margin-bottom:28px; max-width:320px;">+ New Order</a>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:28px;">
+      <a href="#/order/new" class="btn btn-signal btn-lg" style="max-width:320px;">+ New Order</a>
+      <a href="#/receiving" class="btn btn-ghost btn-lg" style="max-width:320px;">Product receiving</a>
+      <a href="#/deliveries" class="btn btn-ghost btn-lg" style="max-width:320px;">Supplier deliveries</a>
+    </div>
     <h3 class="section-title">Recent orders</h3>
     <div class="card">
       ${recent.length ? recent.map(o=>`
@@ -1529,6 +1533,24 @@ route('warehouses', async ()=>{
   const [warehouses, sections, products] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('products')]);
   warehouses.sort((a,b)=>a.priority-b.priority);
 
+  // shared by both a section's product list and the "No section" list below
+  function productRowHtml(p){
+    const missing = [];
+    if(!p.image) missing.push('photo');
+    if(!p.unit) missing.push('unit');
+    if(!p.supplierId) missing.push('supplier');
+    if(!p.productionDate) missing.push('production date');
+    if(!p.expiryDate) missing.push('expiry date');
+    return `<div class="list-row" style="padding:7px 0;">
+      <div class="thumb" style="width:34px; height:34px; font-size:1rem;">${p.image?`<img src="${p.image}" loading="lazy" decoding="async">`:'📦'}</div>
+      <div style="flex:1; min-width:0;">
+        ${esc(p.name)}${p.active?'':' <span class="badge b-picked_later">inactive</span>'}
+        ${missing.length?`<div class="subtle">missing: ${missing.join(', ')}</div>`:''}
+      </div>
+      <button class="btn btn-ghost btn-sm" data-editprod="${p.id}">Edit</button>
+    </div>`;
+  }
+
   function render(){
     const admin = isAdmin();
     $('#main').innerHTML = `
@@ -1538,6 +1560,10 @@ route('warehouses', async ()=>{
     const list = $('#whList');
     list.innerHTML = warehouses.map(w=>{
       const secs = sections.filter(s=>s.warehouseId===w.id).sort((a,b)=>a.priority-b.priority);
+      // products that point at this warehouse but whose section is empty or no longer
+      // exists (e.g. the warehouse has 0 sections) — these used to be invisible because
+      // the list below only ever rendered products nested under a real section
+      const unsec = products.filter(p=>p.warehouseId===w.id && !secs.some(s=>s.id===p.sectionId));
       return `<div class="card" style="margin-bottom:14px;" data-whid="${w.id}">
         <div class="list-row" style="border:none; padding:0 0 10px;">
           <span class="drag-handle wh-handle">⠿</span>
@@ -1558,22 +1584,7 @@ route('warehouses', async ()=>{
             </div>
             ${expanded ? `
               <div style="padding:2px 0 12px 44px;">
-                ${secProducts.length ? secProducts.map(p=>{
-                  const missing = [];
-                  if(!p.image) missing.push('photo');
-                  if(!p.unit) missing.push('unit');
-                  if(!p.supplierId) missing.push('supplier');
-                  if(!p.productionDate) missing.push('production date');
-                  if(!p.expiryDate) missing.push('expiry date');
-                  return `<div class="list-row" style="padding:7px 0;">
-                    <div class="thumb" style="width:34px; height:34px; font-size:1rem;">${p.image?`<img src="${p.image}" loading="lazy" decoding="async">`:'📦'}</div>
-                    <div style="flex:1; min-width:0;">
-                      ${esc(p.name)}${p.active?'':' <span class="badge b-picked_later">inactive</span>'}
-                      ${missing.length?`<div class="subtle">missing: ${missing.join(', ')}</div>`:''}
-                    </div>
-                    <button class="btn btn-ghost btn-sm" data-editprod="${p.id}">Edit</button>
-                  </div>`;
-                }).join('') : `<p class="subtle">No products in this section yet.</p>`}
+                ${secProducts.length ? secProducts.map(productRowHtml).join('') : `<p class="subtle">No products in this section yet.</p>`}
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
                   <button class="btn btn-ghost btn-sm" data-addprodto="${s.id}">+ Add new product</button>
                   <button class="btn btn-ghost btn-sm" data-assignprodto="${s.id}">+ Assign existing product</button>
@@ -1581,7 +1592,23 @@ route('warehouses', async ()=>{
               </div>
             ` : ''}
           </div>`;
-        }).join('') || `<div class="subtle" style="padding:10px 0;">No sections yet.</div>`}
+        }).join('') || (unsec.length ? '' : `<div class="subtle" style="padding:10px 0;">No sections yet.</div>`)}
+        ${unsec.length ? (()=>{
+          const key = 'unsec:'+w.id;
+          const expanded = window.__expandedSection === key;
+          return `<div data-secid="${key}">
+            <div class="list-row">
+              <span class="drag-handle" style="visibility:hidden;">⠿</span>
+              <div style="flex:1; cursor:pointer;" data-togglesec="${key}">No section<span class="subtle"> · ${unsec.length} product${unsec.length===1?'':'s'}</span></div>
+            </div>
+            ${expanded ? `
+              <div style="padding:2px 0 12px 44px;">
+                <p class="subtle" style="margin-top:0;">These products are assigned to this warehouse but not to any section in it — edit a product to put it under one.</p>
+                ${unsec.map(productRowHtml).join('')}
+              </div>
+            ` : ''}
+          </div>`;
+        })() : ''}
         </div>
         ${admin ? `<button class="btn btn-ghost btn-sm" data-addsec="${w.id}" style="margin-top:10px;">+ Add section</button>` : ''}
       </div>`;
@@ -1600,9 +1627,22 @@ route('warehouses', async ()=>{
 
     list.querySelectorAll('[data-editwh]').forEach(b=>b.onclick=()=>whForm(warehouses.find(w=>w.id===b.dataset.editwh)));
     list.querySelectorAll('[data-delwh]').forEach(b=>b.onclick=()=>{
-      const has = products.some(p=>p.warehouseId===b.dataset.delwh);
-      if(has){ showAlert('Move or remove products from this warehouse first.'); return; }
-      showConfirm('Delete this warehouse?', async ()=>{ await del('warehouses', b.dataset.delwh); routes['warehouses']([]); }, {danger:true, yesLabel:'Delete'});
+      const whId = b.dataset.delwh;
+      const wh = warehouses.find(w=>w.id===whId);
+      const whSections = sections.filter(s=>s.warehouseId===whId);
+      const whProducts = products.filter(p=>p.warehouseId===whId);
+      const parts = [];
+      if(whSections.length) parts.push(`${whSections.length} section${whSections.length===1?'':'s'}`);
+      if(whProducts.length) parts.push(`${whProducts.length} product${whProducts.length===1?'':'s'}`);
+      const msg = parts.length
+        ? `"${wh.name}" still has ${parts.join(' and ')} in it. Deleting the warehouse will permanently delete all of them too, and this can't be undone. Delete "${wh.name}" and everything in it?`
+        : `Delete "${wh.name}"?`;
+      showConfirm(msg, async ()=>{
+        for(const p of whProducts) await del('products', p.id);
+        for(const s of whSections) await del('sections', s.id);
+        await del('warehouses', whId);
+        routes['warehouses']([]);
+      }, {danger:true, yesLabel: parts.length ? 'Delete everything' : 'Delete'});
     });
     list.querySelectorAll('[data-addsec]').forEach(b=>b.onclick=()=>secForm(null, b.dataset.addsec));
     list.querySelectorAll('[data-editsec]').forEach(b=>b.onclick=()=>secForm(sections.find(s=>s.id===b.dataset.editsec)));
@@ -2370,24 +2410,43 @@ async function matchScreen(orderId){
   draw();
 }
 
+/* This can be opened WHILE another modal (e.g. the Modify/Substitute modal) is
+   already showing — e.g. "Tap to choose a product" inside Substitute. showModal()/
+   closeModal() always replace #modal-root's entire contents, so reusing them here
+   would wipe out that parent modal's markup and wired event handlers underneath
+   it; then picking a product would silently do nothing, because the fields the
+   onPick callback tries to write into (#m_prod, #m_edate, etc.) would no longer
+   exist in the DOM. Instead this builds its own independent overlay appended to
+   <body>, stacked visually on top, so the modal underneath is left completely
+   untouched and still works once this one closes. */
 function openProductPicker(it, products, whMap, secMap, onPick){
-  showModal(`<h3>Choose product</h3>
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-bg';
+  overlay.innerHTML = `<div class="modal">
+    <h3>Choose product</h3>
     <div class="field"><input type="text" id="pp_search" placeholder="Search products…" autofocus></div>
     <div id="pp_list" style="max-height:340px; overflow:auto;"></div>
-    <button class="btn btn-ghost" style="margin-top:10px;" onclick="closeModal()">Cancel</button>`);
+    <button type="button" class="btn btn-ghost" style="margin-top:10px;" id="pp_cancel">Cancel</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  function closePicker(){ overlay.remove(); }
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) closePicker(); });
+  overlay.querySelector('#pp_cancel').onclick = closePicker;
   function draw(q){
     const items = products.filter(p=>p.active && (!q || normalize(p.name).includes(normalize(q))));
-    $('#pp_list').innerHTML = items.slice(0,40).map(p=>`
-      <button class="cand-btn" data-pid="${p.id}" style="width:100%; margin-bottom:6px;">
+    overlay.querySelector('#pp_list').innerHTML = items.slice(0,40).map(p=>`
+      <button type="button" class="cand-btn" data-pid="${p.id}" style="width:100%; margin-bottom:6px;">
         ${esc(p.name)} <span class="subtle">· ${whMap[p.warehouseId]?.name||''} / ${secMap[p.sectionId]?.name||''}</span>
       </button>`).join('') || `<p class="subtle">No products found.</p>`;
-    $('#pp_list').querySelectorAll('[data-pid]').forEach(b=>b.onclick=()=>{
-      closeModal(); onPick(products.find(p=>p.id===b.dataset.pid));
+    overlay.querySelectorAll('[data-pid]').forEach(b=>b.onclick=()=>{
+      const picked = products.find(p=>p.id===b.dataset.pid);
+      closePicker();
+      onPick(picked);
     });
   }
   draw('');
   let ppDebounce;
-  $('#pp_search').oninput = e=>{
+  overlay.querySelector('#pp_search').oninput = e=>{
     const val = e.target.value;
     clearTimeout(ppDebounce);
     ppDebounce = setTimeout(()=>draw(val), 180);
