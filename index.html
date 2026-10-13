@@ -499,7 +499,7 @@ async function applyStockDeductions(items){
 /* Bump this string every time the app is published (date + a counter for that day is enough,
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
-const APP_VERSION = '2026-10-13.1';
+const APP_VERSION = '2026-10-13.2';
 const DB_NAME='dockline_db', DB_VER=7;
 const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
@@ -2758,6 +2758,7 @@ async function storeHubScreen(orderId){
       </div>
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn btn-ghost btn-sm" id="hubAddItem">+ Add item (client added this after)</button>
       <button class="btn btn-ghost btn-sm" id="hubSearch">🔍 Search &amp; pick an item</button>
       <a href="#/order/${orderId}/items" class="btn btn-ghost btn-sm">📋 View all items</a>
       <a href="#/order/${orderId}/pick/all" class="btn btn-ghost btn-sm">Go through all stores in priority order instead</a>
@@ -2767,6 +2768,7 @@ async function storeHubScreen(orderId){
     </div>`;
   $('#hubSearch').onclick = ()=> openSearchPick(orderId, ()=>storeHubScreen(orderId));
   $('#hubEditDest').onclick = ()=> openDestinationModal(order, ()=>storeHubScreen(orderId));
+  $('#hubAddItem').onclick = ()=> openAddItemModal(orderId, ()=>storeHubScreen(orderId));
   $('#modeToggle').onclick = async e=>{
     const b = e.target.closest('[data-mode]'); if(!b) return;
     await setPickingMode(b.dataset.mode);
@@ -3764,6 +3766,78 @@ async function postponedScreen(orderId){
   });
 }
 
+/* For when the client adds something to the order after it's already been imported and
+   picking may have already started. The new line is slotted in at the end of the picking
+   queue (so it shows up like any other pending item) and flagged as "added manually" —
+   in the item list and in the exported report — so it's always clear it wasn't on the
+   original sheet. A product must be picked (or created) for it, same as any import-matched
+   item, since there's no later "resolve unmatched items" screen once picking has started. */
+async function openAddItemModal(orderId, onDone){
+  showModal(`<h3>Add item to order</h3>
+    <p class="subtle">For something the client added after this order was already imported.</p>
+    <div class="field"><label>Description</label><input type="text" id="ai_desc" placeholder="e.g. Anise Star" autofocus></div>
+    <div class="row2">
+      <div class="field"><label>Quantity</label><input type="number" id="ai_qty" step="any" placeholder="e.g. 10"></div>
+      <div class="field"><label>Unit</label><input type="text" id="ai_unit" placeholder="Kg, LTR, Tin 400 gm…"></div>
+    </div>
+    <div class="field"><label>Sr. (optional)</label><input type="text" id="ai_sr" placeholder="leave blank if unknown"></div>
+    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+      <button class="btn btn-signal" id="ai_pickProd" style="flex:1; min-width:180px;">🔍 Pick product from database</button>
+      <button class="btn btn-ghost" id="ai_newProd" style="flex:1; min-width:180px;">+ Create new product</button>
+    </div>
+    <button class="btn btn-ghost" style="width:100%; margin-top:10px;" onclick="closeModal()">Cancel</button>`);
+
+  function readFields(){
+    const desc = $('#ai_desc').value.trim();
+    const qtyRaw = $('#ai_qty').value;
+    const qty = parseFloat(qtyRaw);
+    if(!desc){ showAlert('Enter a description.'); return null; }
+    if(qtyRaw===''||isNaN(qty)||qty<=0){ showAlert('Enter a valid quantity.'); return null; }
+    return {desc, qty, unit: $('#ai_unit').value.trim(), sr: $('#ai_sr').value.trim()};
+  }
+
+  async function createItem(fields, product){
+    const [allItems, warehouses, sections] = await Promise.all([getAll('orderItems'), getAll('warehouses'), getAll('sections')]);
+    const existingItems = allItems.filter(it=>it.orderId===orderId);
+    const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
+    const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
+    const maxImportIndex = existingItems.reduce((m,it)=>Math.max(m, it.importIndex ?? 0), -1);
+    const item = {
+      id: uid(), orderId, sr: fields.sr, importIndex: maxImportIndex+1, excelDesc: fields.desc,
+      excelQty: fields.qty, qtyFlag:'', excelUnit: fields.unit || product.unit || '',
+      productId: product.id, productName: product.name,
+      warehouseId: product.warehouseId || '', warehouseName: whMap[product.warehouseId]?.name || '',
+      sectionName: secMap[product.sectionId]?.name || '',
+      sortKey: [whMap[product.warehouseId]?.priority ?? 9999, secMap[product.sectionId]?.priority ?? 9999, product.priority ?? 9999],
+      requestedQty: fields.qty, requestedUnit: fields.unit || product.unit || '',
+      actualQty: null, actualUnit: '', status:'pending', matchType:'confirmed', replacementName:'', notes:'',
+      actualProductionDate:'', actualExpiryDate:'', addedManually: true
+    };
+    await put('orderItems', item);
+    const freshOrder = await getOne('orders', orderId);
+    if(freshOrder.status==='picking'){
+      freshOrder.queue = [...(freshOrder.queue||[]), item.id];
+      await put('orders', freshOrder);
+    }
+    closeModal();
+    onDone();
+  }
+
+  $('#ai_pickProd').onclick = async ()=>{
+    const fields = readFields(); if(!fields) return;
+    const [products, warehouses, sections] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections')]);
+    const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
+    const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
+    openProductPicker(null, products, whMap, secMap, (picked)=> createItem(fields, picked));
+  };
+  $('#ai_newProd').onclick = async ()=>{
+    const fields = readFields(); if(!fields) return;
+    const [warehouses, sections, suppliers] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
+    const draftProduct = {id:uid(), name:fields.desc, unit:fields.unit||'', supplierId:'', warehouseId:'', sectionId:'', priority:999, active:true, notes:'', productionDate:'', expiryDate:'', image:''};
+    openProductForm(draftProduct, warehouses, sections, suppliers, (savedProduct)=> createItem(fields, savedProduct));
+  };
+}
+
 async function allItemsScreen(orderId){
   window.__itemsFilterStatus = window.__itemsFilterStatus || 'all';
   window.__itemsSearch = window.__itemsSearch || '';
@@ -3810,7 +3884,7 @@ async function allItemsScreen(orderId){
       return `<div class="list-row" data-open="${it.id}" style="cursor:pointer;">
         <div style="width:38px;" class="subtle">${esc(it.sr||'—')}</div>
         <div style="flex:1; min-width:0;">
-          <b>${esc(it.excelDesc)}</b>
+          <b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}
           <div class="subtle">${it.requestedQty} ${esc(it.requestedUnit)}${note?' · '+esc(note):''}</div>
           ${outcome ? `<div class="subtle">${outcome}</div>` : ''}
         </div>
@@ -3834,7 +3908,7 @@ async function allItemsScreen(orderId){
     items.sort((a,b)=>importOrderCompare(a,b));
 
     $('#main').innerHTML = `
-      <div class="topbar"><h1>All items</h1></div>
+      <div class="topbar"><h1>All items</h1><button class="btn btn-signal btn-sm" id="ai_addItem">+ Add item</button></div>
       <p class="subtle" style="margin-top:-10px;">${esc(order.vessel)} · ${esc(order.orderNumber)} — ${items.length} total. Tap any item to view or edit it.</p>
       <div class="field" style="max-width:360px;"><input type="text" id="ai_search" placeholder="Search by description or Sr…" value="${esc(window.__itemsSearch)}"></div>
       <div class="tag-row" id="ai_filters"></div>
@@ -3851,6 +3925,7 @@ async function allItemsScreen(orderId){
       clearTimeout(searchDebounce);
       searchDebounce = setTimeout(()=>{ window.__itemsSearch = val; updateList(); }, 180);
     };
+    $('#ai_addItem').onclick = ()=> openAddItemModal(orderId, draw);
   }
   draw();
 }
@@ -3943,7 +4018,7 @@ async function orderSummary(orderId){
       ${items.slice().sort((a,b)=>importOrderCompare(a,b)).map(it=>`
         <div class="list-row">
           <div style="width:50px;" class="subtle">${esc(it.sr||'—')}</div>
-          <div style="flex:1;"><b>${esc(it.excelDesc)}</b>${matchNote(it)?`<div class="subtle">${esc(matchNote(it))}</div>`:''}${it.actualExpiryDate?`<div class="subtle">exp ${fmtDate(it.actualExpiryDate)}${it.actualProductionDate?' · prod '+fmtDate(it.actualProductionDate):''} (set for this order)</div>`:''}</div>
+          <div style="flex:1;"><b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}${matchNote(it)?`<div class="subtle">${esc(matchNote(it))}</div>`:''}${it.actualExpiryDate?`<div class="subtle">exp ${fmtDate(it.actualExpiryDate)}${it.actualProductionDate?' · prod '+fmtDate(it.actualProductionDate):''} (set for this order)</div>`:''}</div>
           <div class="subtle" style="width:120px;">${it.requestedQty} ${esc(it.requestedUnit)}</div>
           <div class="subtle" style="width:120px;">${it.actualQty ?? '—'} ${esc(it.actualUnit||'')}</div>
           <span class="badge b-${it.status}">${it.status.replace('_',' ')}</span>
@@ -3991,18 +4066,22 @@ function conditionLabel(it, order){
   return it.status;
 }
 function modNote(it){
-  if(it.status==='modified') return `Ordered ${it.requestedQty} × ${it.requestedUnit} — picked ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
-  if(it.status==='substituted') return `Substituted with "${it.replacementName||'—'}" — ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
-  if(it.status==='not_available') return 'Not available';
+  // items added by hand after the original sheet was imported (e.g. the client added
+  // something mid-order) get flagged here so it's obvious, in-app and in the exported
+  // report, which lines weren't on the original order
+  const prefix = it.addedManually ? 'Added after import (not on original order). ' : '';
+  if(it.status==='modified') return prefix + `Ordered ${it.requestedQty} × ${it.requestedUnit} — picked ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
+  if(it.status==='substituted') return prefix + `Substituted with "${it.replacementName||'—'}" — ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
+  if(it.status==='not_available') return prefix + 'Not available';
   // "completed" items can still have been converted on the spot — e.g. ordered as 10 x 100gm
   // but the database product is kept in 200gm units, so it was auto-converted to 5 x 200gm and
   // picked as that. That conversion was only ever shown on-screen while picking; it never made
   // it into the exported report, which is the gap this fills.
   if(it.status==='completed' && it.actualQty!=null && it.requestedQty!=null &&
      (round2(it.actualQty)!==round2(it.requestedQty) || normalize(it.actualUnit)!==normalize(it.requestedUnit))){
-    return `Ordered ${it.requestedQty} × ${it.requestedUnit} — converted to ${it.actualQty} × ${it.actualUnit||''} (database unit)`;
+    return prefix + `Ordered ${it.requestedQty} × ${it.requestedUnit} — converted to ${it.actualQty} × ${it.actualUnit||''} (database unit)`;
   }
-  return '';
+  return prefix.trim();
 }
 
 async function exportOrderExcel(orderId){
