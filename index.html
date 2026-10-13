@@ -226,6 +226,7 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
     <div class="field"><label>Password</label><input type="password" id="authPw" placeholder="Password" autocomplete="current-password"></div>
     <p id="authErr" class="subtle" style="color:var(--danger); display:none; margin-top:-8px;">Wrong email or password — try again.</p>
     <button class="btn btn-signal btn-lg" id="authSubmit" style="width:100%; margin-top:6px;">Log in</button>
+    <button type="button" class="btn btn-ghost" id="authDemo" style="width:100%; margin-top:10px; display:none;">🧪 Try demo mode (no login, for testing new features)</button>
     <p class="subtle" style="margin-top:14px; margin-bottom:0;">No account yet? Ask your admin to create one for you — this app doesn't let anyone sign themselves up.</p>
   </div>
 </div>
@@ -265,6 +266,30 @@ const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (iso) => { if(!iso) return '—'; const d=new Date(iso); return isNaN(d)?iso:d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); };
+
+/* ------------------------------ order destination ------------------------------
+   A free-text "where is this order actually going" flag (Suez Port, Alex Port, …) —
+   added after a real near-miss where an order almost went out to the wrong port. It's
+   plain text rather than a fixed list, since ports vary, but every screen that shows
+   an order renders it as a colored badge (color picked deterministically from the
+   text itself) so the same destination always looks the same at a glance, and two
+   different destinations are never easy to confuse for each other. */
+const DEST_PALETTE = [
+  {bg:'#DCEEFB', fg:'#0B5394'}, {bg:'#FDE8D7', fg:'#B35B00'}, {bg:'#E4F2E9', fg:'#1F7A4D'},
+  {bg:'#F3E1F5', fg:'#7A2E8A'}, {bg:'#FBE7E2', fg:'#A6333B'}, {bg:'#FBF0DB', fg:'#8A6B00'},
+  {bg:'#E0F7F5', fg:'#0B7A72'}
+];
+function destColor(dest){
+  let hash = 0;
+  for(let i=0;i<dest.length;i++) hash = (hash*31 + dest.charCodeAt(i)) >>> 0;
+  return DEST_PALETTE[hash % DEST_PALETTE.length];
+}
+function destinationBadge(dest, size){
+  if(!dest) return '';
+  const c = destColor(dest);
+  const sz = size==='lg' ? 'font-size:.95rem; padding:6px 14px;' : '';
+  return `<span class="badge" style="background:${c.bg}; color:${c.fg}; ${sz}">📍 ${esc(dest)}</span>`;
+}
 
 /* ------------------------ expiry: exact date vs. shelf life ------------------------
    Most shelf-stable products aren't labeled with an expiry date at all — they're
@@ -474,7 +499,7 @@ async function applyStockDeductions(items){
 /* Bump this string every time the app is published (date + a counter for that day is enough,
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
-const APP_VERSION = '2026-10-11.3';
+const APP_VERSION = '2026-10-13.1';
 const DB_NAME='dockline_db', DB_VER=7;
 const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
@@ -624,6 +649,7 @@ async function pullChanges(cfg){
   return pulled;
 }
 async function syncNow(){
+  if(DEMO_MODE) return; // demo sessions are local-only — never touch the network, by design
   const cfg = await getSyncConfig();
   if(!cfg || !cfg.url || !cfg.key) return;
   if(syncInFlight) return;
@@ -653,6 +679,7 @@ async function syncNow(){
   }
 }
 function startSyncLoop(){
+  if(DEMO_MODE) return; // nothing to loop — see syncNow()
   if(syncIntervalHandle) return;
   syncIntervalHandle = setInterval(syncNow, 20000);
   window.addEventListener('online', syncNow);
@@ -694,6 +721,23 @@ async function renderSyncIndicator(liveState){
    defaults to ~1 hour) — it's refreshed automatically on every sync tick and re-checked at
    startup, so a crew member basically never has to re-enter their password day to day. ==== */
 let AUTH = null; // {access_token, refresh_token, expires_at, email, role} once logged in, else null
+
+/* "Try demo mode" (added so new features can be tried out in Claude's own artifact preview,
+   which can't reach Supabase at all — any fetch to it fails there with a generic "Failed to
+   fetch", which is what made the real login unusable for testing). Demo mode skips Supabase
+   entirely: no login request, no sync, nothing that touches the network — just an in-memory
+   admin session so every screen is reachable locally, on whatever's already in this browser's
+   IndexedDB. Nothing about it is saved (no authSession row), so refreshing the page drops
+   straight back to the real login screen.
+
+   IS_GITHUB_PAGES is what keeps this from quietly becoming a bypass of the real login once the
+   app is actually deployed and being used for real work: GitHub Pages sites are always served
+   from a *.github.io address, so the "Try demo mode" button only ever renders when the page is
+   NOT on that domain — i.e. in the Claude preview, or opened straight from a local file — never
+   on the live site your crew actually logs into. (If you ever move to a custom domain instead
+   of the free *.github.io one, widen this check accordingly.) */
+const IS_GITHUB_PAGES = /\.github\.io$/i.test(location.hostname);
+let DEMO_MODE = false;
 
 function authBaseUrl(cfg){ return cfg.url.replace(/\/rest\/v1\/?$/,'').replace(/\/+$/,''); }
 
@@ -783,7 +827,9 @@ function showAuthGate(onSuccess){
       gate.classList.add('hidden');
       onSuccess();
     }catch(e){
-      err.textContent = e.message || 'Wrong email or password — try again.';
+      err.textContent = (e && e.message==='Failed to fetch')
+        ? "Can't reach the server from here — this screen (e.g. a preview) likely can't make outside network calls. Use \"Try demo mode\" below instead."
+        : (e.message || 'Wrong email or password — try again.');
       err.style.display = 'block';
       pwInput.value = '';
       pwInput.focus();
@@ -795,6 +841,21 @@ function showAuthGate(onSuccess){
   pwInput.onkeydown = e=>{ if(e.key==='Enter') tryLogin(); };
   emailInput.onkeydown = e=>{ if(e.key==='Enter') pwInput.focus(); };
   emailInput.focus();
+  const demoBtn = document.getElementById('authDemo');
+  if(demoBtn){
+    if(IS_GITHUB_PAGES){
+      demoBtn.style.display = 'none'; // real login only once this is the actual deployed site
+    } else {
+      demoBtn.style.display = '';
+      demoBtn.onclick = ()=>{
+        DEMO_MODE = true;
+        AUTH = {email:'demo@local', role:'admin', demo:true, access_token:null, refresh_token:null, expires_at: Date.now()+3600000};
+        document.body.classList.remove('locked');
+        gate.classList.add('hidden');
+        onSuccess();
+      };
+    }
+  }
 }
 async function logOut(){
   await clearAuthSession();
@@ -1073,6 +1134,7 @@ route('home', async ()=>{
   const recent = orders.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,6);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Dashboard</h1></div>
+    ${DEMO_MODE ? `<div class="card" style="margin-bottom:18px; border-color:var(--warn); background:var(--warn-bg);"><b>🧪 Demo mode</b><span class="subtle"> — you're testing locally, not logged into a real account. Nothing here syncs anywhere, and this ends when you reload the page.</span></div>` : ''}
     <div class="grid-stats">
       <div class="stat"><b>${active}</b><div class="lbl">Active orders</div></div>
       <div class="stat"><b>${completedToday}</b><div class="lbl">Completed today</div></div>
@@ -1093,19 +1155,21 @@ route('home', async ()=>{
             <div style="font-weight:700;">${esc(o.vessel)} <span class="subtle">· ${esc(o.orderNumber)}</span></div>
             <div class="subtle">IMO ${esc(o.imo)} · ${fmtDate(o.orderDate)}</div>
           </div>
+          ${destinationBadge(o.destination)}
           <span class="badge b-${o.status}">${o.status}</span>
           <a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm">Open</a>
         </div>`).join('') : `<div class="empty"><div class="ic">🚢</div>No orders yet. Start with “+ New Order”.</div>`}
     </div>
     <div class="card" style="margin-top:24px;">
       <div class="section-title">Account</div>
-      <p class="subtle">Logged in as <b>${esc(AUTH ? AUTH.email : '')}</b> ${isAdmin()?'<span class="badge b-completed">admin</span>':'<span class="badge b-pending">staff</span>'}</p>
+      <p class="subtle">${DEMO_MODE ? 'Demo mode <span class="badge b-modified">not a real account</span>' : `Logged in as <b>${esc(AUTH ? AUTH.email : '')}</b> ${isAdmin()?'<span class="badge b-completed">admin</span>':'<span class="badge b-pending">staff</span>'}`}</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px;">
         <a href="#/settings" class="btn btn-ghost btn-sm">⚙ Settings</a>
-        <button class="btn btn-ghost btn-sm" id="doLogout">Log out</button>
+        <button class="btn btn-ghost btn-sm" id="doLogout">${DEMO_MODE ? 'Exit demo mode' : 'Log out'}</button>
       </div>
     </div>`;
   $('#doLogout').onclick = ()=>{
+    if(DEMO_MODE){ logOut(); return; }
     showConfirm("Log out? You'll need your password again to get back in.", logOut);
   };
 });
@@ -1128,7 +1192,7 @@ route('settings', async ()=>{
     <div class="card" style="margin-top:24px;" id="syncCard">
       <div class="section-title">Crew sync</div>
       <p class="subtle">Share one live set of products, warehouses and orders with the rest of the crew. Everything still works with no signal — changes made offline send themselves as soon as a connection comes back.</p>
-      <p id="syncIndicator" style="margin:12px 0;"></p>
+      ${DEMO_MODE ? `<p class="subtle" style="color:var(--warn);">🧪 Disabled in demo mode — there's no real account behind this session, so there's nothing to sync.</p>` : `<p id="syncIndicator" style="margin:12px 0;"></p>`}
       <div class="field"><label>Your name (shown as who made each change)</label><input type="text" id="syncCrewName" placeholder="e.g. Ahmed" value="${esc(syncCfgCache.crewName||'')}"></div>
       ${isAdmin() ? `
       <details ${syncCfgCache.url?'':'open'}>
@@ -2061,6 +2125,7 @@ route('orders', async ()=>{
           <div class="thumb">🚢</div>
           <div style="flex:1; min-width:0;"><b>${esc(o.vessel)}</b> <span class="subtle">· ${esc(o.orderNumber)}</span>
           <div class="subtle">IMO ${esc(o.imo)} · ${fmtDate(o.orderDate)}</div></div>
+          ${destinationBadge(o.destination)}
           <span class="badge b-${o.status}">${o.status}</span>
           <a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm">Continue</a>
           <button class="iconbtn" data-delorder="${o.id}" title="Delete order">✕</button>
@@ -2085,6 +2150,7 @@ route('history', async ()=>{
           <div class="thumb">✅</div>
           <div style="flex:1; min-width:0;"><b>${esc(o.vessel)}</b> <span class="subtle">· ${esc(o.orderNumber)} · IMO ${esc(o.imo)}</span>
           <div class="subtle">Completed ${fmtDate(o.completedAt)}</div></div>
+          ${destinationBadge(o.destination)}
           <a href="#/order/${o.id}/summary" class="btn btn-ghost btn-sm">View</a>
           <button class="iconbtn" data-delorder="${o.id}" title="Delete order">✕</button>
         </div>`).join('') : `<div class="empty"><div class="ic">◔</div>Completed orders will appear here.</div>`}
@@ -2194,8 +2260,14 @@ function extractVesselAndCodeFromSheet(aoa, headerRowIndex){
   };
 }
 
-function newOrderStep1(existing){
-  const o = existing || {id:uid(), vessel:'', imo:'', orderNumber:'', orderDate: todayISO(), status:'draft', createdAt:new Date().toISOString()};
+async function newOrderStep1(existing){
+  const o = existing || {id:uid(), vessel:'', imo:'', orderNumber:'', orderDate: todayISO(), destination:'', status:'draft', createdAt:new Date().toISOString()};
+  // suggests ports already used before, so the same destination is typed the same way
+  // every time (which is also what keeps its badge color consistent) — plus a few common
+  // presets to get started with on a brand-new setup
+  const pastDest = [...new Set((await getAll('orders')).map(x=>(x.destination||'').trim()).filter(Boolean))];
+  const presets = ['Suez Port','Alexandria Port','Port Said','Damietta Port','Sokhna Port','Safaga Port'];
+  const destOptions = [...new Set([...pastDest, ...presets])].sort();
   $('#main').innerHTML = `
     <div class="topbar"><h1>New order</h1></div>
     <div class="card" style="max-width:560px;">
@@ -2205,10 +2277,19 @@ function newOrderStep1(existing){
         <div class="field"><label>Order number</label><input type="text" id="o_num" value="${esc(o.orderNumber)}" placeholder="ORD-2026-001"></div>
       </div>
       <div class="field"><label>Order date</label><input type="date" id="o_date" value="${o.orderDate}"></div>
+      <div class="field">
+        <label>Destination (where this order is heading)</label>
+        <input type="text" id="o_dest" list="o_destList" value="${esc(o.destination||'')}" placeholder="e.g. Suez Port, Alexandria Port…">
+        <datalist id="o_destList">${destOptions.map(d=>`<option value="${esc(d)}">`).join('')}</datalist>
+        <div id="o_destPreview" style="margin-top:8px;">${destinationBadge(o.destination||'')}</div>
+      </div>
       <div class="field"><label>Excel file (.xlsx)</label><input type="file" id="o_file" accept=".xlsx,.xls"></div>
       <p class="subtle" id="o_fileHint">Expected columns: Sr. · Description · Quantity · Unit — any lines above the header row (vessel name, order reference, etc.) are detected and skipped automatically.</p>
       <button class="btn btn-signal btn-lg" id="o_next">Import &amp; continue</button>
     </div>`;
+  $('#o_dest').oninput = ()=>{
+    $('#o_destPreview').innerHTML = destinationBadge($('#o_dest').value.trim());
+  };
   $('#o_file').onchange = async e=>{
     const file = e.target.files[0];
     if(!file) return;
@@ -2243,7 +2324,7 @@ function newOrderStep1(existing){
     const file = $('#o_file').files[0];
     if(!vessel || !num){ showAlert('Vessel name and order number are required.'); return; }
     if(!file){ showAlert('Please choose an Excel file to import.'); return; }
-    o.vessel=vessel; o.imo=imo; o.orderNumber=num; o.orderDate=$('#o_date').value;
+    o.vessel=vessel; o.imo=imo; o.orderNumber=num; o.orderDate=$('#o_date').value; o.destination=$('#o_dest').value.trim();
     await put('orders', o);
 
     const buf = await file.arrayBuffer();
@@ -2656,6 +2737,11 @@ async function storeHubScreen(orderId){
   $('#main').innerHTML = `
     <div class="topbar"><h1>Pick by store</h1></div>
     <p class="subtle" style="margin-top:-10px;">${esc(order.vessel)} · ${esc(order.orderNumber)} — ${doneAll} of ${totalAll} items picked overall.</p>
+    <div class="card" style="margin-bottom:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <span class="subtle" style="font-weight:700;">Heading to:</span>
+      ${order.destination ? destinationBadge(order.destination, 'lg') : '<span class="subtle">No destination set</span>'}
+      <button class="btn btn-ghost btn-sm" id="hubEditDest" style="margin-left:auto;">✎ ${order.destination?'Change':'Set destination'}</button>
+    </div>
     <div class="card" style="margin-bottom:16px;">
       ${[...groups.entries()].map(([whId,g])=>`
         <div class="list-row">
@@ -2680,6 +2766,7 @@ async function storeHubScreen(orderId){
       <a href="#/orders" class="btn btn-ghost btn-sm">⏸ Save &amp; pause</a>
     </div>`;
   $('#hubSearch').onclick = ()=> openSearchPick(orderId, ()=>storeHubScreen(orderId));
+  $('#hubEditDest').onclick = ()=> openDestinationModal(order, ()=>storeHubScreen(orderId));
   $('#modeToggle').onclick = async e=>{
     const b = e.target.closest('[data-mode]'); if(!b) return;
     await setPickingMode(b.dataset.mode);
@@ -3791,6 +3878,32 @@ function openDeliveryInfoModal(order, onDone){
   $('#dv_skip').onclick = ()=>{ closeModal(); onDone(); };
 }
 
+/* Lets the destination be fixed after the fact too — not just at import — since a mix-up
+   is sometimes only noticed partway through picking or even after. */
+async function openDestinationModal(order, onDone){
+  const pastDest = [...new Set((await getAll('orders')).map(x=>(x.destination||'').trim()).filter(Boolean))];
+  const presets = ['Suez Port','Alexandria Port','Port Said','Damietta Port','Sokhna Port','Safaga Port'];
+  const destOptions = [...new Set([...pastDest, ...presets])].sort();
+  showModal(`<h3>Destination</h3>
+    <p class="subtle">Where this order is actually heading — shown as a badge everywhere this order appears, so it's hard to miss.</p>
+    <div class="field">
+      <input type="text" id="dest_val" list="dest_list" value="${esc(order.destination||'')}" placeholder="e.g. Suez Port, Alexandria Port…">
+      <datalist id="dest_list">${destOptions.map(d=>`<option value="${esc(d)}">`).join('')}</datalist>
+      <div id="dest_preview" style="margin-top:8px;">${destinationBadge(order.destination||'')}</div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:10px;">
+      <button class="btn btn-signal" id="dest_save" style="flex:1;">Save</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    </div>`);
+  $('#dest_val').oninput = ()=>{ $('#dest_preview').innerHTML = destinationBadge($('#dest_val').value.trim()); };
+  $('#dest_save').onclick = async ()=>{
+    order.destination = $('#dest_val').value.trim();
+    await put('orders', order);
+    closeModal();
+    onDone();
+  };
+}
+
 async function orderSummary(orderId){
   const order = await getOne('orders', orderId);
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
@@ -3806,6 +3919,10 @@ async function orderSummary(orderId){
       <div class="row2" style="margin-top:12px;">
         <div><b>Order</b><div>${esc(order.orderNumber)}</div></div>
         <div><b>Date</b><div>${fmtDate(order.orderDate)}</div></div>
+      </div>
+      <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div><b>Destination</b><div style="margin-top:4px;">${order.destination ? destinationBadge(order.destination) : '<span class="subtle">Not set</span>'}</div></div>
+        <button class="btn btn-ghost btn-sm" id="editDestination" style="margin-left:auto;">✎ Edit</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -3837,6 +3954,7 @@ async function orderSummary(orderId){
       <a href="#/order/${orderId}/boxes" class="btn btn-ghost">📦 Supplier deliveries</a>
     </div>`;
   $('#editDelivery').onclick = ()=> openDeliveryInfoModal(order, ()=>orderSummary(orderId));
+  $('#editDestination').onclick = ()=> openDestinationModal(order, ()=>orderSummary(orderId));
   $('#exportXls').onclick = async ()=>{
     // only interrupt for driver/car the first time — once set (or explicitly skipped
     // and still blank), re-exporting just goes straight through
@@ -3913,6 +4031,16 @@ async function exportOrderExcel(orderId){
   infoRow('IMO Number', order.imo||'');
   infoRow('Order Number', order.orderNumber||'');
   infoRow('Order Date', order.orderDate ? fmtDate(order.orderDate) : '');
+  if(order.destination){
+    // destination gets its own loud, filled row rather than blending in with the other
+    // plain info rows — the whole point is that it's impossible to miss at a glance
+    const destRow = ws.addRow(['Destination', order.destination]);
+    destRow.height = 22;
+    destRow.eachCell({includeEmpty:true}, c=>{
+      c.font = {bold:true, size:12, color:{argb:'FF7A2E00'}};
+      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFFFE0B2'}};
+    });
+  }
   if(order.driverName) infoRow('Driver Name', order.driverName);
   if(order.carLicense) infoRow('Car License', order.carLicense);
   ws.addRow([]);
