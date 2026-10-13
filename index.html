@@ -87,6 +87,24 @@ input,select,textarea{font-family:var(--font-b); font-size:1rem;}
     display:block; position:fixed; inset:0; background:rgba(15,23,32,.5); z-index:80;
   }
   #main{padding:16px 14px 40px; padding-top:calc(70px + env(safe-area-inset-top,0px));}
+
+  /* Every list row in the app (ship/order lists, order summary, product lists, etc.)
+     is a single-line flex row built for desktop width: a thumbnail, a flexible
+     text block, then a run of badges/buttons/fixed-width columns. On a phone there
+     simply isn't room for all of that on one line — without this, the browser was
+     squeezing the flexible text block down to ~0px wide (so every word fell onto
+     its own line) while the badges/buttons stayed full-size and visually collided
+     with that squeezed text. Letting the row wrap fixes both: the text block keeps
+     a readable width and whatever doesn't fit just flows onto the next line(s)
+     instead of being crushed. */
+  .list-row{flex-wrap:wrap; row-gap:8px;}
+  .list-row > a.btn, .list-row > button.btn, .list-row > .iconbtn, .list-row > .badge{flex-shrink:0;}
+  /* The main text block in each row is marked up inline as "flex:1" (sometimes
+     with "min-width:0" too, to allow it to shrink on desktop). An inline style
+     always wins over a stylesheet rule, so min-width:0 has to be beaten with
+     !important here — otherwise the browser keeps everything on one line by
+     crushing this block down to almost nothing instead of wrapping the row. */
+  .list-row > [style*="flex:1"]{min-width:150px !important;}
 }
 @media (max-width:480px){
   .batch-row{padding:12px 4px;}
