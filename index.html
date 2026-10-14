@@ -1102,7 +1102,7 @@ async function render(){
   const hash = location.hash || '#/';
   document.querySelectorAll('.navlink').forEach(a=>{
     let base = '#/'+(hash.split('/')[1]||'');
-    if(base==='#/stock' || base==='#/deliveries' || base==='#/boxtypes' || base==='#/receiving') base='#/warehouse'; // sub-pages of the warehouse-management hub
+    if(base==='#/stock' || base==='#/deliveries' || base==='#/boxtypes' || base==='#/receiving' || base==='#/reliability') base='#/warehouse'; // sub-pages of the warehouse-management hub
     a.classList.toggle('active', a.getAttribute('data-route')===base || (base==='#/' && a.getAttribute('data-route')==='#/'));
   });
   setSidebarOpen(false);
@@ -1898,10 +1898,11 @@ route('warehouse', async ()=>{
           <button class="btn btn-signal" id="hubLogDelivery">+ Log a delivery</button>
           <a href="#/deliveries" class="btn ${shortfalls.length?'btn-danger':'btn-ghost'}">${shortfalls.length?`⚠ ${shortfalls.length} unresolved`:'View deliveries'}</a>
           <a href="#/boxtypes" class="btn btn-ghost">Box types</a>
+          <a href="#/reliability" class="btn btn-ghost">📊 Supplier reliability</a>
         </div>
       </div>
     </div>
-    <div class="card">
+    <div class="card" style="margin-bottom:16px;">
       <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
         <div style="flex:1; min-width:220px;">
           <div class="section-title" style="margin-bottom:4px;">Product receiving</div>
@@ -1910,6 +1911,17 @@ route('warehouse', async ()=>{
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
           <button class="btn btn-signal" id="hubLogReceipt">+ Log received stock</button>
           <a href="#/receiving" class="btn btn-ghost">View history</a>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:220px;">
+          <div class="section-title" style="margin-bottom:4px;">Low stock report</div>
+          <p class="subtle" style="margin:0;">Download an Excel sheet of everything currently low, grouped by the supplier who restocks it — so you know exactly who to call.</p>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <a href="#/stock" class="btn btn-ghost">${low.length ? `⬇ Export ${low.length} low item${low.length===1?'':'s'}` : 'View stock'}</a>
         </div>
       </div>
     </div>`;
@@ -1924,9 +1936,10 @@ route('warehouse', async ()=>{
 });
 
 route('stock', async (parts)=>{
-  const [productsAll, warehouses, sections] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections')]);
+  const [productsAll, warehouses, sections, suppliersAll] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
   const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
   const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
+  const supMap = new Map(suppliersAll.map(s=>[s.id,s]));
   const products = productsAll.filter(p=>p.active);
 
   window.__stockFilter = window.__stockFilter || (parts[0]==='all' ? 'tracked' : 'low');
@@ -1957,7 +1970,10 @@ route('stock', async (parts)=>{
     $('#main').innerHTML = `
       <a href="#/warehouse" class="subtle" style="display:inline-block; margin-bottom:10px; text-decoration:none;">‹ Warehouse management</a>
       <div class="topbar"><h1>Stock</h1>
-        <button class="btn btn-signal" id="stkTrackNew">+ Start tracking a product</button>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-ghost" id="stkExportLow" ${low.length?'':'disabled'}>⬇ Export low stock (${low.length})</button>
+          <button class="btn btn-signal" id="stkTrackNew">+ Start tracking a product</button>
+        </div>
       </div>
       <p class="subtle" style="margin-top:-10px;">Only products with a stock number entered are tracked — the rest are left exactly alone. Stock reduces automatically when an order finishes.</p>
       <div class="field" style="max-width:360px;"><input type="text" id="stkSearch" placeholder="Search…" value="${esc(window.__stockSearch)}"></div>
@@ -1992,6 +2008,7 @@ route('stock', async (parts)=>{
         openStockEditModal(picked, ()=>{ routes['stock']([]); });
       });
     };
+    if(low.length) $('#stkExportLow').onclick = ()=> exportLowStockExcel(low, supMap);
     let stkDebounce;
     $('#stkSearch').oninput = e=>{
       const val = e.target.value;
@@ -3587,6 +3604,86 @@ route('deliveries', async ()=>{
   };
 });
 
+/* ============================ SUPPLIER RELIABILITY REPORT ============================
+   The box-shortfall reconciliation above (received vs. actually dispatched) already
+   produces exactly the signal needed here — this just rolls it up per supplier instead
+   of per order, so it's usable as "evidence" the next time a supplier needs pushing
+   back on. Only CONFIRMED receipts count (dispatchedQty set) — an unconfirmed one isn't
+   a verdict on the supplier yet, it just hasn't been checked. A supplier with zero
+   confirmed deliveries has nothing to measure and is left out rather than shown as 0%. */
+function supplierReliabilityStats(receipts){
+  const bySupplier = new Map(); // supplierKey -> {name, deliveries, shortCount, shortUnits}
+  const byCombo = new Map();    // supplierKey|boxTypeName -> {supplierName, boxTypeName, deliveries, shortCount, shortUnits}
+  for(const r of receipts){
+    if(r.dispatchedQty==null) continue; // not confirmed yet — not reliability data
+    const supKey = r.supplierId || '';
+    const supName = r.supplierName || 'No supplier';
+    const short = round2(r.receivedQty - r.dispatchedQty);
+    const isShort = short > 0;
+
+    if(!bySupplier.has(supKey)) bySupplier.set(supKey, {supplierId:supKey, supplierName:supName, deliveries:0, shortCount:0, shortUnits:0});
+    const s = bySupplier.get(supKey);
+    s.deliveries++; if(isShort){ s.shortCount++; s.shortUnits = round2(s.shortUnits+short); }
+
+    const comboKey = supKey+'|'+r.boxTypeName;
+    if(!byCombo.has(comboKey)) byCombo.set(comboKey, {supplierName:supName, boxTypeName:r.boxTypeName||'(unnamed)', deliveries:0, shortCount:0, shortUnits:0});
+    const c = byCombo.get(comboKey);
+    c.deliveries++; if(isShort){ c.shortCount++; c.shortUnits = round2(c.shortUnits+short); }
+  }
+  const suppliers = [...bySupplier.values()].map(s=>({...s, rate: s.deliveries ? s.shortCount/s.deliveries : 0}));
+  suppliers.sort((a,b)=> b.rate-a.rate || b.shortUnits-a.shortUnits || b.deliveries-a.deliveries);
+  const combos = [...byCombo.values()].filter(c=>c.shortCount>0);
+  combos.sort((a,b)=> b.shortUnits-a.shortUnits || b.shortCount-a.shortCount);
+  return {suppliers, combos};
+}
+route('reliability', async ()=>{
+  const receipts = await getAll('boxReceipts');
+  const {suppliers, combos} = supplierReliabilityStats(receipts);
+  const confirmedTotal = suppliers.reduce((n,s)=>n+s.deliveries,0);
+  const shortTotal = suppliers.reduce((n,s)=>n+s.shortCount,0);
+  const shortUnitsTotal = round2(suppliers.reduce((n,s)=>n+s.shortUnits,0));
+  function rateBadge(rate){
+    if(rate===0) return `<span class="badge b-completed">0%</span>`;
+    if(rate < 0.15) return `<span class="badge b-modified">${Math.round(rate*100)}%</span>`;
+    return `<span class="badge b-unmatched">${Math.round(rate*100)}%</span>`;
+  }
+  $('#main').innerHTML = `
+    <a href="#/warehouse" class="subtle" style="display:inline-block; margin-bottom:10px; text-decoration:none;">‹ Warehouse management</a>
+    <div class="topbar"><h1>Supplier reliability</h1></div>
+    <p class="subtle" style="margin-top:-10px;">Built from confirmed supplier deliveries — boxes received vs. what actually went out with the order. Ranked by how often a supplier comes up short.</p>
+    <div class="grid-stats">
+      <div class="stat"><b>${suppliers.length}</b><div class="lbl">Suppliers with confirmed deliveries</div></div>
+      <div class="stat"><b>${confirmedTotal}</b><div class="lbl">Confirmed deliveries</div></div>
+      <div class="stat"><b>${shortTotal}</b><div class="lbl">Came up short</div></div>
+      <div class="stat"><b>${shortUnitsTotal}</b><div class="lbl">Total units short</div></div>
+    </div>
+    <h3 class="section-title">Suppliers, ranked by shortfall rate</h3>
+    <div class="card" style="margin-bottom:24px;">
+      ${suppliers.length ? suppliers.map((s,i)=>`
+        <div class="list-row">
+          <div style="width:28px;" class="subtle">${i+1}</div>
+          <div style="flex:1; min-width:0;">
+            <b>${esc(s.supplierName)}</b>
+            <div class="subtle">${s.deliveries} delivered · ${s.shortCount} short${s.shortUnits?' · '+s.shortUnits+' units missing total':''}</div>
+          </div>
+          ${rateBadge(s.rate)}
+        </div>`).join('') : `<div class="empty"><div class="ic">☏</div>No confirmed deliveries yet — reliability data appears once box deliveries are logged and confirmed.</div>`}
+    </div>
+    ${combos.length ? `
+      <h3 class="section-title">Worst supplier / box-type combos</h3>
+      <p class="subtle" style="margin-top:-10px;">Where to focus if you only push back on one or two things.</p>
+      <div class="card">
+        ${combos.slice(0,10).map(c=>`
+          <div class="list-row">
+            <div class="thumb">⚠</div>
+            <div style="flex:1; min-width:0;">
+              <b>${esc(c.supplierName)} — ${esc(c.boxTypeName)}</b>
+              <div class="subtle">${c.shortCount} of ${c.deliveries} deliveries short · ${c.shortUnits} units missing total</div>
+            </div>
+          </div>`).join('')}
+      </div>` : ''}`;
+});
+
 /* The user-owned list of box types (Ice boxes, Chicken boxes, …) that Supplier
    deliveries is built from — plain add/rename/delete, like Suppliers. Renaming
    doesn't touch history (each receipt keeps its own boxTypeName snapshot);
@@ -4083,6 +4180,22 @@ function conditionLabel(it, order){
   if(it.status==='pending') return (order.postponed||[]).includes(it.id) ? 'Postponed' : 'Pending';
   return it.status;
 }
+/* True only when the order sheet's unit and the database's unit for this item
+   are genuinely different measurements — not just worded differently. The sheet
+   and the product database often describe the exact same package in different
+   words ("KG" vs "1 kg", "PKT 450 GM" vs "450 GM"), which used to make every
+   one of those items show up as a false "converted" note even though the
+   picked quantity and the real-world size were identical. This parses both
+   units with the same logic computeUnitConversion already uses and only calls
+   it a real change when the picked quantity differs, or the units don't parse
+   to the same base size. */
+function isRealUnitChange(it){
+  if(round2(it.actualQty) !== round2(it.requestedQty)) return true;
+  if(normalize(it.actualUnit) === normalize(it.requestedUnit)) return false;
+  const rp = parseUnitSize(it.requestedUnit), ap = parseUnitSize(it.actualUnit);
+  if(rp.ok && ap.ok && rp.type===ap.type && Math.abs(rp.base-ap.base) < 0.001) return false;
+  return true;
+}
 function modNote(it){
   // items added by hand after the original sheet was imported (e.g. the client added
   // something mid-order) get flagged here so it's obvious, in-app and in the exported
@@ -4094,9 +4207,10 @@ function modNote(it){
   // "completed" items can still have been converted on the spot — e.g. ordered as 10 x 100gm
   // but the database product is kept in 200gm units, so it was auto-converted to 5 x 200gm and
   // picked as that. That conversion was only ever shown on-screen while picking; it never made
-  // it into the exported report, which is the gap this fills.
-  if(it.status==='completed' && it.actualQty!=null && it.requestedQty!=null &&
-     (round2(it.actualQty)!==round2(it.requestedQty) || normalize(it.actualUnit)!==normalize(it.requestedUnit))){
+  // it into the exported report, which is the gap this fills. isRealUnitChange() is what keeps
+  // this from also firing on items where nothing actually changed but the unit was just typed
+  // differently in the sheet vs. the database.
+  if(it.status==='completed' && it.actualQty!=null && it.requestedQty!=null && isRealUnitChange(it)){
     return prefix + `Ordered ${it.requestedQty} × ${it.requestedUnit} — converted to ${it.actualQty} × ${it.actualUnit||''} (database unit)`;
   }
   return prefix.trim();
@@ -4195,6 +4309,67 @@ async function exportOrderExcel(orderId){
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   await saveFile(`${(order.orderNumber||'order').replace(/[^a-z0-9\-_]+/ig,'_')}-report.xlsx`, blob);
+}
+
+/* ==================================== LOW STOCK REPORT ====================================
+   One sheet, grouped by the supplier who restocks each product — a supplier-name row,
+   then that supplier's low items underneath it — so the output can be read down the page
+   as a straight restocking checklist per call. Products with no supplier set (or whose
+   supplier was deleted) fall into their own "Unassigned" group at the end rather than
+   being silently dropped. */
+async function exportLowStockExcel(lowProducts, supMap){
+  const groups = new Map(); // supplierId ('' for unassigned) -> {name, products}
+  for(const p of lowProducts){
+    const sup = p.supplierId ? supMap.get(p.supplierId) : null;
+    const key = sup ? sup.id : '';
+    const name = sup ? sup.name : 'Unassigned';
+    if(!groups.has(key)) groups.set(key, {name, products:[]});
+    groups.get(key).products.push(p);
+  }
+  // real suppliers alphabetically first, "Unassigned" always last regardless of where it sorts by name
+  const sorted = [...groups.entries()].sort((a,b)=>{
+    if(a[0]==='') return 1;
+    if(b[0]==='') return -1;
+    return a[1].name.localeCompare(b[1].name);
+  }).map(([,g])=>g);
+  for(const g of sorted) g.products.sort((a,b)=>a.name.localeCompare(b.name));
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Dockline';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Low Stock');
+  const COLS = ['PRODUCT','AVAILABLE STOCK','UNIT','LOW STOCK LIMIT'];
+  ws.columns = [{width:42},{width:16},{width:16},{width:16}];
+
+  const titleRow = ws.addRow([`Low stock report — ${fmtDate(todayISO())}`]);
+  titleRow.getCell(1).font = {bold:true, size:14};
+  ws.addRow([]);
+
+  for(const g of sorted){
+    const supRow = ws.addRow([g.name]);
+    supRow.height = 22;
+    ws.mergeCells(supRow.number, 1, supRow.number, COLS.length);
+    supRow.eachCell({includeEmpty:true}, c=>{
+      c.font = {bold:true, size:12, color:{argb:'FFFFFFFF'}};
+      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF1B6B93'}};
+      c.alignment = {vertical:'middle'};
+    });
+    const headerRow = ws.addRow(COLS);
+    headerRow.eachCell(c=>{
+      c.font = {bold:true};
+      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFEDEAE1'}};
+      c.border = {bottom:{style:'thin', color:{argb:'FFDBD6C9'}}};
+    });
+    for(const p of g.products){
+      const row = ws.addRow([p.name, parseFloat(p.stockQty), p.unit||'', stockLimitOf(p)]);
+      row.eachCell({includeEmpty:true}, c=>{ c.border = {bottom:{style:'hair', color:{argb:'FFEDEAE1'}}}; });
+      row.getCell(2).font = {bold:true, color:{argb:'FFC1432E'}}; // low stock number, called out same as everywhere else in the app
+    }
+    ws.addRow([]);
+  }
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  await saveFile(`low-stock-report-${todayISO()}.xlsx`, blob);
 }
 
 /* ==================================== ORDER SPLITTER ====================================
