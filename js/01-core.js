@@ -256,8 +256,8 @@ async function applyStockDeductions(items){
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
 // APP_VERSION now lives inline in index.html (so the update check can read it from the page itself)
-const DB_NAME='dockline_db', DB_VER=7;
-const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts'];
+const DB_NAME='dockline_db', DB_VER=8;
+const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts','historyOrders','historyLines'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
 const SYNC_STORES=['syncQueue','syncMeta'];
 let dbp = new Promise((resolve,reject)=>{
