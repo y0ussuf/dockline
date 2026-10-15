@@ -62,8 +62,12 @@ function resolvedOutcomeLines(it, st){
   if(!st || st.label==='Pending' || st.label==='Postponed') return [];
   const lines = [];
   if(it.status==='substituted'){
-    lines.push(`Substituted with: <b>${esc(it.replacementName||'—')}</b>`);
-    if(it.actualQty!=null) lines.push(`Picked: ${it.actualQty} × ${esc(it.actualUnit||'')}`);
+    const rs = replacementsOf(it);
+    if(rs.length>1) rs.forEach(r=> lines.push(`Substituted with: <b>${esc(r.name||'—')}</b> — ${r.qty} × ${esc(r.unit||'')}`));
+    else {
+      lines.push(`Substituted with: <b>${esc(it.replacementName||'—')}</b>`);
+      if(it.actualQty!=null) lines.push(`Picked: ${it.actualQty} × ${esc(it.actualUnit||'')}`);
+    }
   } else if(it.status==='modified'){
     lines.push(`Picked: <b>${it.actualQty} × ${esc(it.actualUnit||'')}</b> (ordered ${it.requestedQty} × ${esc(it.requestedUnit||'')})`);
   } else if(it.status==='completed'){
@@ -590,18 +594,15 @@ function openModifyModal(it, product, onDone){
   showModal(`<h3>Modify — ${esc(it.excelDesc)}</h3>
     ${matchNote(it) ? `<p class="subtle" style="margin-top:-10px;">${esc(matchNote(it))}</p>` : ''}
     ${conv ? `<p class="subtle">Ordered as ${it.requestedQty} × ${esc(it.requestedUnit)} — converted to ${prefillQty} × ${esc(prefillUnit)} based on the product's database unit. Adjust below if needed.</p>` : ''}
-    <div class="row2">
+    <div class="row2" id="m_normalqty" style="display:${it.status==='substituted'?'none':''};">
       <div class="field"><label>Actual quantity</label><input type="number" id="m_qty" value="${prefillQty}" step="any"></div>
       <div class="field"><label>Unit</label><input type="text" id="m_unit" value="${esc(prefillUnit)}"></div>
     </div>
     <div class="field"><label><input type="checkbox" id="m_sub" style="width:auto; margin-right:8px;" ${it.status==='substituted'?'checked':''}>Substitute with a different product</label></div>
     <div id="m_subwrap" style="display:${it.status==='substituted'?'block':'none'};">
-      <div class="field">
-        <label>Replacement product</label>
-        <button type="button" class="btn btn-ghost" id="m_subpick" style="width:100%; justify-content:flex-start; text-align:left;">
-          <span id="m_subpick_label">${it.replacementProductId ? esc(it.replacementName||'') : 'Tap to choose a product from the database…'}</span>
-        </button>
-      </div>
+      <label>Replacement products — each with its own quantity</label>
+      <div id="m_subrows"></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="m_subadd" style="margin-bottom:12px;">+ Add another product</button>
     </div>
     <div class="field"><label>Production date (optional)</label><input type="date" id="m_prod" value="${it.actualProductionDate||''}"></div>
     ${expiryFieldHtml('m', {expiryDate: it.actualExpiryDate || '', mode: it.actualExpiryMode, shelfAmount: it.actualExpiryShelfAmount, shelfUnit: it.actualExpiryShelfUnit})}
@@ -611,10 +612,32 @@ function openModifyModal(it, product, onDone){
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
     </div>`);
   wireExpiryField('m', 'm_prod');
-  let chosenReplacement = it.replacementProductId ? {id:it.replacementProductId, name:it.replacementName||''} : null;
+  // one row per replacement product: {productId, name, qty, unit}
+  let subs = replacementsOf(it).map(r=>({productId:r.productId, name:r.name, qty:r.qty, unit:r.unit}));
   let pickerProducts=null, pickerWhMap=null, pickerSecMap=null;
-  $('#m_sub').onchange = e=>{ $('#m_subwrap').style.display = e.target.checked ? 'block' : 'none'; };
-  $('#m_subpick').onclick = async ()=>{
+  function drawSubs(){
+    $('#m_subrows').innerHTML = subs.map((r,i)=>`
+      <div class="card" style="padding:10px; margin-bottom:8px;">
+        <button type="button" class="btn btn-ghost btn-sm" data-pick="${i}" style="width:100%; justify-content:flex-start; text-align:left;">${r.productId ? esc(r.name) : 'Tap to choose a product from the database…'}</button>
+        <div style="display:flex; gap:8px; margin-top:8px; align-items:flex-end;">
+          <div class="field" style="flex:1; margin:0;"><label>Quantity</label><input type="number" step="any" data-qty="${i}" value="${r.qty ?? ''}"></div>
+          <div class="field" style="flex:1; margin:0;"><label>Unit</label><input type="text" data-unit="${i}" value="${esc(r.unit||'')}"></div>
+          ${subs.length>1 ? `<button type="button" class="iconbtn" data-rm="${i}" title="Remove">✕</button>` : ''}
+        </div>
+      </div>`).join('');
+    $('#m_subrows').querySelectorAll('[data-qty]').forEach(e=>e.oninput=()=>{ const v=parseFloat(e.value); subs[+e.dataset.qty].qty = isNaN(v)?'':v; });
+    $('#m_subrows').querySelectorAll('[data-unit]').forEach(e=>e.oninput=()=>{ subs[+e.dataset.unit].unit = e.value; });
+    $('#m_subrows').querySelectorAll('[data-rm]').forEach(e=>e.onclick=()=>{ subs.splice(+e.dataset.rm,1); drawSubs(); });
+    $('#m_subrows').querySelectorAll('[data-pick]').forEach(e=>e.onclick=()=> pickFor(+e.dataset.pick));
+  }
+  if(!subs.length) subs.push({productId:'', name:'', qty:prefillQty, unit:prefillUnit});
+  drawSubs();
+  $('#m_subadd').onclick = ()=>{ subs.push({productId:'', name:'', qty:'', unit:''}); drawSubs(); };
+  $('#m_sub').onchange = e=>{
+    $('#m_subwrap').style.display = e.target.checked ? 'block' : 'none';
+    $('#m_normalqty').style.display = e.target.checked ? 'none' : '';
+  };
+  async function pickFor(idx){
     if(!pickerProducts){
       const [products, warehouses, sections] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections')]);
       pickerProducts = products;
@@ -622,8 +645,10 @@ function openModifyModal(it, product, onDone){
       pickerSecMap = Object.fromEntries(sections.map(s=>[s.id,s]));
     }
     openProductPicker(it, pickerProducts, pickerWhMap, pickerSecMap, (picked)=>{
-      chosenReplacement = {id:picked.id, name:picked.name};
-      $('#m_subpick_label').textContent = picked.name;
+      subs[idx].productId = picked.id; subs[idx].name = picked.name;
+      if(!subs[idx].unit) subs[idx].unit = picked.unit || '';
+      drawSubs();
+      if(idx!==0) return; // the dates below describe the first replacement
       // prefill from the replacement's own catalog dates — still editable, since the
       // batch actually on the shelf can differ from what's on file for the product
       if(picked.productionDate) $('#m_prod').value = picked.productionDate;
@@ -638,26 +663,30 @@ function openModifyModal(it, product, onDone){
         $('#m_edate').value = picked.expiryDate;
       }
     });
-  };
+  }
   $('#m_save').onclick = async ()=>{
-    if($('#m_sub').checked && !chosenReplacement){
-      showAlert('Choose which product from the database was actually used before saving.');
-      return;
+    const subbing = $('#m_sub').checked;
+    if(subbing){
+      if(subs.some(r=>!r.productId)){ showAlert('Choose which product from the database was actually used for every replacement line (or remove the empty one).'); return; }
+      if(subs.some(r=> typeof r.qty!=='number' || !(r.qty>0))){ showAlert('Enter a quantity for every replacement product.'); return; }
     }
     const qty = parseFloat($('#m_qty').value);
     it.actualQty = isNaN(qty) ? prefillQty : qty;
     it.actualUnit = $('#m_unit').value.trim();
+    if(subbing){ it.actualQty = subs[0].qty; it.actualUnit = (subs[0].unit||'').trim(); } // kept for older screens/reports
     it.notes = $('#m_notes').value.trim();
     it.actualProductionDate = $('#m_prod').value;
     it.actualExpiryDate = $('#m_edate').value;
     it.actualExpiryMode = expiryModeOf('m');
     it.actualExpiryShelfAmount = $('#m_shelf_amount').value ? parseFloat($('#m_shelf_amount').value) : '';
     it.actualExpiryShelfUnit = $('#m_shelf_unit').value;
-    if($('#m_sub').checked){
+    if(subbing){
       it.status='substituted';
-      it.replacementProductId = chosenReplacement.id;
-      it.replacementName = chosenReplacement.name;
+      it.replacements = subs.map(r=>({productId:r.productId, name:r.name, qty:r.qty, unit:(r.unit||'').trim()}));
+      it.replacementProductId = subs[0].productId;
+      it.replacementName = subs.map(r=>r.name).join(' + ');
     } else {
+      it.replacements = [];
       it.replacementProductId = '';
       it.replacementName = '';
       it.status = (it.actualQty !== it.requestedQty) ? 'modified' : 'completed';

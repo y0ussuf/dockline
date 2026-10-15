@@ -220,21 +220,33 @@ function isLowStock(p){
    only statuses that mean real stock physically left the shelf for THIS product:
    a substitution was a different, unlinked item, and "not available"/postponed-
    then-dropped items never got picked at all. */
+/* The products an item was substituted with: [{productId, name, qty, unit}]. A substitution can use
+   several products, each with its own quantity (it.replacements). Older single-replacement items
+   (replacementProductId / actualQty) are read through the same shape. */
+function replacementsOf(it){
+  if(Array.isArray(it.replacements) && it.replacements.length) return it.replacements;
+  if(it.replacementProductId) return [{productId: it.replacementProductId, name: it.replacementName||'', qty: it.actualQty, unit: it.actualUnit||''}];
+  return [];
+}
 async function applyStockDeductions(items){
-  // a substituted item was physically picked as the replacement product, not the
-  // originally-matched one, so stock comes off whichever product that pick actually was
-  const stockProductId = it => it.status==='substituted' ? it.replacementProductId : it.productId;
-  const touched = items.filter(it=>
-    (it.status==='completed' || it.status==='modified' || it.status==='substituted') &&
-    stockProductId(it) && typeof it.actualQty==='number' && !isNaN(it.actualQty)
-  );
+  // a substituted item was physically picked as its replacement product(s), not the
+  // originally-matched one, so stock comes off each product that was actually used
+  const lines = [];
+  for(const it of items){
+    if(it.status==='completed' || it.status==='modified'){
+      if(it.productId) lines.push({productId: it.productId, qty: it.actualQty});
+    } else if(it.status==='substituted'){
+      for(const r of replacementsOf(it)) if(r.productId) lines.push({productId: r.productId, qty: r.qty});
+    }
+  }
+  const touched = lines.filter(l=> typeof l.qty==='number' && !isNaN(l.qty));
   if(!touched.length) return;
   const products = await getAll('products');
   const byId = new Map(products.map(p=>[p.id,p]));
-  for(const it of touched){
-    const p = byId.get(stockProductId(it));
+  for(const l of touched){
+    const p = byId.get(l.productId);
     if(!p || !isStockTracked(p)) continue;
-    p.stockQty = round2(parseFloat(p.stockQty) - it.actualQty);
+    p.stockQty = round2(parseFloat(p.stockQty) - l.qty);
     await put('products', p);
   }
 }
