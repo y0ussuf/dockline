@@ -49,8 +49,9 @@ function parseDateText(raw){
   if(m){
     let d=+m[1], mo=+m[2];
     let ambiguous = d<=12 && mo<=12 && d!==mo;
-    if(mo>12 && d<=12){ [d,mo]=[mo,d]; ambiguous=false; } // clearly month-first
-    const iso=_isoFromParts(m[3],mo,d); if(iso) return {iso, ambiguous};
+    let evidence = d>12 ? 'dayfirst' : null; // a day above 12 proves the sheets write day first
+    if(mo>12 && d<=12){ [d,mo]=[mo,d]; ambiguous=false; evidence='monthfirst'; } // clearly month-first
+    const iso=_isoFromParts(m[3],mo,d); if(iso) return {iso, ambiguous, evidence};
   }
   m = s.match(/(\d{1,2})(?:st|nd|rd|th)?[\s-]+([A-Za-z]{3,9})\.?,?[\s-]+(\d{4})/);
   if(m && _MONTHS[m[2].toLowerCase()]){ const iso=_isoFromParts(m[3],_MONTHS[m[2].toLowerCase()],m[1]); if(iso) return {iso, ambiguous:false}; }
@@ -178,7 +179,7 @@ async function parseHistorySheet(file){
     const v = findVesselName(aoa, headerInfo.rowIndex, file.name);
     out.vessel = v.vessel; out.code = v.code; out.imo = v.code;
     const d = findOrderDate(aoa, headerInfo.rowIndex, file.name);
-    if(d){ out.date=d.iso; out.ambiguous=d.ambiguous; out.dateSource=d.source; }
+    if(d){ out.date=d.iso; out.ambiguous=d.ambiguous; out.dateSource=d.source; out.evidence=d.evidence||null; }
     const { kSr, kDesc, kQty, kUnit } = headerInfo;
     for(const row of aoa.slice(headerInfo.rowIndex+1)){
       const desc = String((kDesc!==-1 ? row[kDesc] : '') ?? '').trim();
@@ -295,26 +296,64 @@ async function insightsHome(){
   }, {danger:true, yesLabel:'Delete'});
 }
 
+/* A zip of order sheets (e.g. one month, or a whole year) is opened here in the browser and its
+   .xlsx/.xls files are handled exactly like files picked one by one. Folders inside the zip are fine. */
+async function expandPickedFiles(files, onProgress){
+  const out = [];
+  for(const f of files){
+    if(!/\.zip$/i.test(f.name)){ out.push(f); continue; }
+    if(typeof JSZip==='undefined'){ out.push({name:f.name, unreadable:'zip support not loaded — check your connection and reload'}); continue; }
+    try{
+      const zip = await JSZip.loadAsync(await f.arrayBuffer());
+      const entries = Object.values(zip.files).filter(e=>
+        !e.dir && /\.xlsx?$/i.test(e.name) && !/(^|\/)(__MACOSX|~\$)/.test(e.name) && !/(^|\/)~\$/.test(e.name));
+      let i = 0;
+      for(const e of entries){
+        i++; if(onProgress) onProgress(`Opening ${f.name}: ${i} of ${entries.length}…`);
+        const buf = await e.async('arraybuffer');
+        const base = e.name.split('/').pop();
+        const file = new File([buf], base);
+        file.zipPath = e.name;
+        out.push(file);
+        if(i%20===0) await new Promise(r=>setTimeout(r,0));
+      }
+      if(!entries.length) out.push({name:f.name, unreadable:'no Excel files found inside this zip'});
+    }catch(err){ out.push({name:f.name, unreadable:'could not open this zip'}); }
+  }
+  return out;
+}
+
 /* ============================== IMPORT SCREEN ============================== */
 async function historyImportScreen(){
   $('#main').innerHTML = `
     <div class="topbar"><h1>Import past orders</h1></div>
     <div class="card" style="max-width:720px;">
-      <p class="subtle" style="margin-top:0;">Choose as many order sheets as you like (select a whole folder's worth at once). You'll see what was found — vessel, date, number of lines — before anything is saved.</p>
-      <input type="file" id="hi_files" accept=".xlsx,.xls" multiple>
+      <p class="subtle" style="margin-top:0;">Choose Excel sheets, or <b>zip files</b> of them (for example one zip per month or per year — you can pick several zips at once). You'll see what was found — vessel, date, number of lines — before anything is saved.</p>
+      <input type="file" id="hi_files" accept=".xlsx,.xls,.zip" multiple>
       <p class="subtle" id="hi_status" style="margin-top:10px;"></p>
     </div>
     <div id="hi_preview"></div>`;
   let parsed = [];
   $('#hi_files').onchange = async e=>{
-    const files = [...e.target.files];
-    if(!files.length) return;
+    const picked = [...e.target.files];
+    if(!picked.length) return;
     parsed = [];
+    $('#hi_status').textContent = 'Opening files…';
+    const files = await expandPickedFiles(picked, msg=>{ $('#hi_status').textContent = msg; });
     for(let i=0;i<files.length;i++){
-      $('#hi_status').textContent = `Reading ${i+1} of ${files.length}…`;
-      parsed.push(await parseHistorySheet(files[i]));
+      $('#hi_status').textContent = `Reading sheet ${i+1} of ${files.length}…`;
+      if(files[i].unreadable){ parsed.push({fileName:files[i].name, ok:false, error:files[i].unreadable, lines:[]}); continue; }
+      const r = await parseHistorySheet(files[i]);
+      if(files[i].zipPath) r.fileName = files[i].zipPath;
+      parsed.push(r);
       if(i%10===0) await new Promise(r=>setTimeout(r,0)); // keep the page responsive
     }
+    // One date like 25/03/2025 proves the sheets write the day first, which settles every
+    // other day/month-looking date in the batch — so only flag them if the batch contradicts itself.
+    const dayFirst = parsed.some(p=>p.evidence==='dayfirst'), monthFirst = parsed.some(p=>p.evidence==='monthfirst');
+    if(dayFirst && !monthFirst) parsed.forEach(p=>{ p.ambiguous = false; });
+    // sheets that need a look go to the top
+    parsed.sort((a,b)=> (b.ok?(!b.date||b.ambiguous?1:0):2) - (a.ok?(!a.date||a.ambiguous?1:0):2));
     $('#hi_status').textContent = '';
     drawPreview();
   };
@@ -323,7 +362,7 @@ async function historyImportScreen(){
     $('#hi_preview').innerHTML = `
       <div class="card" style="margin-top:18px;">
         <div class="section-title">${good.length} sheet${good.length===1?'':'s'} ready${bad.length?` · ${bad.length} could not be read`:''}</div>
-        <p class="subtle" style="margin-top:-6px;">Fix any vessel name or date that looks wrong. Sheets already imported before are skipped automatically.</p>
+        <p class="subtle" style="margin-top:-6px;">${good.filter(p=>!p.date||p.ambiguous).length ? `<b>${good.filter(p=>!p.date||p.ambiguous).length}</b> need a look and are listed first. ` : 'Everything has a vessel and a date. '}Fix any vessel name or date that looks wrong. Sheets already imported before are skipped automatically.</p>
         <div class="tbl-wrap"><table class="tbl">
           <thead><tr><th></th><th>File</th><th>Vessel</th><th>Date</th><th class="num">Lines</th></tr></thead>
           <tbody>${parsed.map((p,i)=>`<tr>
