@@ -1,10 +1,32 @@
+/* ---------------- order status helpers (shared by Home / Orders / History / Summary) ----------------
+   An order that's finished picking but hasn't left the warehouse yet (the ship hasn't arrived)
+   is flagged awaitingDispatch, so everyone can see it's DONE but NOT SENT. Orders without the
+   flag — including everything completed before this existed — count as sent. */
+function isAwaitingDispatch(o){ return o.status==='completed' && !!o.awaitingDispatch; }
+function orderBadgeHtml(o){
+  if(isAwaitingDispatch(o)) return `<span class="badge b-awaiting">picked · not sent</span>`;
+  return `<span class="badge b-${o.status}">${o.status}</span>`;
+}
+/* picking/draft first (still being worked on), then picked-but-not-sent, then sent/completed;
+   newest first inside each group */
+function orderSortRank(o){
+  if(o.status!=='completed') return 0;
+  return isAwaitingDispatch(o) ? 1 : 2;
+}
+function compareOrdersForList(a, b){
+  return orderSortRank(a)-orderSortRank(b) ||
+    ((b.status==='completed' ? (b.completedAt||b.createdAt||'') : (b.createdAt||'')).localeCompare(
+      a.status==='completed' ? (a.completedAt||a.createdAt||'') : (a.createdAt||'')));
+}
+
 /* ==================================== HOME ==================================== */
 route('home', async ()=>{
   const [orders, products, warehouses, shortfalls] = await Promise.all([getAll('orders'), getAll('products'), getAll('warehouses'), openShortfalls()]);
   const active = orders.filter(o=>o.status==='picking').length;
   const today = todayISO();
   const completedToday = orders.filter(o=>o.status==='completed' && (o.completedAt||'').slice(0,10)===today).length;
-  const recent = orders.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,6);
+  const awaitingCount = orders.filter(isAwaitingDispatch).length;
+  const recent = orders.slice().sort(compareOrdersForList).slice(0,6);
   const lowStockCount = products.filter(p=>p.active && isLowStock(p)).length;
   $('#main').innerHTML = `
     <div class="topbar"><h1>Dashboard</h1></div>
@@ -17,6 +39,7 @@ route('home', async ()=>{
     <div class="grid-stats">
       <div class="stat"><b>${active}</b><div class="lbl">Active orders</div></div>
       <div class="stat"><b>${completedToday}</b><div class="lbl">Completed today</div></div>
+      <div class="stat"><b>${awaitingCount}</b><div class="lbl">Picked, not sent</div></div>
       <div class="stat"><b>${products.length}</b><div class="lbl">Products in database</div></div>
       <div class="stat"><b>${warehouses.length}</b><div class="lbl">Warehouses</div></div>
     </div>
@@ -35,7 +58,7 @@ route('home', async ()=>{
             <div class="subtle">IMO ${esc(o.imo)} · ${fmtDate(o.orderDate)}</div>
           </div>
           ${destinationBadge(o.destination)}
-          <span class="badge b-${o.status}">${o.status}</span>
+          ${orderBadgeHtml(o)}
           <a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm">Open</a>
         </div>`).join('') : `<div class="empty"><div class="ic">🚢</div>No orders yet. Start with “+ New Order”.</div>`}
     </div>
