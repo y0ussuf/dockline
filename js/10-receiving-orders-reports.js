@@ -433,7 +433,7 @@ async function orderSummary(orderId){
           <div style="width:50px;" class="subtle">${esc(it.sr||'—')}</div>
           <div style="flex:1;"><b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}${matchNote(it)?`<div class="subtle">${esc(matchNote(it))}</div>`:''}${it.actualExpiryDate?`<div class="subtle">exp ${fmtDate(it.actualExpiryDate)}${it.actualProductionDate?' · prod '+fmtDate(it.actualProductionDate):''} (set for this order)</div>`:''}</div>
           <div class="subtle" style="width:120px;">${it.requestedQty} ${esc(it.requestedUnit)}</div>
-          <div class="subtle" style="width:120px;">${it.actualQty ?? '—'} ${esc(it.actualUnit||'')}</div>
+          <div class="subtle" style="width:120px;">${replacementsOf(it).length>1 && it.status==='substituted' ? replacementsOf(it).map(r=>`${r.qty} ${esc(r.unit||'')}`).join(' + ') : `${it.actualQty ?? '—'} ${esc(it.actualUnit||'')}`}</div>
           <span class="badge b-${it.status}">${it.status.replace('_',' ')}</span>
           ${order.status==='completed' && it.productId ? `<button class="iconbtn" data-relink="${it.id}" title="Wrong product? Change it (stock is corrected too)">⇄</button>` : ''}
         </div>`).join('')}
@@ -519,7 +519,11 @@ function modNote(it){
   // report, which lines weren't on the original order
   const prefix = it.addedManually ? 'Added after import (not on original order). ' : '';
   if(it.status==='modified') return prefix + `Ordered ${it.requestedQty} × ${it.requestedUnit} — picked ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
-  if(it.status==='substituted') return prefix + `Substituted with "${it.replacementName||'—'}" — ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
+  if(it.status==='substituted'){
+    const rs = replacementsOf(it);
+    if(rs.length>1) return prefix + 'Substituted with: ' + rs.map(r=>`"${r.name||'—'}" — ${r.qty ?? ''} × ${r.unit||''}`).join('; ');
+    return prefix + `Substituted with "${it.replacementName||'—'}" — ${it.actualQty ?? ''} × ${it.actualUnit||''}`;
+  }
   if(it.status==='not_available') return prefix + 'Not available';
   if(it.status==='from_supplier') return prefix + 'Collected directly from the supplier by the driver';
   // "completed" items can still have been converted on the spot — e.g. ordered as 10 x 100gm
