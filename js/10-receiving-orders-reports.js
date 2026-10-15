@@ -544,6 +544,17 @@ async function exportOrderExcel(orderId){
       c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFFFE0B2'}};
     });
   }
+  if(isAwaitingDispatch(order)){
+    // picked but still in the warehouse waiting for the ship — loud blue row, same idea as Destination
+    const dRow = ws.addRow(['Dispatch', 'PICKED — NOT SENT (waiting in warehouse for the ship)' + (order.awaitingDispatchSince ? ' · since ' + fmtDate(order.awaitingDispatchSince) : '')]);
+    dRow.height = 22;
+    dRow.eachCell({includeEmpty:true}, c=>{
+      c.font = {bold:true, size:12, color:{argb:'FF1B5E85'}};
+      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFD6E9F5'}};
+    });
+  } else if(order.status==='completed' && order.sentAt){
+    infoRow('Dispatch', 'Sent · ' + fmtDate(order.sentAt));
+  }
   if(order.driverName) infoRow('Driver Name', order.driverName);
   if(order.carLicense) infoRow('Car License', order.carLicense);
   ws.addRow([]);
