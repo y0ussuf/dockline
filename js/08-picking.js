@@ -177,11 +177,13 @@ async function storeHubScreen(orderId){
       <button class="btn btn-ghost btn-sm" id="hubAddItem">+ Add item (client added this after)</button>
       <button class="btn btn-ghost btn-sm" id="hubSearch">🔍 Search &amp; pick an item</button>
       <a href="#/order/${orderId}/items" class="btn btn-ghost btn-sm">📋 View all items</a>
+      <button class="btn btn-ghost btn-sm" id="hubPartial">⬇ Partial report</button>
       <a href="#/order/${orderId}/pick/all" class="btn btn-ghost btn-sm">Go through all stores in priority order instead</a>
       <a href="#/order/${orderId}/postponed" class="btn btn-ghost btn-sm">Postponed (${(order.postponed||[]).length})</a>
       <a href="#/order/${orderId}/boxes" class="btn btn-ghost btn-sm">📦 Supplier deliveries</a>
       <a href="#/orders" class="btn btn-ghost btn-sm">⏸ Save &amp; pause</a>
     </div>`;
+  $('#hubPartial').onclick = async ()=>{ await exportPartialReport(orderId); storeHubScreen(orderId); };
   $('#hubSearch').onclick = ()=> openSearchPick(orderId, ()=>storeHubScreen(orderId));
   $('#hubEditDest').onclick = ()=> openDestinationModal(order, ()=>storeHubScreen(orderId));
   $('#hubAddItem').onclick = ()=> openAddItemModal(orderId, ()=>storeHubScreen(orderId));

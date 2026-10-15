@@ -167,6 +167,7 @@ textarea{resize:vertical; min-height:70px;}
 .b-from_supplier{background:rgba(27,107,147,.16); color:var(--sea);}
 .b-draft{background:var(--paper-dim); color:var(--ink-soft);}
 .b-awaiting{background:rgba(27,107,147,.16); color:var(--sea);}
+.b-partial{background:rgba(27,107,147,.16); color:var(--sea); outline:1px dashed var(--sea);}
 .b-picking{background:var(--warn-bg); color:var(--warn);}
 .b-lowstock{background:var(--warn-bg); color:var(--warn);}
 
