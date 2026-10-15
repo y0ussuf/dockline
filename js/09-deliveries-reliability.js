@@ -16,7 +16,43 @@ async function getOrderBoxReceipts(orderId){
    the order can finish — this is the gate postponedScreen checks */
 function unconfirmedBoxReceipts(receipts){ return receipts.filter(r=>r.dispatchedQty==null); }
 
-async function finishOrder(orderId){
+/* Lines whose product no longer matches what the saved mapping says today — i.e. the mapping was
+   changed after the order was imported. Finishing would take their stock off the old product. */
+async function findMappingDrift(orderId){
+  const [items, mappings, products] = await Promise.all([getAll('orderItems'), getAll('mappings'), getAll('products')]);
+  const byId = new Map(products.map(p=>[p.id,p]));
+  const out = [];
+  for(const it of items){
+    if(it.orderId!==orderId || !it.productId) continue;
+    if(!['completed','modified','from_supplier'].includes(it.status)) continue;
+    const m = mappings.find(x=>x.excelDescNormalized===normalize(it.excelDesc));
+    const want = m && byId.get(m.productId);
+    if(want && want.id!==it.productId) out.push({it, want, have: byId.get(it.productId)});
+  }
+  return out;
+}
+
+async function finishOrder(orderId, skipCheck){
+  if(!skipCheck){
+    const drift = await findMappingDrift(orderId);
+    if(drift.length){
+      showModal(`<h3>⚠ Product mapping changed</h3>
+        <p class="subtle">${drift.length} item${drift.length===1?' is':'s are'} linked to a product that your mappings no longer point to. If you finish now, stock will come off the old product.</p>
+        <div style="max-height:260px; overflow:auto; margin:10px 0;">${drift.map(d=>`<div class="list-row"><div style="flex:1;"><b>${esc(d.it.excelDesc)}</b><div class="subtle">now linked to “${esc(d.have?d.have.name:d.it.productName)}” → mapping says “${esc(d.want.name)}”</div></div></div>`).join('')}</div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <button class="btn btn-signal" id="dr_fix">Switch to the new products &amp; finish</button>
+          <button class="btn btn-ghost" id="dr_anyway">Finish anyway (keep old products)</button>
+          <button class="btn btn-ghost" id="dr_cancel">Cancel — let me review the items</button>
+        </div>`);
+      $('#dr_fix').onclick = async ()=>{
+        for(const d of drift) await relinkOrderItem(d.it.id, d.want);
+        closeModal(); finishOrder(orderId, true);
+      };
+      $('#dr_anyway').onclick = ()=>{ closeModal(); finishOrder(orderId, true); };
+      $('#dr_cancel').onclick = ()=>{ closeModal(); location.hash = `#/order/${orderId}/items`; render(); };
+      return;
+    }
+  }
   const order = await getOne('orders', orderId);
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
   if(!order.stockApplied){

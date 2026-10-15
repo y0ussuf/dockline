@@ -435,12 +435,14 @@ async function orderSummary(orderId){
           <div class="subtle" style="width:120px;">${it.requestedQty} ${esc(it.requestedUnit)}</div>
           <div class="subtle" style="width:120px;">${it.actualQty ?? '—'} ${esc(it.actualUnit||'')}</div>
           <span class="badge b-${it.status}">${it.status.replace('_',' ')}</span>
+          ${order.status==='completed' && it.productId ? `<button class="iconbtn" data-relink="${it.id}" title="Wrong product? Change it (stock is corrected too)">⇄</button>` : ''}
         </div>`).join('')}
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
       <a href="#/orders" class="btn btn-ghost">Back to Orders</a>
       <a href="#/order/${orderId}/boxes" class="btn btn-ghost">📦 Supplier deliveries</a>
     </div>`;
+  document.querySelectorAll('[data-relink]').forEach(b=>b.onclick=()=> changeItemProduct(b.dataset.relink, ()=>orderSummary(orderId)));
   if($('#toggleDispatch')) $('#toggleDispatch').onclick = async ()=>{
     const fresh = await getOne('orders', orderId);
     if(fresh.awaitingDispatch){
