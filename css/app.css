@@ -1,0 +1,217 @@
+:root{
+  --ink:#12202B; --ink-soft:#3A4A5C; --paper:#F7F5F0; --paper-dim:#EDEAE1;
+  --line:#DBD6C9; --signal:#FF7A1A; --signal-text:#ffffff; --signal-ink:#7A3200; --sea:#1B6B93;
+  --success:#2E7D4F; --success-bg:#E4F2E9; --danger:#C1432E; --danger-bg:#FBE7E2;
+  --warn:#B8860B; --warn-bg:#FBF0DB; --card:#FFFFFF; --radius:10px;
+  --font-d:'Space Grotesk','Segoe UI',system-ui,sans-serif;
+  --font-b:'Inter','Segoe UI',system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+:root:not([data-theme="light"]) { }
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#EDEAE1; --ink-soft:#B9C2CC; --paper:#0F1720; --paper-dim:#17222E;
+    --line:#293848; --card:#17222E; --success-bg:#123625; --danger-bg:#3A1C16; --warn-bg:#3A2C0C;
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#EDEAE1; --ink-soft:#B9C2CC; --paper:#0F1720; --paper-dim:#17222E;
+  --line:#293848; --card:#17222E; --success-bg:#123625; --danger-bg:#3A1C16; --warn-bg:#3A2C0C;
+}
+html,body{height:100%;}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--paper); color:var(--ink); font-family:var(--font-b);
+  -webkit-tap-highlight-color:transparent; line-height:1.45;
+}
+h1,h2,h3,.disp{font-family:var(--font-d); letter-spacing:-0.01em;}
+a{color:inherit;}
+button{font-family:var(--font-b); cursor:pointer;}
+input,select,textarea{font-family:var(--font-b); font-size:1rem;}
+::selection{background:var(--signal); color:#fff;}
+
+/* ---------- Shell ---------- */
+#shell{display:flex; min-height:100vh;}
+#sidebar{
+  width:230px; flex-shrink:0; border-right:1px solid var(--line); padding:22px 14px;
+  display:flex; flex-direction:column; gap:4px; position:sticky; top:0; height:100vh;
+}
+#sidebar .brand{font-family:var(--font-d); font-weight:700; font-size:1.3rem; padding:4px 10px 22px; display:block; text-decoration:none; color:inherit;}
+#sidebar .brand span{color:var(--signal);}
+.navlink{display:flex; align-items:center; gap:10px; padding:11px 12px; border-radius:8px; color:var(--ink-soft); text-decoration:none; font-weight:600; font-size:.95rem;}
+.navlink .ic{font-size:1.15rem; width:22px; text-align:center;}
+.navlink.active{background:var(--paper-dim); color:var(--ink);}
+.navlink:hover{background:var(--paper-dim);}
+#main{flex:1; min-width:0; padding:28px 32px 100px; max-width:1180px;}
+#mobileTopbar{display:none;}
+#sidebarBackdrop{display:none;}
+@media (max-width:860px){
+  #mobileTopbar{
+    display:flex; align-items:center; gap:14px; position:fixed; top:0; left:0; right:0; z-index:70;
+    background:var(--card); border-bottom:1px solid var(--line);
+    padding:calc(12px + env(safe-area-inset-top,0px)) 14px 12px;
+  }
+  #mobileTopbar #sidebarToggle{background:transparent; border:none; font-size:1.4rem; line-height:1; color:var(--ink); padding:4px 6px;}
+  #mobileTopbar .brand{font-family:var(--font-d); font-weight:700; font-size:1.2rem; padding:0; text-decoration:none; color:inherit;}
+  #mobileTopbar .brand span{color:var(--signal);}
+  #shell{display:block;}
+  #sidebar{
+    display:flex; position:fixed; top:0; left:0; height:100vh; z-index:90;
+    width:250px; max-width:82vw; box-shadow:2px 0 24px rgba(0,0,0,.2);
+    transform:translateX(-100%); transition:transform .22s ease; background:var(--card);
+    padding-top:calc(22px + env(safe-area-inset-top,0px));
+  }
+  #sidebar.open{transform:translateX(0);}
+  #sidebarBackdrop.open{
+    display:block; position:fixed; inset:0; background:rgba(15,23,32,.5); z-index:80;
+  }
+  #main{padding:16px 14px 40px; padding-top:calc(70px + env(safe-area-inset-top,0px));}
+
+  /* Every list row in the app (ship/order lists, order summary, product lists, etc.)
+     is a single-line flex row built for desktop width: a thumbnail, a flexible
+     text block, then a run of badges/buttons/fixed-width columns. On a phone there
+     simply isn't room for all of that on one line — without this, the browser was
+     squeezing the flexible text block down to ~0px wide (so every word fell onto
+     its own line) while the badges/buttons stayed full-size and visually collided
+     with that squeezed text. Letting the row wrap fixes both: the text block keeps
+     a readable width and whatever doesn't fit just flows onto the next line(s)
+     instead of being crushed. */
+  .list-row{flex-wrap:wrap; row-gap:8px;}
+  .list-row > a.btn, .list-row > button.btn, .list-row > .iconbtn, .list-row > .badge{flex-shrink:0;}
+  /* The main text block in each row is marked up inline as "flex:1" (sometimes
+     with "min-width:0" too, to allow it to shrink on desktop). An inline style
+     always wins over a stylesheet rule, so min-width:0 has to be beaten with
+     !important here — otherwise the browser keeps everything on one line by
+     crushing this block down to almost nothing instead of wrapping the row. */
+  .list-row > [style*="flex:1"]{min-width:150px !important;}
+}
+@media (max-width:480px){
+  .batch-row{padding:12px 4px;}
+  .batch-row .batch-check{width:22px; height:22px; margin-top:4px;}
+  .batch-row .thumb{width:38px; height:38px;}
+  .batch-name{font-size:.86rem; margin-bottom:4px;}
+  .batch-qty-box{font-size:1.05rem; padding:4px 9px; border-radius:7px; gap:4px;}
+  .batch-qty-box .unit{font-size:.7rem;}
+  .batch-meta{margin-top:4px; font-size:.78rem;}
+}
+.topbar{display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:22px; flex-wrap:wrap;}
+.topbar h1{font-size:1.5rem; margin:0;}
+.subtle{color:var(--ink-soft); font-size:.92rem;}
+
+/* ---------- Buttons ---------- */
+.btn{border:none; border-radius:8px; padding:12px 18px; font-weight:700; font-size:.95rem; display:inline-flex; align-items:center; gap:8px; transition:transform .08s ease;}
+.btn:active{transform:scale(.97);}
+.btn-signal{background:var(--signal); color:var(--signal-text);}
+.theme-swatch{width:36px; height:36px; border-radius:50%; border:2px solid var(--line); cursor:pointer; padding:0;}
+.theme-swatch.selected{box-shadow:0 0 0 3px var(--paper), 0 0 0 5px var(--ink);}
+.btn-sea{background:var(--sea); color:#fff;}
+.btn-ghost{background:transparent; color:var(--ink); border:1.5px solid var(--line);}
+.btn-danger{background:var(--danger); color:#fff;}
+.btn-success{background:var(--success); color:#fff;}
+.btn-lg{padding:20px 22px; font-size:1.15rem; width:100%; border-radius:12px;}
+.btn-sm{padding:7px 12px; font-size:.82rem; border-radius:7px;}
+.btn:disabled{opacity:.4; cursor:not-allowed;}
+.iconbtn{background:transparent; border:1.5px solid var(--line); border-radius:8px; width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:1.05rem;}
+
+/* ---------- Cards / sections ---------- */
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px;}
+.section-title{font-family:var(--font-d); font-weight:700; font-size:1.05rem; margin:0 0 12px;}
+.grid-stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:26px;}
+.stat{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px;}
+.stat b{display:block; font-family:var(--font-d); font-size:1.8rem; font-weight:700;}
+.stat .lbl{color:var(--ink-soft); font-size:.83rem; font-weight:600;}
+
+/* ---------- Forms ---------- */
+label{display:block; font-weight:600; font-size:.82rem; color:var(--ink-soft); margin:0 0 5px;}
+.field{margin-bottom:14px;}
+input[type=text],input[type=number],input[type=date],input[type=email],input[type=password],select,textarea{
+  width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:8px; background:var(--paper); color:var(--ink);
+}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--signal); outline-offset:1px;}
+textarea{resize:vertical; min-height:70px;}
+.row2{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+@media (max-width:560px){.row2{grid-template-columns:1fr;}}
+
+/* ---------- Table-ish lists ---------- */
+.list-row{display:flex; align-items:center; gap:12px; padding:12px 10px; border-bottom:1px solid var(--line);}
+.list-row:last-child{border-bottom:none;}
+.drag-handle{cursor:grab; color:var(--ink-soft); font-size:1.1rem; padding:4px;}
+.thumb{width:44px; height:44px; border-radius:8px; background:var(--paper-dim); display:flex; align-items:center; justify-content:center; font-size:1.3rem; flex-shrink:0; overflow:hidden;}
+.thumb img{width:100%; height:100%; object-fit:cover;}
+
+/* ---------- Batch-pick quantity: this is the one number a picker must not get
+   wrong, so it stands apart from everything else on the row — solid high-contrast
+   fill rather than colored text, large digits, its own visual box — on purpose,
+   for quick reading and for people with limited vision picking in a busy store. */
+.batch-row{align-items:flex-start; padding:14px 8px;}
+.batch-row .batch-check{width:24px; height:24px; flex-shrink:0; margin-top:5px;}
+.batch-row .thumb{width:44px; height:44px; margin-top:2px;}
+.batch-name{font-weight:600; font-size:.95rem; color:var(--ink-soft); margin-bottom:5px;}
+.batch-qty-box{
+  display:inline-flex; align-items:baseline; gap:5px; background:var(--signal); color:var(--signal-text);
+  padding:5px 11px; border-radius:8px; font-family:var(--font-d); font-weight:800;
+  font-size:1.25rem; line-height:1; letter-spacing:-0.01em;
+}
+.batch-qty-box .unit{font-size:.8rem; font-weight:700;}
+.batch-meta{margin-top:5px;}
+.badge{display:inline-block; padding:3px 10px; border-radius:20px; font-size:.74rem; font-weight:700;}
+.b-pending{background:var(--paper-dim); color:var(--ink-soft);}
+.b-completed{background:var(--success-bg); color:var(--success);}
+.b-modified{background:var(--warn-bg); color:var(--warn);}
+.b-substituted{background:var(--warn-bg); color:var(--warn);}
+.b-picked_later{background:var(--paper-dim); color:var(--ink-soft);}
+.b-unmatched{background:var(--danger-bg); color:var(--danger);}
+.b-not_available{background:var(--danger-bg); color:var(--danger);}
+.b-from_supplier{background:rgba(27,107,147,.16); color:var(--sea);}
+.b-draft{background:var(--paper-dim); color:var(--ink-soft);}
+.b-picking{background:var(--warn-bg); color:var(--warn);}
+.b-lowstock{background:var(--warn-bg); color:var(--warn);}
+
+/* ---------- Modal ---------- */
+.modal-bg{position:fixed; inset:0; background:rgba(15,23,32,.55); display:flex; align-items:flex-end; justify-content:center; z-index:100; padding:0;}
+@media (min-width:700px){.modal-bg{align-items:center; padding:20px;}}
+.modal{background:var(--card); width:100%; max-width:560px; max-height:92vh; overflow:auto; border-radius:16px 16px 0 0; padding:22px;}
+@media (min-width:700px){.modal{border-radius:16px;}}
+.modal h3{margin:0 0 16px;}
+
+/* ---------- Picking screen ---------- */
+.pick-wrap{max-width:640px; margin:0 auto;}
+.pick-progress{display:flex; align-items:center; gap:10px; margin-bottom:16px; color:var(--ink-soft); font-weight:600; font-size:.9rem;}
+.pick-bar{flex:1; height:6px; border-radius:4px; background:var(--paper-dim); overflow:hidden;}
+.pick-bar > div{height:100%; background:var(--signal);}
+.pick-card{background:var(--card); border:1px solid var(--line); border-radius:20px; padding:26px; text-align:center;}
+.pick-thumb{width:150px; height:150px; margin:0 auto 18px; border-radius:16px; background:var(--paper-dim); display:flex; align-items:center; justify-content:center; font-size:4rem; overflow:hidden;}
+.pick-thumb img{width:100%; height:100%; object-fit:cover;}
+.pick-name{font-size:2rem; font-weight:700; margin:0 0 4px;}
+.pick-qty{font-size:1.5rem; color:var(--signal); font-weight:700; margin-bottom:16px;}
+.pick-meta{display:grid; grid-template-columns:1fr 1fr; gap:10px; text-align:left; margin:18px 0; font-size:.9rem;}
+.pick-meta div b{display:block; font-size:.72rem; color:var(--ink-soft); font-weight:700; text-transform:none;}
+.pick-actions{display:flex; flex-direction:column; gap:10px; margin-top:20px;}
+@media (min-width:560px){.pick-actions{flex-direction:row;}}
+
+.empty{text-align:center; padding:50px 20px; color:var(--ink-soft);}
+.empty .ic{font-size:2.6rem; margin-bottom:10px;}
+.tag-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;}
+.chip{padding:7px 13px; border-radius:20px; border:1.5px solid var(--line); background:transparent; font-weight:600; font-size:.85rem; color:var(--ink-soft);}
+.chip.active{background:var(--ink); color:var(--paper); border-color:var(--ink);}
+.match-card{border:1.5px solid var(--line); border-radius:12px; padding:14px; margin-bottom:10px;}
+.match-card.ok{border-color:var(--success);}
+.match-card.warn{border-color:var(--warn);}
+.match-card.bad{border-color:var(--danger);}
+.cand-list{display:flex; flex-direction:column; gap:6px; margin-top:10px;}
+.cand-btn{text-align:left; padding:9px 12px; border-radius:8px; border:1.5px solid var(--line); background:var(--paper); font-weight:600; font-size:.9rem;}
+.cand-btn:hover{border-color:var(--sea);}
+/* ---- login gate (real Supabase accounts — see the LOGIN section in the script) ---- */
+#authGate{position:fixed; inset:0; z-index:9999; background:var(--paper); display:flex; align-items:center; justify-content:center; padding:20px;}
+#authGate.hidden{display:none;}
+body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, body.locked #modal-root{display:none !important;}
+.authbox{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:30px; max-width:360px; width:100%; box-shadow:0 10px 34px rgba(18,32,43,.14);}
+.authbox .brand{font-family:var(--font-d); font-weight:700; font-size:1.3rem; margin-bottom:6px;}
+.authbox .brand span{color:var(--signal);}
+/* ---- "a newer version is live" banner (see checkForUpdate() near boot()) ---- */
+#updateBanner{position:fixed; left:0; right:0; bottom:0; z-index:9998; display:none; justify-content:center; padding:14px env(safe-area-inset-right,14px) calc(14px + env(safe-area-inset-bottom,0px)) env(safe-area-inset-left,14px);}
+#updateBanner.show{display:flex;}
+#updateBanner .box{background:var(--ink); color:var(--paper); border-radius:12px; padding:12px 14px; display:flex; align-items:center; gap:12px; max-width:480px; width:100%; box-shadow:0 10px 30px rgba(0,0,0,.25); flex-wrap:wrap;}
+#updateBanner .box span{flex:1; font-size:.9rem; min-width:160px;}
