@@ -320,7 +320,8 @@ async function deleteOrderCascade(orderId){
 }
 
 route('orders', async ()=>{
-  const orders = (await getAll('orders')).filter(o=>o.status!=='completed').sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  // open work: still being picked, plus picked orders still waiting in the warehouse for the ship
+  const orders = (await getAll('orders')).filter(o=>o.status!=='completed' || isAwaitingDispatch(o)).sort(compareOrdersForList);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Orders</h1><a href="#/order/new" class="btn btn-signal">+ New Order</a></div>
     <div class="card" id="ordersList">
@@ -330,8 +331,8 @@ route('orders', async ()=>{
           <div style="flex:1; min-width:0;"><b>${esc(o.vessel)}</b> <span class="subtle">· ${esc(o.orderNumber)}</span>
           <div class="subtle">IMO ${esc(o.imo)} · ${fmtDate(o.orderDate)}</div></div>
           ${destinationBadge(o.destination)}
-          <span class="badge b-${o.status}">${o.status}</span>
-          <a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm">Continue</a>
+          ${orderBadgeHtml(o)}
+          <a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm">${o.status==='completed'?'View':'Continue'}</a>
           <button class="iconbtn" data-delorder="${o.id}" title="Delete order">✕</button>
         </div>`).join('') : `<div class="empty"><div class="ic">🚢</div>No open orders. Create one to get started.</div>`}
     </div>`;
@@ -344,7 +345,7 @@ route('orders', async ()=>{
 });
 
 route('history', async ()=>{
-  const orders = (await getAll('orders')).filter(o=>o.status==='completed').sort((a,b)=>(b.completedAt||'').localeCompare(a.completedAt||''));
+  const orders = (await getAll('orders')).filter(o=>o.status==='completed').sort(compareOrdersForList);
   $('#main').innerHTML = `
     <div class="topbar"><h1>History</h1></div>
     <p class="subtle" style="margin-top:-10px;">Search/filter by ship, IMO, and date is coming in the next pass. Completed orders below.</p>
@@ -355,6 +356,7 @@ route('history', async ()=>{
           <div style="flex:1; min-width:0;"><b>${esc(o.vessel)}</b> <span class="subtle">· ${esc(o.orderNumber)} · IMO ${esc(o.imo)}</span>
           <div class="subtle">Completed ${fmtDate(o.completedAt)}</div></div>
           ${destinationBadge(o.destination)}
+          ${orderBadgeHtml(o)}
           <a href="#/order/${o.id}/summary" class="btn btn-ghost btn-sm">View</a>
           <button class="iconbtn" data-delorder="${o.id}" title="Delete order">✕</button>
         </div>`).join('') : `<div class="empty"><div class="ic">◔</div>Completed orders will appear here.</div>`}

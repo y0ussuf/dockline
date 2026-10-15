@@ -388,6 +388,15 @@ async function orderSummary(orderId){
       </div>
       <button class="btn btn-ghost btn-sm" id="editDelivery">✎ Edit delivery details</button>
     </div>
+    ${order.status==='completed' ? `
+    <div class="card" style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:200px;">
+        <b>Dispatch</b>
+        <div style="margin-top:4px;">${orderBadgeHtml(order)}${isAwaitingDispatch(order) && order.awaitingDispatchSince ? ` <span class="subtle">since ${fmtDate(order.awaitingDispatchSince)}</span>` : ''}${!isAwaitingDispatch(order) && order.sentAt ? ` <span class="subtle">sent ${fmtDate(order.sentAt)}</span>` : ''}</div>
+        <div class="subtle" style="margin-top:4px;">${isAwaitingDispatch(order) ? 'Picked and waiting in the warehouse for the ship. Everyone sees it on Home and Orders.' : 'Mark it if this order is picked but still in the warehouse until the ship arrives.'}</div>
+      </div>
+      <button class="btn ${isAwaitingDispatch(order)?'btn-signal':'btn-ghost'} btn-sm" id="toggleDispatch">${isAwaitingDispatch(order) ? '✓ Mark as sent' : '⏳ Mark as picked, not sent'}</button>
+    </div>` : ''}
     <div class="grid-stats">
       <div class="stat"><b>${items.length}</b><div class="lbl">Total products</div></div>
       <div class="stat"><b>${counts.completed||0}</b><div class="lbl">Completed</div></div>
@@ -410,6 +419,19 @@ async function orderSummary(orderId){
       <a href="#/orders" class="btn btn-ghost">Back to Orders</a>
       <a href="#/order/${orderId}/boxes" class="btn btn-ghost">📦 Supplier deliveries</a>
     </div>`;
+  if($('#toggleDispatch')) $('#toggleDispatch').onclick = async ()=>{
+    const fresh = await getOne('orders', orderId);
+    if(fresh.awaitingDispatch){
+      fresh.awaitingDispatch = false;
+      fresh.sentAt = new Date().toISOString();
+    } else {
+      fresh.awaitingDispatch = true;
+      fresh.awaitingDispatchSince = new Date().toISOString();
+      delete fresh.sentAt;
+    }
+    await put('orders', fresh);
+    orderSummary(orderId);
+  };
   $('#editDelivery').onclick = ()=> openDeliveryInfoModal(order, ()=>orderSummary(orderId));
   $('#editDestination').onclick = ()=> openDestinationModal(order, ()=>orderSummary(orderId));
   $('#exportXls').onclick = async ()=>{
