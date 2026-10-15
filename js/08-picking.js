@@ -106,6 +106,52 @@ async function resyncItemSnapshot(it, product){
   await put('orderItems', it);
 }
 
+/* Points an order line at a different product (wrong/old match). Updates the line's name,
+   warehouse, section and picking position. If the order is already finished its stock was
+   already deducted from the OLD product, so the picked quantity is moved over to the new one.
+   Returns {moved, qty, oldName} so the caller can tell the person what happened. */
+async function relinkOrderItem(itemId, newProduct){
+  const it = await getOne('orderItems', itemId);
+  const order = await getOne('orders', it.orderId);
+  const oldProduct = it.productId ? await getOne('products', it.productId) : null;
+  let moved = false;
+  const counts = (it.status==='completed' || it.status==='modified') && typeof it.actualQty==='number' && !isNaN(it.actualQty);
+  if(order && order.stockApplied && counts){
+    if(oldProduct && isStockTracked(oldProduct)){
+      oldProduct.stockQty = round2(parseFloat(oldProduct.stockQty) + it.actualQty);
+      await put('products', oldProduct); moved = true;
+    }
+    if(isStockTracked(newProduct)){
+      newProduct.stockQty = round2(parseFloat(newProduct.stockQty) - it.actualQty);
+      await put('products', newProduct); moved = true;
+    }
+  }
+  it.productId = newProduct.id;
+  it.matchType = 'confirmed';
+  await resyncItemSnapshot(it, newProduct);
+  return {moved, qty: it.actualQty, oldName: oldProduct ? oldProduct.name : '', newName: newProduct.name};
+}
+
+/* shared "pick a different product for this line" flow (item popup + finished-order summary) */
+async function changeItemProduct(itemId, onDone){
+  const it = await getOne('orderItems', itemId);
+  const order = await getOne('orders', it.orderId);
+  const [products, warehouses, sections] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections')]);
+  const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
+  const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
+  openProductPicker(it, products, whMap, secMap, (picked)=>{
+    if(picked.id===it.productId){ onDone(); return; }
+    const go = async ()=>{
+      const r = await relinkOrderItem(itemId, picked);
+      if(r.moved) showAlert(`Moved ${r.qty} from “${r.oldName}” to “${r.newName}” in stock.`, 'Stock corrected');
+      onDone();
+    };
+    if(order.stockApplied && (it.status==='completed'||it.status==='modified')){
+      showConfirm(`This order is already finished, so its stock was taken off “${it.productName}”. Switch this line to “${picked.name}” and move ${it.actualQty} of stock across?`, go);
+    } else go();
+  });
+}
+
 function openDateModal(it, onSaved){
   showModal(`<h3>Production / expiry date — ${esc(it.productName)}</h3>
     <p class="subtle">For fresh or same-day items. This is recorded for this order only — the product's own database record is untouched.</p>
@@ -272,6 +318,7 @@ async function openItemActionModal(orderId, itemId, onDone){
       <button class="btn btn-ghost" id="qa_later">⏭ Pick Later</button>
       <button class="btn btn-ghost btn-sm" id="qa_dates">📅 Set production / expiry date</button>
       ${product ? `<button class="btn btn-ghost btn-sm" id="qa_complete">✎ Edit product details</button>` : ''}
+      ${it.productId && order.status!=='completed' ? `<button class="btn btn-ghost btn-sm" id="qa_relink">⇄ Change product (wrong match)</button>` : ''}
       <button class="btn btn-ghost" onclick="closeModal()">Close without changes</button>
     </div>`);
   function finish(){ closeModal(); onDone(); }
@@ -297,6 +344,7 @@ async function openItemActionModal(orderId, itemId, onDone){
     await unpostpone(orderId, it.id);
     finish();
   };
+  if($('#qa_relink')) $('#qa_relink').onclick = ()=>{ closeModal(); changeItemProduct(itemId, onDone); };
   $('#qa_dates').onclick = ()=> openDateModal(it, ()=> openItemActionModal(orderId, itemId, onDone));
   if($('#qa_complete')) $('#qa_complete').onclick = async ()=>{
     const [warehouses, sections, suppliers] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
