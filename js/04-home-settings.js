@@ -37,19 +37,10 @@ route('home', async ()=>{
   const lowStockCount = products.filter(p=>p.active && isLowStock(p)).length;
   // orders we've partly picked and are still waiting on items for — shown loudly so nothing gets forgotten
   const partialOrders = orders.filter(isPartial);
-  let waitingHtml = '';
-  if(partialOrders.length){
-    const allItems = await getAll('orderItems');
-    waitingHtml = `<div class="card" style="margin-bottom:18px; border-color:var(--sea); background:rgba(27,107,147,.08);">
-      <div class="section-title" style="margin-bottom:6px;">⏳ Still waiting for items</div>
-      ${partialOrders.map(o=>{
-        const names = allItems.filter(it=>it.orderId===o.id && it.status==='pending').sort((a,b)=>(a.sr||'').toString().localeCompare((b.sr||'').toString(), undefined, {numeric:true}));
-        return `<div style="margin:10px 0;">
-          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"><b>${esc(o.vessel)}</b><span class="subtle">· ${esc(o.orderNumber)}</span><a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm" style="margin-left:auto;">Open</a></div>
-          <ul style="margin:6px 0 0 18px; padding:0;">${names.map(it=>`<li>${esc(it.excelDesc)} <span class="subtle">· ${it.requestedQty} ${esc(it.requestedUnit)}</span></li>`).join('') || '<li class="subtle">Nothing left — finish the order.</li>'}</ul>
-        </div>`;}).join('')}
-    </div>`;
-  }
+  // small chip per partly-picked order (same style as the low-stock chip) — click to open it
+  const waitingHtml = partialOrders.length ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+    ${partialOrders.map(o=>{ const n=(o.postponed||[]).length; return `<a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm" style="border-color:var(--sea); color:var(--sea);">⏳ ${esc(o.vessel)} · ${n} item${n===1?'':'s'} waiting</a>`; }).join('')}
+  </div>` : '';
   $('#main').innerHTML = `
     <div class="topbar"><h1>Dashboard</h1></div>
     ${DEMO_MODE ? `<div class="card" style="margin-bottom:18px; border-color:var(--warn); background:var(--warn-bg);"><b>🧪 Demo mode</b><span class="subtle"> — you're testing locally, not logged into a real account. Nothing here syncs anywhere, and this ends when you reload the page.</span></div>` : ''}
