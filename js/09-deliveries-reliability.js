@@ -23,6 +23,7 @@ async function finishOrder(orderId){
     await applyStockDeductions(items);
     order.stockApplied = true;
   }
+  order.partialSince = null;
   order.status='completed'; order.completedAt = new Date().toISOString();
   await put('orders', order);
   location.hash = `#/order/${orderId}/summary`;

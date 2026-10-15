@@ -67,6 +67,14 @@ route('receiving', async ()=>{
   await draw();
 });
 
+/* Sends the manager a report while the order is still open. Marks the order partially picked
+   so the crew sees it too; the final report (same file name) simply replaces it later. */
+async function exportPartialReport(orderId){
+  const o = await getOne('orders', orderId);
+  if(!o.partialSince){ o.partialSince = new Date().toISOString(); await put('orders', o); }
+  await exportOrderExcel(orderId);
+}
+
 async function postponedScreen(orderId){
   const order = await getOne('orders', orderId);
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
@@ -99,7 +107,21 @@ async function postponedScreen(orderId){
   $('#main').innerHTML = `
     <div class="topbar"><h1>Postponed products</h1></div>
     <p class="subtle" style="margin-top:-10px;">${postponed.length} item${postponed.length===1?'':'s'} to resolve before finishing this order.</p>
+    <div class="card" style="margin-bottom:16px;">
+      <b>Manager needs the report before these arrive?</b>
+      <div class="subtle" style="margin:4px 0 10px;">The report lists these as “To Follow”. The order stays open and shows as “partially picked” for the crew and on your Home screen until you finish it.</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-signal btn-sm" id="pRepExport">⬇ Partial report (Excel)</button>
+        <button class="btn btn-ghost btn-sm" id="pRepPark">⏸ Mark partially picked &amp; leave</button>
+      </div>
+    </div>
     <div class="card" id="postList"></div>`;
+  $('#pRepExport').onclick = ()=> exportPartialReport(orderId);
+  $('#pRepPark').onclick = async ()=>{
+    const o = await getOne('orders', orderId);
+    if(!o.partialSince){ o.partialSince = new Date().toISOString(); await put('orders', o); }
+    location.hash = '#/orders';
+  };
   const list = $('#postList');
   list.innerHTML = postponed.map(id=>{
     const it = byId[id];
@@ -459,6 +481,7 @@ const REPORT_STATUS_STYLE = {
   'From Supplier': {fill:'FFD6E9F5', font:'FF1B5E85'}, // blue — collected by the driver straight from the supplier
   'Cancelled':   {fill:'FFF8CBCB', font:'FFA6333B'}, // red
   'Postponed':   {fill:'FFE2E2E2', font:'FF595959'}, // grey
+  'To Follow':   {fill:'FFE4D9F7', font:'FF5B2E91'}, // purple — not picked yet, still to come (partial reports)
   'Pending':     {fill:'FFFFFFFF', font:'FF333333'}  // white/unstyled
 };
 
@@ -468,7 +491,8 @@ function conditionLabel(it, order){
   if(it.status==='substituted') return 'Substituted';
   if(it.status==='not_available') return 'Cancelled';
   if(it.status==='from_supplier') return 'From Supplier';
-  if(it.status==='pending') return (order.postponed||[]).includes(it.id) ? 'Postponed' : 'Pending';
+  // an unfinished order's open items are "to follow" — that's what the reader of a partial report needs to see
+  if(it.status==='pending') return order.status==='completed' ? 'Pending' : 'To Follow';
   return it.status;
 }
 /* True only when the order sheet's unit and the database's unit for this item
@@ -544,6 +568,15 @@ async function exportOrderExcel(orderId){
       c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFFFE0B2'}};
     });
   }
+  const openCount = items.filter(it=>it.status==='pending').length;
+  if(order.status!=='completed' && openCount){
+    const pRow = ws.addRow(['Report status', `PARTIAL REPORT — ${openCount} item${openCount===1?'':'s'} still to follow (final report will replace this one)`]);
+    pRow.height = 22;
+    pRow.eachCell({includeEmpty:true}, c=>{
+      c.font = {bold:true, size:12, color:{argb:'FF5B2E91'}};
+      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFE4D9F7'}};
+    });
+  }
   if(isAwaitingDispatch(order)){
     // picked but still in the warehouse waiting for the ship — loud blue row, same idea as Destination
     const dRow = ws.addRow(['Dispatch', 'PICKED — NOT SENT (waiting in warehouse for the ship)' + (order.awaitingDispatchSince ? ' · since ' + fmtDate(order.awaitingDispatchSince) : '')]);
@@ -602,7 +635,7 @@ async function exportOrderExcel(orderId){
   ws.addRow([]);
   const legendTitleRow = ws.addRow(['Color key:']);
   legendTitleRow.getCell(1).font = {bold:true};
-  for(const label of ['Picked','Modified','Substituted','From Supplier','Cancelled','Postponed']){
+  for(const label of ['Picked','Modified','Substituted','From Supplier','Cancelled','To Follow']){
     const style = REPORT_STATUS_STYLE[label];
     const r = ws.addRow(['', label]);
     r.getCell(1).fill = {type:'pattern', pattern:'solid', fgColor:{argb: style.fill}};

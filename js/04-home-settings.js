@@ -3,7 +3,14 @@
    is flagged awaitingDispatch, so everyone can see it's DONE but NOT SENT. Orders without the
    flag — including everything completed before this existed — count as sent. */
 function isAwaitingDispatch(o){ return o.status==='completed' && !!o.awaitingDispatch; }
+/* An order that's mostly picked but still has items we're waiting on. It stays "picking"
+   (so it keeps floating to the top of every list) — partialSince is what marks it. */
+function isPartial(o){ return o.status==='picking' && !!o.partialSince; }
 function orderBadgeHtml(o){
+  if(isPartial(o)){
+    const n = (o.postponed||[]).length;
+    return `<span class="badge b-partial">partially picked${n?` · ${n} waiting`:''}</span>`;
+  }
   if(isAwaitingDispatch(o)) return `<span class="badge b-awaiting">picked · not sent</span>`;
   return `<span class="badge b-${o.status}">${o.status}</span>`;
 }
@@ -28,9 +35,25 @@ route('home', async ()=>{
   const awaitingCount = orders.filter(isAwaitingDispatch).length;
   const recent = orders.slice().sort(compareOrdersForList).slice(0,6);
   const lowStockCount = products.filter(p=>p.active && isLowStock(p)).length;
+  // orders we've partly picked and are still waiting on items for — shown loudly so nothing gets forgotten
+  const partialOrders = orders.filter(isPartial);
+  let waitingHtml = '';
+  if(partialOrders.length){
+    const allItems = await getAll('orderItems');
+    waitingHtml = `<div class="card" style="margin-bottom:18px; border-color:var(--sea); background:rgba(27,107,147,.08);">
+      <div class="section-title" style="margin-bottom:6px;">⏳ Still waiting for items</div>
+      ${partialOrders.map(o=>{
+        const names = allItems.filter(it=>it.orderId===o.id && it.status==='pending').sort((a,b)=>(a.sr||'').toString().localeCompare((b.sr||'').toString(), undefined, {numeric:true}));
+        return `<div style="margin:10px 0;">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"><b>${esc(o.vessel)}</b><span class="subtle">· ${esc(o.orderNumber)}</span><a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm" style="margin-left:auto;">Open</a></div>
+          <ul style="margin:6px 0 0 18px; padding:0;">${names.map(it=>`<li>${esc(it.excelDesc)} <span class="subtle">· ${it.requestedQty} ${esc(it.requestedUnit)}</span></li>`).join('') || '<li class="subtle">Nothing left — finish the order.</li>'}</ul>
+        </div>`;}).join('')}
+    </div>`;
+  }
   $('#main').innerHTML = `
     <div class="topbar"><h1>Dashboard</h1></div>
     ${DEMO_MODE ? `<div class="card" style="margin-bottom:18px; border-color:var(--warn); background:var(--warn-bg);"><b>🧪 Demo mode</b><span class="subtle"> — you're testing locally, not logged into a real account. Nothing here syncs anywhere, and this ends when you reload the page.</span></div>` : ''}
+    ${waitingHtml}
     ${(lowStockCount || shortfalls.length) ? `
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">
         ${lowStockCount ? `<a href="#/stock" class="btn btn-ghost" style="border-color:var(--warn); color:var(--warn);">⚠ ${lowStockCount} low stock item${lowStockCount===1?'':'s'}</a>` : ''}
