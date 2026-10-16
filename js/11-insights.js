@@ -199,6 +199,7 @@ route('insights', async (parts)=>{
   if(parts[0]==='import') return historyImportScreen();
   if(parts[0]==='match') return historyMatchScreen();
   if(parts[0]==='product') return productInsightScreen(parts[1]);
+  if(parts[0]==='vessel') return vesselProfileScreen(parts[1]);
   return insightsHome();
 });
 
@@ -257,13 +258,9 @@ async function insightsHome(){
   const vesselRows = [...vessels.values()].map(v=>{
     v.dates.sort();
     const name = [...v.names.entries()].sort((a,b)=>b[1]-a[1])[0][0];
-    let gap = null;
-    if(v.dates.length>1){
-      const days = (new Date(v.dates[v.dates.length-1]) - new Date(v.dates[0]))/86400000;
-      gap = Math.round(days/(v.dates.length-1));
-    }
-    return {name, orders:v.dates.length, first:v.dates[0], last:v.dates[v.dates.length-1], gap, variants:v.names.size};
-  }).sort((a,b)=>b.orders-a.orders);
+    const rh = vesselRhythm(v.dates, anchor);
+    return {key:v.key, name, orders:v.dates.length, first:v.dates[0], last:v.dates[v.dates.length-1], gap:rh.gap, status:rh.status, variants:v.names.size};
+  }).sort((a,b)=> VESSEL_BADGE[a.status].rank-VESSEL_BADGE[b.status].rank || b.orders-a.orders);
 
   // ---- products: demand in base measure, last 90 days vs the 90 before ----
   const cut1 = new Date(new Date(anchor).getTime()-90*86400000).toISOString().slice(0,10);
@@ -327,9 +324,9 @@ async function insightsHome(){
     </table>${prodRows.length>60?`<p class="subtle" style="padding:8px 10px;">Showing the 60 biggest of ${prodRows.length} products.</p>`:''}</div>
     <h3 class="section-title" style="margin-top:28px;">Vessels</h3>
     <div class="card tbl-wrap"><table class="tbl">
-      <thead><tr><th>Vessel</th><th class="num">Orders</th><th>First</th><th>Last</th><th class="num">Usually every</th></tr></thead>
-      <tbody>${vesselRows.map(v=>`<tr><td><b>${esc(v.name)}</b>${v.variants>1?` <span class="subtle">· ${v.variants} spellings merged</span>`:''}</td>
-        <td class="num">${v.orders}</td><td>${fmtDate(v.first)}</td><td>${fmtDate(v.last)}</td><td class="num">${v.gap!=null?v.gap+' days':'—'}</td></tr>`).join('')}</tbody>
+      <thead><tr><th>Vessel</th><th class="num">Orders</th><th>First</th><th>Last</th><th class="num">Usually every</th><th>Status</th></tr></thead>
+      <tbody>${vesselRows.map(v=>`<tr><td><a href="#/insights/vessel/${encodeURIComponent(v.key)}" style="text-decoration:none; color:inherit;"><b>${esc(v.name)}</b> <span class="subtle">›</span></a>${v.variants>1?` <span class="subtle">· ${v.variants} spellings merged</span>`:''}</td>
+        <td class="num">${v.orders}</td><td>${fmtDate(v.first)}</td><td>${fmtDate(v.last)}</td><td class="num">${v.gap!=null?v.gap+' days':'—'}</td><td><span class="badge ${VESSEL_BADGE[v.status].cls}">${VESSEL_BADGE[v.status].label}</span></td></tr>`).join('')}</tbody>
     </table></div>
     <div style="margin-top:24px;"><button class="btn btn-ghost btn-sm" id="histClear">🗑 Delete all imported past orders</button></div>`;
   $('#histClear').onclick = ()=> showConfirm('Delete every imported past order from this device? Your live orders, products and stock are not affected. You can import the sheets again later.', async ()=>{
