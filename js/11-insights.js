@@ -20,6 +20,15 @@ async function bulkPut(store, records){
     t.oncomplete = resolve; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error);
   });
 }
+/* deletes every past order here, and queues the same deletion for the cloud so other devices lose them too */
+async function deleteAllHistory(){
+  const prev = await getOne('settings','historyPendingDeletes');
+  const items = prev && prev.items ? prev.items : [];
+  for(const s of HISTORY_STORES) (await getAll(s)).forEach(r=>{ if(r.synced) items.push({store:s, id:r.id}); });
+  if(items.length) await rawPut('settings', {id:'historyPendingDeletes', items});
+  await clearStore('historyOrders'); await clearStore('historyLines');
+  if(typeof syncNow==='function') syncNow();
+}
 async function clearStore(store){
   const db = await dbp;
   await new Promise((resolve,reject)=>{
@@ -330,7 +339,7 @@ async function insightsHome(){
     </table></div>
     <div style="margin-top:24px;"><button class="btn btn-ghost btn-sm" id="histClear">🗑 Delete all imported past orders</button></div>`;
   $('#histClear').onclick = ()=> showConfirm('Delete every imported past order from this device? Your live orders, products and stock are not affected. You can import the sheets again later.', async ()=>{
-    await clearStore('historyOrders'); await clearStore('historyLines');
+    await deleteAllHistory();
     insightsHome();
   }, {danger:true, yesLabel:'Delete'});
 }
@@ -445,6 +454,7 @@ async function historyImportScreen(){
     }
     await bulkPut('historyOrders', newOrders);
     await bulkPut('historyLines', newLines);
+    if(typeof syncNow==='function') syncNow(); // uploads them to the cloud in batches
     const unmatched = new Set(newLines.filter(l=>!l.productId).map(l=>l.descKey)).size;
     showAlert(`Imported ${newOrders.length} order${newOrders.length===1?'':'s'} (${newLines.length.toLocaleString()} lines).${skippedDup?` ${skippedDup} already imported before were skipped.`:''}${unmatched?` ${unmatched} product name${unmatched===1?'':'s'} still need matching to your products.`:''}`, 'Import complete');
     location.hash = unmatched ? '#/insights/match' : '#/insights';
@@ -494,9 +504,10 @@ async function historyMatchScreen(){
     const fresh = (await getAll('historyLines')).filter(l=>l.descKey===key && !l.productId);
     for(const l of fresh){
       const b = toBaseQty(l.qty, l.unit, product);
-      l.productId = product.id; l.baseQty=b.baseQty; l.baseUnit=b.baseUnit; l.baseOk=b.ok;
+      l.productId = product.id; l.baseQty=b.baseQty; l.baseUnit=b.baseUnit; l.baseOk=b.ok; l.synced=false;
     }
     await bulkPut('historyLines', fresh);
+    if(typeof syncNow==='function') syncNow();
     historyMatchScreen();
   }
   $('#hm_list').querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=> assign(b.dataset.pick, products.find(p=>p.id===b.dataset.pid)));
@@ -505,8 +516,9 @@ async function historyMatchScreen(){
   });
   $('#hm_list').querySelectorAll('[data-skip]').forEach(b=>b.onclick=async ()=>{
     const fresh = (await getAll('historyLines')).filter(l=>l.descKey===b.dataset.skip && !l.productId);
-    fresh.forEach(l=>{ l.skipped = true; });
+    fresh.forEach(l=>{ l.skipped = true; l.synced=false; });
     await bulkPut('historyLines', fresh);
+    if(typeof syncNow==='function') syncNow();
     historyMatchScreen();
   });
 }
