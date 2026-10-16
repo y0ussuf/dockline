@@ -378,6 +378,7 @@ async function render(){
   const hash = location.hash || '#/';
   document.querySelectorAll('.navlink').forEach(a=>{
     let base = '#/'+(hash.split('/')[1]||'');
+    if(base==='#/forecast') base='#/insights'; // sub-page of Insights
     if(base==='#/stock' || base==='#/deliveries' || base==='#/boxtypes' || base==='#/receiving' || base==='#/reliability') base='#/warehouse'; // sub-pages of the warehouse-management hub
     a.classList.toggle('active', a.getAttribute('data-route')===base || (base==='#/' && a.getAttribute('data-route')==='#/'));
   });
