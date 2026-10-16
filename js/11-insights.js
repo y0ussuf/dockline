@@ -294,7 +294,7 @@ async function insightsHome(){
   };
 
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Insights</h1><a href="#/insights/import" class="btn btn-signal btn-sm">+ Import more orders</a></div>
+    <div class="topbar"><h1>Insights</h1><div style="display:flex; gap:8px; flex-wrap:wrap;"><a href="#/forecast" class="btn btn-signal btn-sm">📅 Demand forecast</a><a href="#/insights/import" class="btn btn-ghost btn-sm">+ Import more orders</a></div></div>
     <div class="grid-stats">
       <div class="stat"><b>${hOrders.length}</b><div class="lbl">Past orders</div></div>
       <div class="stat"><b>${vesselRows.length}</b><div class="lbl">Vessels</div></div>
