@@ -1,0 +1,40 @@
+PASS mode off: legacy writes pass through untouched and nothing is logged (nothing is enforced yet)
+PASS snapshot of every product's legacy stockQty is stored server-side, append-only, with who/when
+PASS only the admin can take a snapshot
+PASS status before transition lists the 3 legacy-tracked products as unopened; no drift yet
+PASS every legacy stock change in the window is passed through AND logged (old, new, who); a rename with the same number is not noise
+PASS the log records the client user and app version header
+PASS status shows the drift since the snapshot (so counted figures can be compared)
+PASS opening without the legacy figure the approver saw is refused
+PASS opening based on a stale figure (saw 95, legacy is now 90) is REFUSED with both numbers shown
+PASS nothing was changed by the refusals
+PASS opening with the current legacy figure applies; the replaced legacy number is recorded on the movement
+PASS race: a legacy pick between "approver looked" and "opening recorded" is caught (45 expected, 44 now)
+PASS approver re-submits with the new figure and a conscious basis (derived)
+PASS after L1 is opened, a legacy device's stock change is NOT applied (authoritative value kept) and is logged with what was kept
+PASS blocked: product L3 still has a legacy number and no opening
+PASS blocked: unacknowledged legacy writes remain (even though L3 is explicitly listed)
+PASS the admin cannot cut over by listing a wrong set of products
+PASS only the admin may acknowledge; a note is mandatory
+PASS after review (4 writes acknowledged) and an explicit decision about L3, cutover succeeds; cutover_at is stamped
+PASS the decision (including the product whose number was discarded) is in the append-only control log
+PASS L3 (left untracked): a later legacy write is blanked, never applied, and logged
+PASS post-cutover legacy writes on tracked products are rewritten and logged (visible, not blocking)
+PASS an order finished (stockApplied) after cutover with no stock operation is flagged; one finished before is not
+PASS unacknowledged legacy writes appear in reconciliation until someone acknowledges them
+PASS a correction that fails is stored as REJECTED and stays visible (no automatic retry exists)
+PASS rollback hold: the offline device's queued operation is refused with an explicit error, nothing applied
+PASS rollback hold: an old-version device pushing stock is logged and the authoritative value kept
+PASS rollback release is refused until that is reviewed
+PASS release: off + frozen + rolled_back_at; ledger and balances unchanged; the records mirror equals the final balances
+PASS legacy world resumes: the old app's numbers are accepted again (and are the only record of those picks)
+PASS re-enable blocked until every tracked product is physically counted since the rollback (message lists them)
+PASS status lists exactly those products
+PASS the offline pick that was created BEFORE the recount is not applied (the count already contains it): visible exception, no silent double count
+PASS it stays visible and unresolved until an approver decides (with a note)
+PASS only an approver can resolve it, and a note is required
+PASS re-enable succeeds only now; cutover_at is reset; the min app version is set
+PASS reject mode: an old app version is refused outright (explicit error, not a silent loss)
+PASS every step of the above is in the control log with the admin's session user
+
+38 passed, 0 failed

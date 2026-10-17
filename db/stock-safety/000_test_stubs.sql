@@ -1,9 +1,14 @@
 -- TEST ENVIRONMENT ONLY — never run on Supabase. Recreates the pieces of a Supabase project the migration relies on,
 -- so the migration can be exercised on a real PostgreSQL server. Run as a superuser on an empty database.
-create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
-create role authenticator login noinherit; grant anon, authenticated, service_role to authenticator;
--- stand-in for Supabase's "postgres" admin role: NOT a superuser, but can create roles
-create role pgadmin login createrole;
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
+  if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
+  if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin bypassrls; end if;
+  if not exists (select 1 from pg_roles where rolname='authenticator') then create role authenticator login noinherit; end if;
+  -- stand-in for Supabase's "postgres" admin role: NOT a superuser, but can create roles
+  if not exists (select 1 from pg_roles where rolname='pgadmin') then create role pgadmin login createrole; end if;
+end $$;
+grant anon, authenticated, service_role to authenticator;
 create schema auth; alter schema auth owner to pgadmin;
 grant usage on schema auth to anon, authenticated, service_role;
 create function auth.uid() returns uuid language sql stable as

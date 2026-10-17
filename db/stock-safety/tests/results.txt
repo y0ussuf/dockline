@@ -4,6 +4,7 @@ PASS basis + approver recorded; only physical counts are marked verified
 PASS opening mirrored into records
 PASS opening twice is rejected (and stored as rejected)
 PASS opening without a unit is rejected
+PASS admin switches to ignore mode; cutover_at stamped; the change is logged with the admin's session user
 PASS PostgREST-style upsert with a stale stockQty: balance kept, other fields saved
 PASS plain UPDATE of stockQty is rewritten
 PASS setting a session variable does not bypass it
@@ -31,14 +32,41 @@ PASS authenticated cannot create functions in public
 PASS authenticated cannot change session_replication_role
 PASS authenticated cannot edit the control row (mode/freeze)
 PASS anon cannot call stock_apply
-PASS stock_owner: no login, not superuser, no bypassrls, nobody client-side is a member
-PASS every trusted function is SECURITY DEFINER, owned by stock_owner, with a pinned search_path
+PASS stock_owner: no login, not superuser, no bypassrls, no API role is a member
+PASS every stock function is owned by stock_owner, has a pinned search_path, and is SECURITY DEFINER (except the trigger functions and the pure helper)
 PASS temp-schema function shadowing does not affect stock_apply
 PASS reject mode: older app version cannot write records
 PASS reject mode: client with no version marker cannot write records
 PASS reject mode: current app version can
 PASS reject mode: direct admin SQL (no API headers) is not blocked by the version gate
 PASS back to ignore mode
+PASS after the migration the admin role can neither use nor SET ROLE to stock_owner (membership was revoked at the end of 001)
+PASS admin: SET ROLE stock_owner is refused
+PASS admin cannot write stock_balances directly (update)
+PASS admin cannot write stock_movements directly (delete)
+PASS admin cannot write stock_operations directly (insert)
+PASS admin cannot write stock_control directly (update)
+PASS admin cannot write stock_balances directly (truncate)
+PASS residual capability (documented): the admin role HAS ADMIN OPTION on stock_owner (as its creator) and can re-grant itself deliberately
+PASS … and after revoking again it is back to no usable membership
+PASS every stock table and function is owned by stock_owner (nothing left owned by the admin role)
+PASS stock_owner has no CREATE on public / stock_internal any more
+PASS stock_owner can write the mirror (records) — and only needs select/insert/update there
+PASS residual capability (documented): the table owner can disable the guard; the resulting stale stockQty is DETECTED by reconciliation (mirror_mismatch) and repaired by resync
+PASS no stock function is executable by PUBLIC
+PASS anon can execute NO stock function
+PASS authenticated can execute exactly the API functions + the helpers the guard needs
+PASS service_role can execute only the guard helpers (no API function, no admin function)
+PASS the admin functions are executable only by the admin role
+PASS anon has no USAGE on schema stock_internal (helpers are unreachable even by name)
+PASS anon cannot call stock_internal.stock_auth_qty (permission denied)
+PASS public.stock_auth_qty / public.stock_mode no longer exist (the first draft exposed them)
+PASS anon cannot read stock_balances
+PASS anon cannot read stock_movements
+PASS anon cannot read stock_legacy_writes
+PASS anon cannot read app_stock_approvers
+PASS authenticated cannot call the admin functions
+PASS a signed-in user can read balances (they could always see stock) but not the approvers table of others
 PASS pick: tracked lines applied, untracked skipped, unit mismatch becomes an exception
 PASS the unit-mismatch line is recorded as an unresolved exception (not silently dropped)
 PASS mirror follows balance
@@ -78,6 +106,24 @@ PASS same operation sent by 12 connections at once: applied exactly once, all ge
 PASS opposite lock order across 20 multi-product ops: no deadlock, exact totals
 PASS two corrections that are each valid alone but together go negative: one applies, one is rejected against live stock
 PASS 30 picks racing 60 stale product pushes: balance exact, mirror equals balance, no error
+PASS only an approver can untrack
+PASS untrack CLOSES the episode: a closing movement takes the balance to 0 and records the closing figure; nothing is deleted
+PASS untracked product: stray legacy stockQty is blanked and logged
+PASS untracked: picks skipped, counts refused
+PASS only an approver can re-open
+PASS re-open starts episode 2: new unit, new cutoff = the new opening movement, verification reset (an accepted-unverified opening is NOT verified)
+PASS history is preserved and each episode has exactly one opening
+PASS reconciliation: episode 1 closed at 0 + episode 2 chain is clean for the product (no chain_break / ledger_mismatch)
+PASS reconciliation lists the re-opened balance as UNVERIFIED until a physical count
+PASS a second opening while tracked is refused (one opening per episode)
+PASS old unit is no longer accepted after re-open (unit mismatch exception); the new unit is
+PASS 313 quantities (up to 13 digits, 4 decimals): balance exact, mirror text identical in value, no exponent/noise/trailing zeros
+PASS no false mirror_mismatch for the product across all of them
+PASS the app (JavaScript: JSON.parse / parseFloat) reads those mirror values back as the same numbers
+PASS 0.1 + 0.2 is exactly 0.3 in the ledger and mirrors as 0.3
+PASS a legacy float-noise value (0.30000000000000004) is rewritten to the exact balance
+PASS counts of 1e9 or more are refused (the range guaranteed exact)
+PASS inputs beyond 4 decimals are rounded (half up) by the server, visibly: 1.23456 → 1.2346, then +0.00005 → +0.0001
 PASS healthy ledger: no error-level finding
 PASS recording findings changes no balance, movement or mirror
 PASS deleted movement is detected (chain break + ledger mismatch)
@@ -89,19 +135,30 @@ PASS order marked stock-applied after cutover with no operation → order_withou
 PASS second pick movement for the same order line → duplicate_pick
 PASS unresolved exception and rejected operations stay visible
 PASS unverified (never physically counted) balances are listed as such
-PASS append-only: owner role UPDATE of a movement is refused by the trigger
-PASS append-only: owner role DELETE of operations is refused
+PASS append-only: even stock_owner (with deliberate temporary membership) cannot UPDATE a movement
+PASS append-only: … nor DELETE operations, nor TRUNCATE the ledger or the control log
 PASS while frozen, stock changes are refused (reads/reconcile still work)
 PASS physical count restores the balance and the mirror; history is only ever added to
 PASS approver re-mirrors authoritative values (repairs a damaged mirror, not the balance)
 PASS a non-approver cannot resolve a finding
 PASS approver-resolved findings are marked acknowledged but remain in the history
-PASS rollback: mode off, frozen, timestamped; ledger rows and balances untouched
-PASS rollback: mirror equals the final authoritative balances
-PASS rollback: new stock operations are refused (frozen) so the ledger cannot drift further
-PASS rollback: an old app can write stockQty in records again (it is the legacy source of truth after rollback) …
-PASS … but it can never change stock_balances or the ledger
-PASS … and reconciliation shows the legacy-era drift so it must be resolved before re-enabling
-PASS uninstall: guard + functions removed, all tables and history still there
+PASS stage A: mode=transition, frozen, NOT yet rolled back; ledger and balances untouched
+PASS stage A: an offline device's unsent operation is REFUSED with an explicit error (it stays on the device; nothing is silently applied)
+PASS stage A: an old/stale device pushing stock does NOT overwrite the authoritative balance, and the attempt is LOGGED
+PASS stage B REFUSES to release while legacy writes are unacknowledged
+PASS only the admin can acknowledge; the acknowledgement needs a note
+PASS stage B after review (97 writes acknowledged): mode off, frozen, rolled_back_at stamped; ledger rows and balances unchanged
+PASS stage B: records now carry the final authoritative balances (legacy devices start from the right numbers)
+PASS stage B: ledger-only operations remain refused (frozen) — no automatic correction
+PASS after release an old app can write stockQty again (legacy source of truth) …
+PASS … but stock_balances and the ledger are untouched, and reconciliation reports the drift (mirror_mismatch)
+PASS re-enable is BLOCKED until every tracked product has been physically counted since the rollback (and the message lists them)
+PASS (frozen lifted only so the approver can count; ledger operations are accepted again, still nothing automatic)
+PASS approver re-baselines every tracked product with a physical count (attributed movements; mirror overwritten deliberately)
+PASS the old offline pick (client_at BEFORE the new count) is NOT applied — the count already includes it; it becomes a visible exception, never a silent double count
+PASS an operation created after the count is applied normally
+PASS previously REJECTED operations are still listed (no automatic retry exists)
+PASS re-enable now succeeds; cutover_at is reset (orders finished during the legacy period are not expected to have operations)
+PASS uninstall removes the guard + all functions, keeps every table and row and the append-only protection on the ledger
 
-105 passed, 0 failed
+162 passed, 0 failed
