@@ -1,0 +1,107 @@
+PASS non-approver cannot record an opening
+PASS approver opens 4 products
+PASS basis + approver recorded; only physical counts are marked verified
+PASS opening mirrored into records
+PASS opening twice is rejected (and stored as rejected)
+PASS opening without a unit is rejected
+PASS PostgREST-style upsert with a stale stockQty: balance kept, other fields saved
+PASS plain UPDATE of stockQty is rewritten
+PASS setting a session variable does not bypass it
+PASS untracked product: a stray number is blanked
+PASS brand-new product record cannot carry stock
+PASS migration/restore-style write by the admin role is also protected
+PASS stale push of a product with no stockQty key keeps balance
+PASS service_role (bypasses RLS) cannot overwrite it either
+PASS cannot SET ROLE stock_owner (as authenticated)
+PASS cannot SET ROLE stock_owner (as the login role)
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on stock_balances
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on stock_movements
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on stock_operations
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on stock_exceptions
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on stock_discrepancies
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on stock_control
+PASS authenticated: no UPDATE/DELETE/TRUNCATE on app_stock_approvers
+PASS authenticated cannot INSERT into stock_balances
+PASS authenticated cannot make themselves an approver
+PASS authenticated cannot call stock_mirror directly
+PASS authenticated cannot call stock_is_approver directly
+PASS authenticated cannot disable the guard trigger
+PASS authenticated cannot drop the guard trigger
+PASS authenticated cannot create functions in public
+PASS authenticated cannot change session_replication_role
+PASS authenticated cannot edit the control row (mode/freeze)
+PASS anon cannot call stock_apply
+PASS stock_owner: no login, not superuser, no bypassrls, nobody client-side is a member
+PASS every trusted function is SECURITY DEFINER, owned by stock_owner, with a pinned search_path
+PASS temp-schema function shadowing does not affect stock_apply
+PASS reject mode: older app version cannot write records
+PASS reject mode: client with no version marker cannot write records
+PASS reject mode: current app version can
+PASS reject mode: direct admin SQL (no API headers) is not blocked by the version gate
+PASS back to ignore mode
+PASS pick: tracked lines applied, untracked skipped, unit mismatch becomes an exception
+PASS the unit-mismatch line is recorded as an unresolved exception (not silently dropped)
+PASS mirror follows balance
+PASS replaying the same operation: same result, duplicate flag, no new movement
+PASS same op id with different content is refused
+PASS same op id from another user is refused
+PASS wrong sign on a pick is refused (nothing stored)
+PASS a fact that drives stock negative is applied (it already happened) and flagged
+PASS correction below zero without override is rejected, nothing changes
+PASS override without a reason is rejected
+PASS override by a non-approver is rejected (the client flag is not trusted)
+PASS approved override applies; user, reason and resulting negative balance are on the movement
+PASS a correction with one bad (unit) line is rejected as a whole — the good lines are not applied
+PASS multi-product mapping move applies atomically
+PASS crew count sets the balance, records the difference and marks it physically verified
+PASS negative count rejected
+PASS count on an untracked product rejected
+PASS count with a different unit rejected
+PASS adjustment needs an approver
+PASS adjustment needs a reason
+PASS failure at "2nd movement insert": error surfaced, nothing partially written
+PASS    …and the retry after "2nd movement insert" applies exactly once
+PASS failure at "balance update (2nd product)": error surfaced, nothing partially written
+PASS    …and the retry after "balance update (2nd product)" applies exactly once
+PASS failure at "mirror update": error surfaced, nothing partially written
+PASS    …and the retry after "mirror update" applies exactly once
+PASS failure at "operation finalisation": error surfaced, nothing partially written
+PASS    …and the retry after "operation finalisation" applies exactly once
+PASS failure at "exception insert": error surfaced, nothing partially written
+PASS    …and the retry after "exception insert" applies exactly once
+PASS connection lost before commit: nothing applied
+PASS retry after lost connection applies once
+PASS commit succeeded but the client never saw it: the retry is a no-op returning the first result
+PASS 30 simultaneous picks on one product: no errors, balance exact, 30 movements
+PASS ledger chain is consistent after the race
+PASS same operation sent by 12 connections at once: applied exactly once, all get the same answer
+PASS opposite lock order across 20 multi-product ops: no deadlock, exact totals
+PASS two corrections that are each valid alone but together go negative: one applies, one is rejected against live stock
+PASS 30 picks racing 60 stale product pushes: balance exact, mirror equals balance, no error
+PASS healthy ledger: no error-level finding
+PASS recording findings changes no balance, movement or mirror
+PASS deleted movement is detected (chain break + ledger mismatch)
+PASS tampered balance → ledger_mismatch
+PASS tampered mirror in records → mirror_mismatch
+PASS movement with no balance row → movement_without_balance
+PASS operation whose recorded count ≠ its movements → operation_movement_mismatch
+PASS order marked stock-applied after cutover with no operation → order_without_movement
+PASS second pick movement for the same order line → duplicate_pick
+PASS unresolved exception and rejected operations stay visible
+PASS unverified (never physically counted) balances are listed as such
+PASS append-only: owner role UPDATE of a movement is refused by the trigger
+PASS append-only: owner role DELETE of operations is refused
+PASS while frozen, stock changes are refused (reads/reconcile still work)
+PASS physical count restores the balance and the mirror; history is only ever added to
+PASS approver re-mirrors authoritative values (repairs a damaged mirror, not the balance)
+PASS a non-approver cannot resolve a finding
+PASS approver-resolved findings are marked acknowledged but remain in the history
+PASS rollback: mode off, frozen, timestamped; ledger rows and balances untouched
+PASS rollback: mirror equals the final authoritative balances
+PASS rollback: new stock operations are refused (frozen) so the ledger cannot drift further
+PASS rollback: an old app can write stockQty in records again (it is the legacy source of truth after rollback) …
+PASS … but it can never change stock_balances or the ledger
+PASS … and reconciliation shows the legacy-era drift so it must be resolved before re-enabling
+PASS uninstall: guard + functions removed, all tables and history still there
+
+105 passed, 0 failed
