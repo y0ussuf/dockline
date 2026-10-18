@@ -9,6 +9,8 @@ Set up: create a Supabase **branch** (or restore the latest backup into a new pr
 `POST /auth/v1/token?grant_type=password`). `URL` = project URL, `ANON` = anon key, `JA`/`JC` = approver / crew access tokens.
 
 ## 0. Before applying the migration — read-only
+**Run `schema_checks_readonly.sql`** (one SELECT-only statement; returns one table `check_no | what | result` covering 0.01–0.18 below). The table underneath says what each check is for. Items that SQL cannot show (exposed schemas as set in the dashboard, pooler mode, backup/PITR status) are manual: 0.8, 0.9 and the backup line. Redaction: never paste keys, tokens, passwords or e-mails; replace any UUID/e-mail inside a policy definition with `<uuid1>`/`<email1>`.
+
 | # | Check | How | Pass if |
 |---|---|---|---|
 | 0.1 | Postgres version | `select version();` | recorded (the tests ran on 16.15; Supabase may be 15 or 17 — role-membership behaviour differs, see 1.2) |
@@ -76,3 +78,10 @@ Set up: create a Supabase **branch** (or restore the latest backup into a new pr
 
 ## 5. Report back
 For each numbered item: PASS / FAIL, the exact output, date and branch name. Failures change the design, not the tests.
+
+## 6. Test environment (decision recorded)
+* **A separate Supabase project is sufficient; a branch is not required.** A branch needs a paid plan and is built from the repo's migrations (empty data), which does not reproduce a hand-built `records` table; a separate project has its own URL, anon key, service key and JWT secret, so no production credential is ever involved.
+* Build it from the *read-only schema results* (0.05–0.10), then load a copy of real data (exported JSON backup through the app, or a backup restored into the new project if your plan supports restoring to a new project — that also rehearses "backup restoration").
+* Match the Postgres major version reported by 0.01 where Supabase allows it; if it differs, record both versions (role-membership behaviour differs between 15 and 16/17).
+* **Test users:** in the TEST project only: Authentication → Users → Add user (e.g. `approver.test@example.invalid`, `crew.test@example.invalid`, `counter.test@example.invalid`, auto-confirm, throw-away passwords). Copy only their UUIDs. Never reuse production user accounts or passwords. The service_role key and the database password stay in the dashboard; they are never pasted anywhere.
+* API checks are run by you with curl against the TEST project (I cannot reach it). Paste back status codes and JSON bodies only — never the `Authorization` / `apikey` headers or tokens.
