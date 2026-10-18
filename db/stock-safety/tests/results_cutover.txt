@@ -28,8 +28,10 @@ PASS rollback hold: an old-version device pushing stock is logged and the author
 PASS rollback release is refused until that is reviewed
 PASS release: off + frozen + rolled_back_at; ledger and balances unchanged; the records mirror equals the final balances
 PASS legacy world resumes: the old app's numbers are accepted again (and are the only record of those picks)
-PASS re-enable blocked until every tracked product is physically counted since the rollback (message lists them)
+PASS enforcement is blocked until every tracked product is physically counted since the rollback (message lists them)
 PASS status lists exactly those products
+PASS mode off: even after unfreezing, every stock operation is refused (the legacy guard is off)
+PASS a queued operation carrying the PRE-recount count generation is held (stale_generation) — the recount re-baselined the product
 PASS the offline pick that was created BEFORE the recount is not applied (the count already contains it): visible exception, no silent double count
 PASS it stays visible and unresolved until an approver decides (with a note)
 PASS only an approver can resolve it, and a note is required
@@ -37,4 +39,4 @@ PASS re-enable succeeds only now; cutover_at is reset; the min app version is se
 PASS reject mode: an old app version is refused outright (explicit error, not a silent loss)
 PASS every step of the above is in the control log with the admin's session user
 
-38 passed, 0 failed
+40 passed, 0 failed

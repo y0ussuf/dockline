@@ -61,8 +61,8 @@ class Client:
         return self.run("insert into public.records(store,id,data,deleted,updated_at,updated_by) values ('products',%s,%s::jsonb,false,now(),'client') "
                         "on conflict (store,id) do update set store=excluded.store,id=excluded.id,data=excluded.data,deleted=excluded.deleted,"
                         "updated_at=excluded.updated_at,updated_by=excluded.updated_by", (pid, json.dumps(data)))
-A, B, C = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
-ca, cb = Client(A, 'approver@x.test'), Client(B, 'crew@x.test')
+A, B, C, D = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+ca, cb, cc = Client(A, 'approver@x.test'), Client(B, 'crew@x.test'), Client(D, 'counter@x.test')   # approver / ordinary crew / designated counter
 def op(kind, lines, **kw): d = {'op_id': str(uuid.uuid4()), 'kind': kind, 'lines': lines}; d.update(kw); return d
 def L(pid, delta=None, unit='kg', **kw): d = {'product_id': pid, 'unit': unit}; (d.update({'delta': delta}) if delta is not None else None); d.update(kw); return d
 def bal(pid): r = qs('select qty from stock_balances where product_id=%s', (pid,)); return float(r[0][0]) if r else None
@@ -73,7 +73,7 @@ def snap():
        (select count(*) from stock_movements),(select count(*) from stock_operations),(select count(*) from stock_exceptions),
        (select coalesce(md5(string_agg(id||data::text||updated_at::text, ',' order by id)),'') from records where store='products')""")[0]
 def findings(code=None, product=None):
-    return [r for r in qs('select product_id,check_code,severity,key,acknowledged from stock_reconcile()')
+    return [r for r in qs('select product_id,check_code,severity,key,acknowledged from stock_internal.stock_reconcile_rows()')
             if (code is None or r[1] == code) and (product is None or r[0] == product)]
-def codes(): return sorted({r[1] for r in qs('select product_id,check_code,severity,key,acknowledged from stock_reconcile() where not acknowledged')})
+def codes(): return sorted({r[1] for r in qs('select product_id,check_code,severity,key,acknowledged from stock_internal.stock_reconcile_rows() where not acknowledged')})
 

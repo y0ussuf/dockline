@@ -5,7 +5,7 @@ import os; os.environ['TESTDB'] = 't3'
 from common import *
 import datetime
 
-def status(): return qs('select public.stock_cutover_status()')[0][0]
+def status(): return qs('select stock_internal.stock_cutover_status_data()')[0][0]
 def legacy_pass(c, pid, qty, name=None): c.upsert_product(pid, {'name': name or pid, 'unit': 'kg', 'stockQty': qty})
 def legacy(pid): r = qs("select data->>'stockQty' from records where store='products' and id=%s", (pid,)); return r[0][0]
 def nlog(where='true', params=None): return qs(f'select count(*) from stock_legacy_writes where {where}', params)[0][0]
@@ -77,7 +77,7 @@ print('\n== F. old devices finishing orders after cutover are DETECTED ==')
 cut = qs('select cutover_at from stock_control')[0][0]
 q(su, "insert into records(store,id,data) values ('orders','O_legacy_before',%s::jsonb)", (json.dumps({'stockApplied': True, 'completedAt': (cut - datetime.timedelta(hours=1)).isoformat()}),))
 q(su, "insert into records(store,id,data) values ('orders','O_legacy_after',%s::jsonb)", (json.dumps({'stockApplied': True, 'completedAt': (cut + datetime.timedelta(minutes=5)).isoformat()}),))
-f = {r[3] for r in qs('select product_id,check_code,severity,key,acknowledged from stock_reconcile()')}
+f = {r[3] for r in qs('select product_id,check_code,severity,key,acknowledged from stock_internal.stock_reconcile_rows()')}
 check('an order finished (stockApplied) after cutover with no stock operation is flagged; one finished before is not', 'order_without_movement:O_legacy_after' in f and 'order_without_movement:O_legacy_before' not in f, f)
 check('unacknowledged legacy writes appear in reconciliation until someone acknowledges them', any(k.startswith('legacy_write:') for k in f))
 
@@ -97,14 +97,20 @@ check('release: off + frozen + rolled_back_at; ledger and balances unchanged; th
       and qs("select (select count(*) from stock_movements),(select md5(string_agg(product_id||qty::text,',' order by product_id)) from stock_balances)")[0] == ledger0 and float(legacy('L1')) == 88 and float(legacy('L2')) == 43)
 legacy_pass(cb, 'L1', 70)                           # legacy world resumes: a real pick of 18 on an old device
 check('legacy world resumes: the old app\'s numbers are accepted again (and are the only record of those picks)', float(legacy('L1')) == 70 and bal('L1') == 88)
-e = err(lambda: ctl(p_mode='transition'))
-check('re-enable blocked until every tracked product is physically counted since the rollback (message lists them)', 'L1' in e and 'L2' in e and 'physically counted' in e, e[:200])
+e = err(lambda: ctl(p_mode='ignore', p_leave_untracked=[]))
+check('enforcement is blocked until every tracked product is physically counted since the rollback (message lists them)', 'L1' in e and 'L2' in e and 'physically counted' in e, e[:200])
 st = status(); check('status lists exactly those products', st['balances_not_counted_since_rollback'] == ['L1', 'L2'], st)
 ctl(p_frozen=False)
+check('mode off: even after unfreezing, every stock operation is refused (the legacy guard is off)', 'mode is off' in err(lambda: ca.apply(op('count', [L('L1', counted_qty=69)]))))
+ctl(p_mode='transition', p_note='recount period')
+g_old = qs("select count_gen from stock_balances where product_id='L1'")[0][0]
+offline_op2 = op('pick', [L('L1', -1, item_id='off2', count_gen=g_old)], order_id='o_offline2')       # built by a device that cached the pre-rollback generation
 ca.apply(op('count', [L('L1', counted_qty=69)])); ca.apply(op('count', [L('L2', counted_qty=42)]))
+r2 = ca.apply(offline_op2)
+check('a queued operation carrying the PRE-recount count generation is held (stale_generation) — the recount re-baselined the product', r2['status'] == 'held_for_review' and r2['lines'][0]['code'] == 'stale_generation' and bal('L1') == 69, r2)
 r = ca.apply(offline_op)
 check('the offline pick that was created BEFORE the recount is not applied (the count already contains it): visible exception, no silent double count',
-      r['status'] == 'applied_with_exceptions' and r['lines'][0]['code'] == 'stale_before_count' and bal('L1') == 69, r)
+      r['status'] == 'held_for_review' and r['lines'][0]['code'] == 'stale_before_count' and bal('L1') == 69, r)
 check('it stays visible and unresolved until an approver decides (with a note)', bool(findings('unresolved_exception', 'L1')))
 eid = qs("select id from stock_exceptions where code='stale_before_count' and resolved_at is null")[0][0]
 check('only an approver can resolve it, and a note is required', raises(lambda: cb.run('select public.stock_resolve_exception(%s,%s)', (eid, 'x')), '42501') and raises(lambda: ca.run('select public.stock_resolve_exception(%s,%s)', (eid, '')), '22023'))

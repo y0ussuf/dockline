@@ -58,6 +58,9 @@ create table public.stock_legacy_writes (        -- every attempt, by any client
 create table public.app_stock_approvers (
   user_id uuid primary key, email text, added_at timestamptz not null default now(), note text
 );
+create table public.app_stock_counters (        -- designated (non-approver) users who may record physical counts
+  user_id uuid primary key, email text, added_at timestamptz not null default now(), note text
+);
 
 -- 3. Authoritative balances. One row per product; "episode" counts tracking periods (opening ... untrack).
 create table public.stock_balances (
@@ -72,6 +75,8 @@ create table public.stock_balances (
   opening_at          timestamptz,
   opening_by          uuid,
   last_verified_at    timestamptz,            -- last physical count (or physical-count opening)
+  count_gen           bigint not null default 1,   -- COUNT GENERATION: +1 at every absolute re-baseline (opening, count, untrack). Server-authoritative.
+  gen_at              timestamptz,            -- when count_gen last changed (server clock)
   version             bigint not null default 1,
   updated_at          timestamptz not null default clock_timestamp()
 );
@@ -81,7 +86,7 @@ create table public.stock_operations (
   kind text not null check (kind in ('pick','receipt','receipt_reversal','mapping_move','count','opening','adjustment','untrack')),
   class text not null check (class in ('fact','correction','count','admin')),
   request_hash text not null,
-  status text not null check (status in ('processing','applied','applied_with_exceptions','rejected')),
+  status text not null check (status in ('processing','applied','applied_with_exceptions','held_for_review','rejected')),   -- held_for_review = NO line applied, >=1 exception
   result jsonb, payload jsonb not null, applied_count int not null default 0,
   actor uuid not null, actor_email text, order_id text, device_id text, client_at timestamptz,
   created_at timestamptz not null default clock_timestamp()
@@ -103,7 +108,7 @@ create index stock_movements_product_idx on public.stock_movements(product_id, i
 create index stock_movements_order_idx   on public.stock_movements(order_id, item_id);
 create table public.stock_exceptions (          -- fact lines that could NOT be applied (never silently dropped)
   id bigint generated always as identity primary key,
-  op_id uuid not null references public.stock_operations(op_id), line_no int not null, product_id text,
+  op_id uuid not null references public.stock_operations(op_id), line_no int not null, product_id text, actor uuid,
   code text not null, detail jsonb, created_at timestamptz not null default clock_timestamp(),
   resolved_at timestamptz, resolved_by uuid, resolution_note text
 );
@@ -111,7 +116,14 @@ create table public.stock_discrepancies (       -- findings from reconciliation;
   id bigint generated always as identity primary key,
   key text not null unique, check_code text not null, product_id text, severity text not null, detail jsonb,
   first_seen_at timestamptz not null default clock_timestamp(), last_seen_at timestamptz not null default clock_timestamp(),
-  resolved_at timestamptz, resolved_by uuid, resolution_note text
+  resolved_at timestamptz, resolved_by uuid, resolution_note text,
+  detail_hash text,                               -- md5 of the finding's detail at the moment it was acknowledged
+  cleared_seen_at timestamptz                     -- set when a reconcile run saw the finding GONE after it was acknowledged
+);
+create table public.stock_discrepancy_events (  -- append-only history of every detection / acknowledgement / reopening (the table above is mutable state)
+  id bigint generated always as identity primary key,
+  key text not null, event text not null check (event in ('detected','acknowledged','cleared','reopened')),
+  at timestamptz not null default clock_timestamp(), by uuid, note text, detail jsonb
 );
 
 -- 4. Helpers (schema stock_internal — not exposed through the API)
@@ -127,6 +139,12 @@ create function stock_internal.stock_auth_qty(p_id text) returns numeric languag
   set search_path = pg_catalog, public as $$ select qty from public.stock_balances where product_id = p_id and tracked $$;
 create function stock_internal.stock_is_approver(p_uid uuid) returns boolean language sql stable security definer
   set search_path = pg_catalog, public as $$ select exists (select 1 from public.app_stock_approvers where user_id = p_uid) $$;
+-- "the caller is…" helpers take NO argument: they cannot be used to look other people up
+create function stock_internal.stock_me_approver() returns boolean language sql stable security definer
+  set search_path = pg_catalog, public as $$ select auth.uid() is not null and exists (select 1 from public.app_stock_approvers where user_id = auth.uid()) $$;
+create function stock_internal.stock_can_count(p_uid uuid) returns boolean language sql stable security definer
+  set search_path = pg_catalog, public as $$
+  select p_uid is not null and (exists (select 1 from public.app_stock_approvers where user_id = p_uid) or exists (select 1 from public.app_stock_counters where user_id = p_uid)) $$;
 -- current legacy stockQty held in records: {exists, qty}
 create function stock_internal.legacy_state(p_id text) returns jsonb language sql stable security definer
   set search_path = pg_catalog, public as $$
@@ -225,7 +243,7 @@ end $$;
 do $$ declare f record; begin
   for f in select c.oid::regclass::text as t from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
            and c.relname in ('stock_control','stock_control_log','stock_cutover_snapshot','stock_legacy_writes','app_stock_approvers',
-                             'stock_balances','stock_operations','stock_movements','stock_exceptions','stock_discrepancies') loop
+                             'stock_balances','stock_operations','stock_movements','stock_exceptions','stock_discrepancies','app_stock_counters','stock_discrepancy_events') loop
     execute format('alter table %s owner to stock_owner', f.t);
   end loop;
 end $$;
@@ -237,6 +255,8 @@ create trigger append_only_log  before update or delete on public.stock_control_
 create trigger append_only_snap before update or delete on public.stock_cutover_snapshot for each row     execute function stock_internal.stock_append_only();
 create trigger append_only_mv_t   before truncate on public.stock_movements        for each statement execute function stock_internal.stock_append_only();
 create trigger append_only_op_t   before truncate on public.stock_operations       for each statement execute function stock_internal.stock_append_only();
+create trigger append_only_ev   before update or delete on public.stock_discrepancy_events for each row      execute function stock_internal.stock_append_only();
+create trigger append_only_ev_t before truncate on public.stock_discrepancy_events for each statement execute function stock_internal.stock_append_only();
 create trigger append_only_log_t  before truncate on public.stock_control_log      for each statement execute function stock_internal.stock_append_only();
 create trigger append_only_snap_t before truncate on public.stock_cutover_snapshot for each statement execute function stock_internal.stock_append_only();
 -- the guard (named zz_ so it fires after any other BEFORE trigger and has the last word)
@@ -263,12 +283,17 @@ declare
   b public.stock_balances%rowtype;
   v_before numeric; v_after numeric; v_out text; v_neg boolean; v_proof text;
   v_rej jsonb := '[]'::jsonb; v_exc int := 0; v_applied int := 0;
-  v_ids text[]; v_status text; v_result jsonb; p jsonb; v_mid bigint;
+  v_dups text[]; v_bal jsonb; v_gen text; v_ids text[]; v_status text; v_result jsonb; p jsonb; v_mid bigint;
   v_order text := nullif(p_op ->> 'order_id', '');
 begin
   if v_actor is null then raise exception 'stock: not authenticated' using errcode = '28000'; end if;
   select frozen, frozen_reason, mode into v_frozen, v_freeze_reason, v_mode from public.stock_control;
   if v_frozen then raise exception 'stock: stock changes are frozen (%)', coalesce(v_freeze_reason, 'maintenance') using errcode = '55000'; end if;
+  -- MODE POLICY. While enforcement is off the legacy guard does nothing, so legacy stockQty writes could diverge from the ledger:
+  -- NO kind of stock operation is accepted (explicit error; a device keeps the operation pending, it is neither applied nor dropped).
+  -- transition / ignore / reject accept every kind (README §3 has the table).
+  if v_mode = 'off' then
+    raise exception 'stock: stock operations are not accepted while enforcement mode is off (the ledger is not authoritative)' using errcode = '55000'; end if;
 
   begin v_op_id := (p_op ->> 'op_id')::uuid; exception when others then
     raise exception 'stock: op_id must be a uuid' using errcode = '22023'; end;
@@ -285,6 +310,8 @@ begin
   v_approver := stock_internal.stock_is_approver(v_actor);
   if v_class = 'admin' and not v_approver then
     raise exception 'stock: only a stock approver may record %', v_kind using errcode = '42501'; end if;
+  if v_class = 'count' and not stock_internal.stock_can_count(v_actor) then
+    raise exception 'stock: only a stock approver or a designated counter may record a count' using errcode = '42501'; end if;
   v_hash := md5((p_op - 'op_id')::text);
 
   insert into public.stock_operations(op_id, kind, class, request_hash, status, payload, actor, actor_email, order_id, device_id, client_at)
@@ -300,6 +327,15 @@ begin
   select array_agg(distinct x ->> 'product_id') into v_ids from jsonb_array_elements(v_lines) x;
   if v_ids is null or exists (select 1 from unnest(v_ids) u where u is null) then
     raise exception 'stock: every line needs a product_id' using errcode = '22023'; end if;
+  if v_kind in ('opening', 'untrack', 'count') then       -- state-setting kinds: the same product twice in one request is ambiguous -> refuse the whole request
+    select array_agg(pid order by pid) into v_dups from (select x ->> 'product_id' pid from jsonb_array_elements(v_lines) x group by 1 having count(*) > 1) d;
+    if v_dups is not null then
+      v_result := jsonb_build_object('op_id', v_op_id, 'status', 'rejected', 'lines', '[]'::jsonb, 'duplicate', false,
+                    'reasons', jsonb_build_array(jsonb_build_object('code', 'duplicate_product', 'product_ids', to_jsonb(v_dups))));
+      update public.stock_operations set status = 'rejected', result = v_result where op_id = v_op_id;
+      return v_result;
+    end if;
+  end if;
   perform 1 from public.stock_balances where product_id = any(v_ids) order by product_id for update;          -- lock order: balances (by id) ...
   if v_kind = 'opening' then                                                                                 -- ... then the legacy records being replaced
     perform 1 from public.records where store = 'products' and id = any(v_ids) order by id for update; end if;
@@ -308,6 +344,8 @@ begin
     ln := v_lines -> (i - 1);
     v_pid := ln ->> 'product_id';
     v_unit := lower(btrim(coalesce(ln ->> 'unit', '')));
+    v_gen := nullif(ln ->> 'count_gen', '');
+    if v_gen is not null and v_gen !~ '^\d{1,18}$' then raise exception 'stock: line % has an invalid count_gen', i using errcode = '22023'; end if;
     select * into b from public.stock_balances where product_id = v_pid;
     v_out := 'apply'; v_code := null; v_detail := null; v_delta := 0; v_proof := 'recorded'; v_neg := false; v_ref := ln ->> 'ref'; v_ep := coalesce(b.episode, 1);
     v_before := coalesce((v_cur ->> v_pid)::numeric, b.qty, 0);
@@ -341,7 +379,11 @@ begin
       else v_after := 0; v_delta := -b.qty; v_ref := coalesce(v_ref || '; ', '') || 'closing balance ' || b.qty; end if;
 
     elsif b.product_id is null or not b.tracked then
-      if v_kind = 'count' then v_out := 'reject'; v_code := 'not_tracked'; else v_out := 'skipped_untracked'; end if;
+      if v_class = 'fact' then
+        -- a stock FACT about a product that has no tracked balance is never skipped silently: it is kept as an unresolved exception
+        v_out := 'exception'; v_code := 'untracked_product';
+        v_detail := jsonb_build_object('known_product', b.product_id is not null, 'line_unit', ln ->> 'unit');
+      else v_out := 'reject'; v_code := 'not_tracked'; end if;
 
     elsif v_unit = '' or v_unit <> lower(btrim(b.unit)) then
       if v_class = 'fact' then
@@ -349,10 +391,23 @@ begin
         v_detail := jsonb_build_object('line_unit', ln ->> 'unit', 'stock_unit', b.unit);
       else v_out := 'reject'; v_code := 'unit_mismatch'; end if;
 
-    elsif v_class = 'fact' and v_cl is not null and b.last_verified_at is not null and v_cl < b.last_verified_at then
-      -- this event happened BEFORE the last physical count, so the count already includes it: applying it would count it twice
+    elsif v_class in ('fact', 'correction') and v_gen is not null and v_gen::bigint <> b.count_gen then
+      -- the device built this operation on a DIFFERENT count generation. Older = the balance has been re-baselined since (server-side, not clock-based).
+      -- Newer = a generation this database has never had (restored backup, forged value): equally not safe to apply.
+      v_detail := jsonb_build_object('line_gen', v_gen::bigint, 'current_gen', b.count_gen, 'client_at', v_cl, 'rebaselined_at', b.gen_at,
+                                     'client_at_before_rebaseline', case when v_cl is not null and b.gen_at is not null then v_cl < b.gen_at end);
+      v_code := case when v_gen::bigint < b.count_gen then 'stale_generation' else 'generation_ahead' end;
+      if v_class = 'fact' then v_out := 'exception'; else v_out := 'reject'; end if;
+
+    elsif v_class = 'fact' and v_gen is null and v_mode = 'reject' then
+      -- enforcement is final: every supported app sends its generation; a fact without one is held, never guessed from a device clock
+      v_out := 'exception'; v_code := 'generation_missing';
+
+    elsif v_class = 'fact' and v_gen is null and v_cl is not null and b.gen_at is not null and v_cl < b.gen_at then
+      -- LEGACY-FORMAT fallback (no count_gen, only before final enforcement): event time is BEFORE the last re-baseline, so it is probably
+      -- already inside the count. Device clock -> only a fallback, still held for review rather than applied.
       v_out := 'exception'; v_code := 'stale_before_count';
-      v_detail := jsonb_build_object('client_at', v_cl, 'last_count_at', b.last_verified_at);
+      v_detail := jsonb_build_object('client_at', v_cl, 'rebaselined_at', b.gen_at);
 
     elsif v_kind = 'count' then
       v_cnt := round((ln ->> 'counted_qty')::numeric, 4);
@@ -396,8 +451,8 @@ begin
   for i in 0 .. v_n - 1 loop
     p := v_plan -> i;
     if p ->> 'outcome' = 'exception' then
-      insert into public.stock_exceptions(op_id, line_no, product_id, code, detail)
-      values (v_op_id, i + 1, p ->> 'product_id', p ->> 'code', coalesce(p -> 'detail', '{}'::jsonb) || jsonb_build_object('delta', p -> 'delta', 'line', v_lines -> i));
+      insert into public.stock_exceptions(op_id, line_no, product_id, actor, code, detail)
+      values (v_op_id, i + 1, p ->> 'product_id', v_actor, p ->> 'code', coalesce(p -> 'detail', '{}'::jsonb) || jsonb_build_object('delta', p -> 'delta', 'line', v_lines -> i));
       continue;
     end if;
     if p ->> 'outcome' <> 'apply' then continue; end if;
@@ -410,26 +465,31 @@ begin
         v_actor, v_email, nullif(p_op ->> 'device_id', ''), v_cl, v_note)
     returning id into v_mid;
     if v_kind = 'opening' then
-      insert into public.stock_balances(product_id, unit, qty, tracked, episode, opening_movement_id, opening_qty, opening_basis, opening_at, opening_by, last_verified_at)
+      insert into public.stock_balances(product_id, unit, qty, tracked, episode, opening_movement_id, opening_qty, opening_basis, opening_at, opening_by, last_verified_at, count_gen, gen_at)
       values (v_pid, v_lines -> i ->> 'unit', (p ->> 'qty_after')::numeric, true, (p ->> 'episode')::int, v_mid, (p ->> 'qty_after')::numeric,
-              p ->> 'proof', clock_timestamp(), v_actor, case when p ->> 'proof' = 'physical_count' then clock_timestamp() end)
+              p ->> 'proof', clock_timestamp(), v_actor, case when p ->> 'proof' = 'physical_count' then clock_timestamp() end, 1, clock_timestamp())
       on conflict (product_id) do update set unit = excluded.unit, qty = excluded.qty, tracked = true, episode = excluded.episode,
               opening_movement_id = excluded.opening_movement_id, opening_qty = excluded.opening_qty, opening_basis = excluded.opening_basis,
               opening_at = excluded.opening_at, opening_by = excluded.opening_by, last_verified_at = excluded.last_verified_at,
+              count_gen = public.stock_balances.count_gen + 1, gen_at = clock_timestamp(),
               version = public.stock_balances.version + 1, updated_at = clock_timestamp();
     elsif v_kind = 'untrack' then
-      update public.stock_balances set qty = 0, tracked = false, version = version + 1, updated_at = clock_timestamp() where product_id = v_pid;
+      update public.stock_balances set qty = 0, tracked = false, count_gen = count_gen + 1, gen_at = clock_timestamp(), version = version + 1, updated_at = clock_timestamp() where product_id = v_pid;
     else
       update public.stock_balances set qty = (p ->> 'qty_after')::numeric, version = version + 1, updated_at = clock_timestamp(),
-             last_verified_at = case when v_kind = 'count' then clock_timestamp() else last_verified_at end
+             last_verified_at = case when v_kind = 'count' then clock_timestamp() else last_verified_at end,
+             count_gen = case when v_kind = 'count' then count_gen + 1 else count_gen end,
+             gen_at = case when v_kind = 'count' then clock_timestamp() else gen_at end
        where product_id = v_pid;
     end if;
     v_applied := v_applied + 1;
   end loop;
 
   perform stock_internal.stock_mirror(v_ids);
-  v_status := case when v_exc > 0 then 'applied_with_exceptions' else 'applied' end;
-  v_result := jsonb_build_object('op_id', v_op_id, 'status', v_status, 'lines', v_plan, 'exceptions', v_exc, 'duplicate', false);
+  v_status := case when v_exc > 0 and v_applied = 0 then 'held_for_review' when v_exc > 0 then 'applied_with_exceptions' else 'applied' end;
+  select coalesce(jsonb_object_agg(product_id, jsonb_build_object('qty', qty, 'unit', unit, 'tracked', tracked, 'count_gen', count_gen)), '{}'::jsonb)
+    into v_bal from public.stock_balances where product_id = any(v_ids);                 -- the device refreshes its cache (incl. the generation) from this
+  v_result := jsonb_build_object('op_id', v_op_id, 'status', v_status, 'lines', v_plan, 'exceptions', v_exc, 'duplicate', false, 'balances', v_bal);
   update public.stock_operations set status = v_status, result = v_result, applied_count = v_applied where op_id = v_op_id;
   return v_result;
 end
@@ -437,7 +497,8 @@ $fn$;
 
 create function public.stock_status() returns jsonb language sql stable security definer set search_path = pg_catalog, public as $$
   select jsonb_build_object('mode', mode, 'frozen', frozen, 'frozen_reason', frozen_reason, 'min_client_version', min_client_version,
-         'cutover_at', cutover_at, 'rolled_back_at', rolled_back_at, 'is_approver', stock_internal.stock_is_approver(auth.uid()), 'user_id', auth.uid())
+         'cutover_at', cutover_at, 'rolled_back_at', rolled_back_at, 'is_approver', stock_internal.stock_is_approver(auth.uid()),
+         'can_count', stock_internal.stock_can_count(auth.uid()), 'user_id', auth.uid())
   from public.stock_control $$;
 
 create function public.stock_resync_mirror() returns int language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -452,16 +513,19 @@ begin
   update public.stock_exceptions set resolved_at = now(), resolved_by = auth.uid(), resolution_note = p_note where id = p_id and resolved_at is null;
 end $$;
 create function public.stock_resolve_discrepancy(p_key text, p_note text) returns void language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_hash text;
 begin
   if auth.uid() is null or not stock_internal.stock_is_approver(auth.uid()) then raise exception 'stock: approver only' using errcode = '42501'; end if;
   if nullif(btrim(coalesce(p_note, '')), '') is null then raise exception 'stock: a note is required' using errcode = '22023'; end if;
-  insert into public.stock_discrepancies(key, check_code, severity, resolved_at, resolved_by, resolution_note)
-  values (p_key, split_part(p_key, ':', 1), 'info', now(), auth.uid(), p_note)
-  on conflict (key) do update set resolved_at = now(), resolved_by = auth.uid(), resolution_note = p_note;
+  v_hash := (select md5(f.detail::text) from stock_internal.stock_reconcile_rows() f where f.key = p_key);   -- what exactly was acknowledged
+  insert into public.stock_discrepancies(key, check_code, severity, resolved_at, resolved_by, resolution_note, detail_hash, cleared_seen_at)
+  values (p_key, split_part(p_key, ':', 1), 'info', clock_timestamp(), auth.uid(), p_note, v_hash, null)
+  on conflict (key) do update set resolved_at = clock_timestamp(), resolved_by = auth.uid(), resolution_note = p_note, detail_hash = v_hash, cleared_seen_at = null;
+  insert into public.stock_discrepancy_events(key, event, by, note) values (p_key, 'acknowledged', auth.uid(), p_note);
 end $$;
 
--- 9. Cutover status (read-only; anyone signed in may look)
-create function public.stock_cutover_status() returns jsonb language sql stable security definer set search_path = pg_catalog, public as $$
+-- 9. Cutover status (read-only; approvers)
+create function stock_internal.stock_cutover_status_data() returns jsonb language sql stable security definer set search_path = pg_catalog, public as $$
   select jsonb_build_object(
     'mode', c.mode, 'frozen', c.frozen, 'cutover_at', c.cutover_at, 'rolled_back_at', c.rolled_back_at,
     'unopened_products_with_legacy_stock', coalesce((select jsonb_agg(jsonb_build_object('product_id', r.id, 'legacy_qty', stock_internal.safe_num(r.data -> 'stockQty')) order by r.id)
@@ -477,6 +541,11 @@ create function public.stock_cutover_status() returns jsonb language sql stable 
         coalesce((select jsonb_agg(b.product_id order by b.product_id) from public.stock_balances b where b.tracked
                    and (b.last_verified_at is null or b.last_verified_at <= c.rolled_back_at)), '[]'::jsonb) end)
   from public.stock_control c $$;
+create function public.stock_cutover_status() returns jsonb language plpgsql stable security definer set search_path = pg_catalog, public as $$
+begin
+  if not stock_internal.stock_me_approver() then raise exception 'stock: approver only' using errcode = '42501'; end if;     -- it lists legacy quantities and write attempts
+  return stock_internal.stock_cutover_status_data();
+end $$;
 
 -- 10. ADMIN functions — callable ONLY by the migrating admin role (EXECUTE granted to nobody else); every call is logged
 create function stock_internal.stock_admin_snapshot(p_label text) returns int language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -496,6 +565,15 @@ begin
   if p_add then insert into public.app_stock_approvers(user_id, email, note) values (p_user, p_email, p_note) on conflict (user_id) do update set email = excluded.email, note = excluded.note;
   else delete from public.app_stock_approvers where user_id = p_user; end if;
   insert into public.stock_control_log(actor, action, detail) values (session_user, case when p_add then 'approver_added' else 'approver_removed' end,
+         jsonb_build_object('user_id', p_user, 'email', p_email, 'note', p_note));
+end $$;
+
+create function stock_internal.stock_admin_counter(p_user uuid, p_email text, p_add boolean, p_note text default null) returns void
+language plpgsql security definer set search_path = pg_catalog, public as $$
+begin
+  if p_add then insert into public.app_stock_counters(user_id, email, note) values (p_user, p_email, p_note) on conflict (user_id) do update set email = excluded.email, note = excluded.note;
+  else delete from public.app_stock_counters where user_id = p_user; end if;
+  insert into public.stock_control_log(actor, action, detail) values (session_user, case when p_add then 'counter_added' else 'counter_removed' end,
          jsonb_build_object('user_id', p_user, 'email', p_email, 'note', p_note));
 end $$;
 
@@ -523,8 +601,9 @@ begin
 
   if p_mode is not null and p_mode <> c.mode then
     select count(*) into v_unack from public.stock_legacy_writes where acknowledged_at is null;
-    -- after a rollback, nothing may be switched back on until every balance has been physically counted since
-    if c.mode = 'off' and c.rolled_back_at is not null and p_mode <> 'off' then
+    -- after a rollback, `transition` may be entered freely (it protects balances and logs legacy writes; counts are accepted there, NOT in `off`),
+    -- but enforcement (ignore/reject) is blocked until every tracked balance has been physically counted since the rollback
+    if p_mode in ('ignore', 'reject') and c.rolled_back_at is not null then
       select array_agg(b.product_id order by b.product_id) into v_stale from public.stock_balances b
        where b.tracked and (b.last_verified_at is null or b.last_verified_at <= c.rolled_back_at);
       if v_stale is not null then raise exception 'stock: re-enable blocked — % tracked product(s) have not been physically counted since the rollback: %', array_length(v_stale, 1), v_stale using errcode = '55000'; end if;
@@ -557,7 +636,7 @@ begin
 end $$;
 
 -- 11. Reconciliation: READ-ONLY. It reports; it never changes a balance, movement or mirror.
-create function public.stock_reconcile() returns table(product_id text, check_code text, severity text, detail jsonb, key text, acknowledged boolean)
+create function stock_internal.stock_reconcile_rows() returns table(product_id text, check_code text, severity text, detail jsonb, key text, acknowledged boolean)
 language sql stable security definer set search_path = pg_catalog, public as $$
   with mv as (
     select m.*, lag(qty_after) over (partition by m.product_id order by m.id) prev_after,
@@ -604,7 +683,12 @@ language sql stable security definer set search_path = pg_catalog, public as $$
     select null, 'operation_movement_mismatch', 'error', jsonb_build_object('op_id', o.op_id, 'applied_count', o.applied_count, 'movements', coalesce(mc.c, 0)),
            'operation_movement_mismatch:' || o.op_id
       from public.stock_operations o left join (select op_id, count(*) c from public.stock_movements group by 1) mc using (op_id)
-     where o.status like 'applied%' and o.applied_count <> coalesce(mc.c, 0)
+     where (o.status like 'applied%' and o.applied_count <> coalesce(mc.c, 0)) or (o.status = 'held_for_review' and coalesce(mc.c, 0) > 0)
+    union all
+    -- the count generation must equal 1 + the number of absolute re-baselines (opening, count, untrack) after the first opening
+    select b.product_id, 'generation_mismatch', 'error', jsonb_build_object('count_gen', b.count_gen, 'rebaselines', coalesce(g.c, 0)), 'generation_mismatch:' || b.product_id
+      from public.stock_balances b left join (select product_id, count(*) c from public.stock_movements where kind in ('opening','count','untrack') group by 1) g using (product_id)
+     where b.count_gen <> coalesce(g.c, 0)
     union all
     select null, 'rejected_operation', 'warning', jsonb_build_object('op_id', op_id, 'kind', kind, 'reasons', result -> 'reasons', 'at', created_at), 'rejected_operation:' || op_id
       from public.stock_operations where status = 'rejected'
@@ -618,18 +702,46 @@ language sql stable security definer set search_path = pg_catalog, public as $$
     select null, 'stuck_operation', 'error', jsonb_build_object('op_id', op_id), 'stuck_operation:' || op_id
       from public.stock_operations where status = 'processing' and created_at < now() - interval '5 minutes')
   select f.product_id, f.check_code, f.severity, f.detail, f.key,
-         exists (select 1 from public.stock_discrepancies d where d.key = f.key and d.resolved_at is not null)
+         exists (select 1 from public.stock_discrepancies d where d.key = f.key and d.resolved_at is not null and d.cleared_seen_at is null
+                  and (d.detail_hash is null or d.detail_hash = md5(f.detail::text)))      -- an acknowledgement covers THAT finding, not a changed or returning one
     from f order by case f.severity when 'error' then 0 when 'warning' then 1 else 2 end, f.key
 $$;
-create function public.stock_reconcile_record() returns int language plpgsql security definer set search_path = pg_catalog, public as $$
-declare n int;
+create function public.stock_reconcile() returns table(product_id text, check_code text, severity text, detail jsonb, key text, acknowledged boolean)
+language plpgsql stable security definer set search_path = pg_catalog, public as $$
 begin
-  if auth.uid() is null then raise exception 'stock: not authenticated' using errcode = '28000'; end if;
-  insert into public.stock_discrepancies(key, check_code, product_id, severity, detail)
-  select r.key, r.check_code, r.product_id, r.severity, r.detail from public.stock_reconcile() r
-  on conflict (key) do update set last_seen_at = clock_timestamp(), detail = excluded.detail, severity = excluded.severity,
-        product_id = excluded.product_id, check_code = excluded.check_code;
-  get diagnostics n = row_count;
+  if not stock_internal.stock_me_approver() then raise exception 'stock: approver only' using errcode = '42501'; end if;
+  return query select * from stock_internal.stock_reconcile_rows();
+end $$;
+-- Saves findings (never touches a balance). History is append-only (stock_discrepancy_events):
+--   detected      first time a finding is seen
+--   cleared       an acknowledged finding was seen GONE by a later run
+--   reopened      an acknowledged finding is back after being cleared, or its details differ from what was acknowledged
+-- A finding that is still there, unchanged, after its acknowledgement simply stays acknowledged.
+create function public.stock_reconcile_record() returns int language plpgsql security definer set search_path = pg_catalog, public as $$
+declare n int; v_f jsonb; v_user uuid := auth.uid();
+begin
+  if not stock_internal.stock_me_approver() then raise exception 'stock: approver only' using errcode = '42501'; end if;
+  perform 1 from public.stock_control for update;                                    -- one recorder at a time
+  select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) into v_f from stock_internal.stock_reconcile_rows() r;
+  -- 1. acknowledged findings that are no longer present
+  with c as (update public.stock_discrepancies d set cleared_seen_at = clock_timestamp()
+              where d.resolved_at is not null and d.cleared_seen_at is null and not exists (select 1 from jsonb_to_recordset(v_f) as f(product_id text, check_code text, severity text, detail jsonb, key text) where f.key = d.key) returning d.key)
+  insert into public.stock_discrepancy_events(key, event, by) select key, 'cleared', v_user from c;
+  -- 2. acknowledged findings that came back (after being seen cleared) or whose details changed since the acknowledgement
+  with ro as (update public.stock_discrepancies d set resolved_at = null, resolved_by = null, resolution_note = null, detail_hash = null, cleared_seen_at = null
+               from jsonb_to_recordset(v_f) as f(product_id text, check_code text, severity text, detail jsonb, key text)
+              where f.key = d.key and d.resolved_at is not null
+                and (d.cleared_seen_at is not null or (d.detail_hash is not null and d.detail_hash <> md5(f.detail::text)))
+          returning d.key, f.detail)
+  insert into public.stock_discrepancy_events(key, event, by, note, detail) select key, 'reopened', v_user, 'finding recurred or changed after acknowledgement', detail from ro;
+  -- 3. new findings
+  with ins as (insert into public.stock_discrepancies(key, check_code, product_id, severity, detail)
+               select f.key, f.check_code, f.product_id, f.severity, f.detail from jsonb_to_recordset(v_f) as f(product_id text, check_code text, severity text, detail jsonb, key text)
+               on conflict (key) do update set last_seen_at = clock_timestamp(), detail = excluded.detail, severity = excluded.severity,
+                     product_id = excluded.product_id, check_code = excluded.check_code
+               returning key, detail, (xmax = 0) as is_new)
+  insert into public.stock_discrepancy_events(key, event, by, detail) select key, 'detected', v_user, detail from ins where is_new;
+  n := jsonb_array_length(v_f);
   return n;
 end $$;
 
@@ -648,21 +760,47 @@ do $$ declare f record; begin
   end loop;
 end $$;
 
-revoke all on public.stock_control, public.stock_control_log, public.stock_cutover_snapshot, public.stock_legacy_writes, public.app_stock_approvers,
-              public.stock_balances, public.stock_operations, public.stock_movements, public.stock_exceptions, public.stock_discrepancies
+-- 12b. READ ACCESS — least privilege. Nobody but stock_owner can write any stock table (no INSERT/UPDATE/DELETE grant exists for anyone).
+--      Who may READ what (enforced by row-level security; the table-level SELECT grant is only the door, the policy decides the rows):
+--        stock_balances          every signed-in user   (they must see quantities, units and the count generation to work)
+--        stock_movements         own rows (actor = me) + approvers      (carry actor e-mail / device id)
+--        stock_operations        own rows + approvers                   (carry the full request payload)
+--        stock_exceptions        own rows + approvers                   (a device must see ITS unresolved failures)
+--        app_stock_approvers / app_stock_counters   own row + approvers
+--        stock_control (mode, version gate), stock_control_log, stock_cutover_snapshot, stock_legacy_writes,
+--        stock_discrepancies, stock_discrepancy_events   approvers only (they expose legacy quantities, other users' attempts, admin actions)
+--        mode / frozen / min version for the app: via stock_status() (any signed-in user)
+--        the migrating admin role: SELECT on everything (investigation, cutover); service_role / anon: nothing
+--      stock_reconcile(), stock_reconcile_record(), stock_cutover_status() and the resolve functions are approver-only.
+revoke all on public.stock_control, public.stock_control_log, public.stock_cutover_snapshot, public.stock_legacy_writes, public.app_stock_approvers, public.app_stock_counters,
+              public.stock_balances, public.stock_operations, public.stock_movements, public.stock_exceptions, public.stock_discrepancies, public.stock_discrepancy_events
   from public, anon, authenticated, service_role;
 grant select on public.stock_control, public.stock_control_log, public.stock_cutover_snapshot, public.stock_legacy_writes, public.stock_balances,
-                public.stock_operations, public.stock_movements, public.stock_exceptions, public.stock_discrepancies, public.app_stock_approvers to authenticated;
+                public.stock_operations, public.stock_movements, public.stock_exceptions, public.stock_discrepancies, public.stock_discrepancy_events,
+                public.app_stock_approvers, public.app_stock_counters to authenticated;
+do $$ begin
+  execute format('grant select on public.stock_control, public.stock_control_log, public.stock_cutover_snapshot, public.stock_legacy_writes, public.stock_balances, public.stock_operations, public.stock_movements, public.stock_exceptions, public.stock_discrepancies, public.stock_discrepancy_events, public.app_stock_approvers, public.app_stock_counters to %I', current_user);
+end $$;
 grant select, insert, update on public.records to stock_owner;
 
 do $$ declare t text; begin
-  for t in select unnest(array['stock_control','stock_control_log','stock_cutover_snapshot','stock_legacy_writes','app_stock_approvers',
-                               'stock_balances','stock_operations','stock_movements','stock_exceptions','stock_discrepancies']) loop
+  for t in select unnest(array['stock_control','stock_control_log','stock_cutover_snapshot','stock_legacy_writes','app_stock_approvers','app_stock_counters',
+                               'stock_balances','stock_operations','stock_movements','stock_exceptions','stock_discrepancies','stock_discrepancy_events']) loop
     execute format('alter table public.%I enable row level security', t);
     execute format('alter table public.%I force row level security', t);
     execute format('create policy owner_all on public.%I to stock_owner using (true) with check (true)', t);
-    if t = 'app_stock_approvers' then execute format('create policy read_self on public.%I for select to authenticated using (user_id = auth.uid())', t);
-    else execute format('create policy read_all on public.%I for select to authenticated using (true)', t); end if;
+    execute format('create policy admin_read on public.%I for select to %I using (true)', t, current_user);
+    if t = 'stock_balances' then
+      execute format('create policy read_all on public.%I for select to authenticated using (true)', t);
+    elsif t in ('stock_movements') then
+      execute format('create policy read_own_or_approver on public.%I for select to authenticated using (actor = auth.uid() or stock_internal.stock_me_approver())', t);
+    elsif t in ('stock_operations', 'stock_exceptions') then
+      execute format('create policy read_own_or_approver on public.%I for select to authenticated using (actor = auth.uid() or stock_internal.stock_me_approver())', t);
+    elsif t in ('app_stock_approvers', 'app_stock_counters') then
+      execute format('create policy read_self_or_approver on public.%I for select to authenticated using (user_id = auth.uid() or stock_internal.stock_me_approver())', t);
+    else
+      execute format('create policy read_approver on public.%I for select to authenticated using (stock_internal.stock_me_approver())', t);
+    end if;
   end loop;
 end $$;
 do $$ begin                                     -- if "records" has RLS on, the owner role needs to be able to write the mirror
@@ -680,10 +818,11 @@ grant execute on function public.stock_apply(jsonb), public.stock_status(), publ
 grant usage on schema stock_internal to authenticated, service_role;
 grant execute on function stock_internal.stock_mode(), stock_internal.stock_auth_qty(text), stock_internal.stock_client_ok(), stock_internal.safe_num(jsonb),
   stock_internal.legacy_state(text), stock_internal.log_legacy_write(text, numeric, numeric, numeric, text) to authenticated, service_role;
+grant execute on function stock_internal.stock_me_approver() to authenticated;      -- used by the row-level-security policies (no argument: cannot look other people up)
 -- the migrating admin role: also a "records" writer (so same helper access) and the ONLY caller of the admin functions
 do $$ begin
   execute format('grant execute on function stock_internal.stock_mode(), stock_internal.stock_auth_qty(text), stock_internal.stock_client_ok(), stock_internal.safe_num(jsonb), stock_internal.legacy_state(text), stock_internal.log_legacy_write(text, numeric, numeric, numeric, text) to %I', current_user);
-  execute format('grant execute on function stock_internal.stock_admin_snapshot(text), stock_internal.stock_admin_approver(uuid, text, boolean, text), stock_internal.stock_admin_ack_legacy_writes(text, bigint), stock_internal.stock_admin_control(text, text, boolean, text, text[], text) to %I', current_user);
+  execute format('grant execute on function stock_internal.stock_admin_snapshot(text), stock_internal.stock_admin_approver(uuid, text, boolean, text), stock_internal.stock_admin_ack_legacy_writes(text, bigint), stock_internal.stock_admin_control(text, text, boolean, text, text[], text), stock_internal.stock_admin_counter(uuid, text, boolean, text) to %I', current_user);
 end $$;
 
 -- 13. Hand-over complete: the admin no longer needs (and no longer has) membership of stock_owner

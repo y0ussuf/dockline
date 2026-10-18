@@ -55,9 +55,24 @@ Set up: create a Supabase **branch** (or restore the latest backup into a new pr
 * **RLS interplay**: with RLS on `records`, `stock_apply` (opening/count) must still be able to update the mirror (policy `stock_owner_mirror`). Pass if the mirrored `stockQty` changes.
 * **Realtime / sync cursor**: after a `stock_apply`, a second device's `pullChanges` receives the product record (the mirror update bumps `updated_at`).
 * **Concurrency**: run the same race as `tests/run_tests.py` §8 through the API with two real clients (e.g. two scripts looping `stock_apply` on one product). Pass if the final balance = start − total and `select * from stock_reconcile()` has no error rows. (Do not run the destructive fault-injection tests on Supabase — they need a superuser.)
-* **Reconcile + record**: `select * from stock_reconcile();` then `select public.stock_reconcile_record();` as a signed-in user.
+* **Reconcile + record**: as the **approver's JWT** (`POST …/rpc/stock_reconcile`, then `…/rpc/stock_reconcile_record`). They are approver-only; from the SQL editor (no `auth.uid()`) they correctly refuse — use `select * from stock_internal.stock_reconcile_rows();` there. Crew JWT → 42501.
 * **Rollback rehearsal**: run `002a`, `002b`, then re-enable (see README §8) on the branch.
 * **Uninstall**: `003_uninstall_logic.sql` then re-apply `001` is *not* supported (tables exist) — rehearse restore-from-backup instead.
+
+## 4b. Revision 3 additions (all NOT RUN)
+| # | Check | Expected |
+|---|---|---|
+| 4b.1 | **Mode policy through the API.** In mode `off`, `POST …/rpc/stock_apply` with an `opening` (approver JWT) and with a `pick` (crew JWT) | HTTP 4xx with SQLSTATE `55000` and the message "mode is off"; `select count(*) from stock_operations` unchanged |
+| 4b.2 | Cutover order on the branch: `off` → `stock_admin_snapshot` → `transition` → opening → `ignore` | each step accepted/refused exactly as in `tests/test_findings.py` F1 and `tests/test_cutover.py` |
+| 4b.3 | **Count permission with real JWTs.** `stock_apply {kind:"count"}` with the crew JWT, then after `stock_admin_counter(<crew uuid>,…,true)`, then after removal | 42501 / applied / 42501 |
+| 4b.4 | **RLS reads with real JWTs** (`GET …/rest/v1/<table>?select=*` for each of the 12 tables, with anon key only, crew JWT, counter JWT, approver JWT) | anon: 401/403; crew: balances all, movements/operations/exceptions only own rows, everything else `[]`; approver: all rows. (Also confirms `select=*` works — no column-level grants are used) |
+| 4b.5 | RLS policy functions: policies call `auth.uid()` and `stock_internal.stock_me_approver()` **as the `authenticated` role** | the crew/approver difference in 4b.4 proves it; `verify_privileges.sql` rows for the policy set and the 15 executable functions are all ok |
+| 4b.6 | `service_role` key (server side only, never in the browser): `GET …/rest/v1/stock_balances` | 401/403 "permission denied" — service_role has no access to stock tables by design (it has no `auth.uid()`) |
+| 4b.7 | **Untracked fact**: `stock_apply` pick for a product with no balance | `status = held_for_review`, one `stock_exceptions` row (`untracked_product`), no movement |
+| 4b.8 | **Count generation**: read `count_gen` from `stock_balances`, count the product, then send a pick built with the old `count_gen` | `held_for_review`, `stale_generation`; the response `balances` object shows the new `count_gen` |
+| 4b.9 | **Duplicate ids**: `opening` / `untrack` / `count` with the same product twice | `rejected`, `duplicate_product`; nothing changed |
+| 4b.10 | **Reopen**: reproduce F5 through the API with the approver JWT (acknowledge → fix → fault again → `stock_reconcile_record`) | the discrepancy is reopened; `stock_discrepancy_events` shows detected / acknowledged / cleared / reopened |
+| 4b.11 | The SQL editor / dashboard role can read the stock tables (admin read policy) but `delete`/`update` is refused | rows visible; write → permission denied |
 
 ## 5. Report back
 For each numbered item: PASS / FAIL, the exact output, date and branch name. Failures change the design, not the tests.

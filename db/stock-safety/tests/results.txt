@@ -67,7 +67,7 @@ PASS anon cannot read stock_legacy_writes
 PASS anon cannot read app_stock_approvers
 PASS authenticated cannot call the admin functions
 PASS a signed-in user can read balances (they could always see stock) but not the approvers table of others
-PASS pick: tracked lines applied, untracked skipped, unit mismatch becomes an exception
+PASS pick: tracked lines applied; an untracked product and a unit mismatch each become an exception
 PASS the unit-mismatch line is recorded as an unresolved exception (not silently dropped)
 PASS mirror follows balance
 PASS replaying the same operation: same result, duplicate flag, no new movement
@@ -81,7 +81,11 @@ PASS override by a non-approver is rejected (the client flag is not trusted)
 PASS approved override applies; user, reason and resulting negative balance are on the movement
 PASS a correction with one bad (unit) line is rejected as a whole — the good lines are not applied
 PASS multi-product mapping move applies atomically
-PASS crew count sets the balance, records the difference and marks it physically verified
+PASS an ordinary crew account CANNOT record a count (42501); no operation row, no movement, balance and verification untouched
+PASS a DESIGNATED COUNTER can count: sets the balance, records the difference + who, marks it physically verified, bumps the count generation
+PASS an approver can count too
+PASS the counter role grants nothing else: a counter cannot open, adjust or untrack
+PASS only the admin functions manage counters
 PASS negative count rejected
 PASS count on an untracked product rejected
 PASS count with a different unit rejected
@@ -109,7 +113,7 @@ PASS 30 picks racing 60 stale product pushes: balance exact, mirror equals balan
 PASS only an approver can untrack
 PASS untrack CLOSES the episode: a closing movement takes the balance to 0 and records the closing figure; nothing is deleted
 PASS untracked product: stray legacy stockQty is blanked and logged
-PASS untracked: picks skipped, counts refused
+PASS untracked: a pick is NOT applied and NOT skipped silently (held as an unresolved exception, op status held_for_review); a count is refused
 PASS only an approver can re-open
 PASS re-open starts episode 2: new unit, new cutoff = the new opening movement, verification reset (an accepted-unverified opening is NOT verified)
 PASS history is preserved and each episode has exactly one opening
@@ -147,13 +151,14 @@ PASS stage A: an offline device's unsent operation is REFUSED with an explicit e
 PASS stage A: an old/stale device pushing stock does NOT overwrite the authoritative balance, and the attempt is LOGGED
 PASS stage B REFUSES to release while legacy writes are unacknowledged
 PASS only the admin can acknowledge; the acknowledgement needs a note
-PASS stage B after review (97 writes acknowledged): mode off, frozen, rolled_back_at stamped; ledger rows and balances unchanged
+PASS stage B after review (101 writes acknowledged): mode off, frozen, rolled_back_at stamped; ledger rows and balances unchanged
 PASS stage B: records now carry the final authoritative balances (legacy devices start from the right numbers)
 PASS stage B: ledger-only operations remain refused (frozen) — no automatic correction
 PASS after release an old app can write stockQty again (legacy source of truth) …
 PASS … but stock_balances and the ledger are untouched, and reconciliation reports the drift (mirror_mismatch)
-PASS re-enable is BLOCKED until every tracked product has been physically counted since the rollback (and the message lists them)
-PASS (frozen lifted only so the approver can count; ledger operations are accepted again, still nothing automatic)
+PASS enforcement (ignore) is BLOCKED until every tracked product has been physically counted since the rollback (and the message lists them)
+PASS mode OFF still refuses every stock operation after the freeze is lifted (the legacy guard is off, so the ledger must not move)
+PASS transition is allowed after a rollback (counts are accepted there)
 PASS approver re-baselines every tracked product with a physical count (attributed movements; mirror overwritten deliberately)
 PASS the old offline pick (client_at BEFORE the new count) is NOT applied — the count already includes it; it becomes a visible exception, never a silent double count
 PASS an operation created after the count is applied normally
@@ -161,4 +166,4 @@ PASS previously REJECTED operations are still listed (no automatic retry exists)
 PASS re-enable now succeeds; cutover_at is reset (orders finished during the legacy period are not expected to have operations)
 PASS uninstall removes the guard + all functions, keeps every table and row and the append-only protection on the ledger
 
-162 passed, 0 failed
+167 passed, 0 failed

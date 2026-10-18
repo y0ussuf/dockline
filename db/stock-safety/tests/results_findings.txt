@@ -1,0 +1,78 @@
+PASS fresh install is in mode off
+PASS mode OFF: EVERY kind of operation is refused with an explicit error (55000), even for an approver — nothing is stored, nothing applied
+PASS mode OFF: a crew account is refused the same way
+PASS mode OFF: the approver cannot open a balance, so no ledger exists that legacy stockQty writes could diverge from
+PASS mode OFF: the legacy world is untouched (an old-app stockQty write is simply stored)
+PASS cutover step 1 — transition: the same operations are now accepted
+PASS mode TRANSITION: opening, pick, count, receipt, adjustment, receipt_reversal, mapping_move, untrack and re-open are all accepted
+PASS mode IGNORE: opening, pick, count, receipt, adjustment, receipt_reversal, mapping_move, untrack and re-open are all accepted
+PASS mode REJECT: opening, pick, count, receipt, adjustment, receipt_reversal, mapping_move, untrack and re-open are all accepted
+PASS after the whole sequence the ledger is clean (no error finding)
+PASS the mode policy is written down in the function (the README table is checked after the README is rewritten)
+PASS pick on never-opened / unknown products: status is held_for_review (NOT applied), both lines are exceptions
+PASS each line is a durable UNRESOLVED exception with the user, the delta and the original line
+PASS no movement, no balance created; the operation is stored as held_for_review with applied_count 0
+PASS replaying it returns the same held result, adds no second exception
+PASS reconciliation lists them as unresolved_exception; an order whose pick op was only held is still flagged order_without_movement after cutover
+PASS mixed request: the tracked line applies, the untracked line is an exception, status applied_with_exceptions (never plain applied)
+PASS a receipt for an untracked product is held the same way
+PASS a CORRECTION touching an untracked product is rejected as a whole (durable, reviewable), nothing applied
+PASS a product that was UNTRACKED later behaves the same (held, visible)
+PASS only an approver resolves it, with a note; resolving never moves stock
+PASS resolved with a note
+PASS an ordinary crew account cannot submit a count: 42501, no operation row, balance / last_verified_at / generation untouched
+PASS a designated counter can; an approver can
+PASS removing the counter takes the permission away at once
+PASS a crew account cannot make itself a counter (no write grant; admin function only)
+PASS stock_status tells the app who may count / approve
+PASS counter changes are in the append-only control log
+PASS opening: the same product twice → the WHOLE request is rejected (duplicate_product), nothing opened, not even the other product
+PASS …and the rejection is durable and visible (stored operation, reconciliation finding)
+PASS opening of an untracked product twice in one request: rejected; still untracked; episode unchanged
+PASS untrack: the same product twice → rejected as a whole; balance, tracked flag, movements, generation unchanged
+PASS count: the same product twice → rejected (ambiguous: which figure is the truth?)
+PASS pick with the same product on several lines (legitimate: several order items) chains correctly: each line starts where the previous ended
+PASS adjustment with repeated lines chains too
+PASS movement chain continuity and ledger-to-balance reconciliation hold after all duplicate cases
+PASS detect: injected mirror drift is found, unacknowledged
+PASS only approvers may run / record reconciliation (crew: 42501)
+PASS recorded; event "detected"
+PASS resolve: acknowledged in the live view; event "acknowledged" with the note
+PASS the SAME unchanged finding still present after acknowledgement stays acknowledged (no churn, no reopen)
+PASS fix: the fault disappears; the next run records "cleared"; the row stays resolved
+PASS the IDENTICAL fault returns: the live view shows it UNacknowledged at once (acknowledgement belonged to the cleared fault)
+PASS record: the discrepancy is REOPENED (resolved_at cleared) and the full history is preserved in the append-only events incl. the first note
+PASS same finding, DIFFERENT details than were acknowledged (123 → 456) without a clear in between: shown unacknowledged immediately, reopened on record
+PASS the history cannot be edited: even stock_owner cannot UPDATE / DELETE / TRUNCATE stock_discrepancy_events
+PASS recording / reopening never touches balances or movements
+PASS the result carries the device cache (qty + count_gen), a pick on the current generation applies
+PASS a physical count increments the generation (server-side), opening/untrack too
+PASS an operation built on the OLD generation is HELD (not applied) even though its client_at is AFTER the count — the device clock is not trusted
+PASS the reviewer is told whether the event probably predates the count (hint only): client_at_before_rebaseline = true
+PASS an operation on the CURRENT generation applies
+PASS a generation NEWER than the server has (restored backup / forged) is held too (generation_ahead)
+PASS a CORRECTION on a stale generation is rejected as a whole (online operation: refresh and redo)
+PASS a malformed count_gen is refused outright (22023)
+PASS LEGACY-format line (no count_gen), mode ignore: falls back to client_at — after the re-baseline applies, before it is held (stale_before_count)
+PASS mode REJECT: a fact line WITHOUT a generation is held (generation_missing) — no silent fallback to device clocks once enforcement is final
+PASS mode REJECT: with the generation it applies
+PASS offline across a count: ALL three queued picks are held (stale_generation), stock unchanged, three unresolved exceptions with the original lines
+PASS recovery: nothing was applied automatically; the reviewer applied ONE attributed adjustment (references the exception) and resolved all three with notes
+PASS the device sees the new generation in every result and can rebuild its cache
+PASS reconciliation detects a tampered generation (generation_mismatch)
+PASS and is clean again after repair
+PASS anon: no read on any of the 12 tables
+PASS service_role: no read and no write on any stock table (it has no auth.uid(); edge functions must not touch the ledger)
+PASS crew: every stock balance is readable (they need quantities, units, generations)
+PASS crew: movements, operations and exceptions — ONLY their own rows (others' e-mails, devices and payloads are invisible)
+PASS crew sees nothing of: control, control log, snapshot, legacy writes, discrepancies + history, approver / counter lists
+PASS designated counter: sees only their own counter row, and still no approver data
+PASS approver: sees every row of every table
+PASS admin role: can read every table (investigation / cutover) but write none
+PASS crew cannot call the approver-only functions: reconcile, record, cutover status, resolve exception / discrepancy
+PASS the approver can call them
+PASS crew still gets mode / frozen / version via stock_status()
+PASS the exact policy set for `authenticated` is the documented one; only stock_balances is "using (true)"
+PASS nobody (except stock_owner) holds INSERT/UPDATE/DELETE/TRUNCATE on any stock table
+
+76 passed, 0 failed

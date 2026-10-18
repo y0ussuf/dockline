@@ -5,6 +5,7 @@ from common import *
 for pid, unit in [('P1','kg'),('P2','kg'),('P3','L'),('P4','pcs'),('P5','kg'),('P6','kg'),('P7','kg'),('P8','kg')]:
     q(su, "insert into records(store,id,data) values ('products',%s,%s::jsonb)", (pid, json.dumps({'name': pid, 'unit': unit, 'stockQty': ''})))
 adm_call("select stock_internal.stock_admin_approver(%s, 'approver@x.test', true, 'test approver')", (A,))
+adm_call("select stock_internal.stock_admin_counter(%s, 'counter@x.test', true, 'designated counter')", (D,))
 ctl(p_mode='transition', p_note='openings in progress')
 
 print('\n== 1. openings: approval, basis, one-time ==')
@@ -111,9 +112,10 @@ check('no stock function is executable by PUBLIC', pub == 0, pub)
 def execset(role): return sorted(r[0] for r in qs("select n.nspname||'.'||p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.proowner='stock_owner'::regrole and has_function_privilege(%s,p.oid,'execute')", (role,)))
 check('anon can execute NO stock function', execset('anon') == [], execset('anon'))
 exp_auth = sorted(['public.stock_apply','public.stock_status','public.stock_resync_mirror','public.stock_resolve_exception','public.stock_resolve_discrepancy','public.stock_reconcile','public.stock_reconcile_record','public.stock_cutover_status',
-                   'stock_internal.stock_mode','stock_internal.stock_auth_qty','stock_internal.stock_client_ok','stock_internal.safe_num','stock_internal.legacy_state','stock_internal.log_legacy_write'])
+                   'stock_internal.stock_mode','stock_internal.stock_auth_qty','stock_internal.stock_client_ok','stock_internal.safe_num','stock_internal.legacy_state','stock_internal.log_legacy_write',
+                   'stock_internal.stock_me_approver'])
 check('authenticated can execute exactly the API functions + the helpers the guard needs', execset('authenticated') == exp_auth, set(execset('authenticated')) ^ set(exp_auth))
-check('service_role can execute only the guard helpers (no API function, no admin function)', execset('service_role') == sorted(x for x in exp_auth if x.startswith('stock_internal')), execset('service_role'))
+check('service_role can execute only the guard helpers (no API function, no admin function)', execset('service_role') == sorted(x for x in exp_auth if x.startswith('stock_internal') and not x.endswith('stock_me_approver')), execset('service_role'))
 check('the admin functions are executable only by the admin role', all(has for has in [qs("select has_function_privilege('pgadmin','stock_internal.stock_admin_control(text,text,boolean,text,text[],text)','execute')")[0][0]]) and
       not any(qs("select has_function_privilege(%s,'stock_internal.stock_admin_control(text,text,boolean,text,text[],text)','execute')", (r,))[0][0] for r in ['anon','authenticated','service_role','authenticator']))
 check('anon has no USAGE on schema stock_internal (helpers are unreachable even by name)', qs("select has_schema_privilege('anon','stock_internal','usage')")[0][0] is False)
@@ -129,9 +131,9 @@ print('\n== 3. facts: picking, idempotency, units, untracked, negative ==')
 base = snap(); p1, p2 = bal('P1'), bal('P2')
 pick = op('pick', [L('P1', -10, item_id='i1'), L('P2', -5, item_id='i2'), L('P5', -3, item_id='i3'), L('P3', -2, unit='kg', item_id='i4')], order_id='o1', device_id='dev1')
 r = ca.apply(pick)
-check('pick: tracked lines applied, untracked skipped, unit mismatch becomes an exception',
+check('pick: tracked lines applied; an untracked product and a unit mismatch each become an exception',
       r['status'] == 'applied_with_exceptions' and bal('P1') == p1 - 10 and bal('P2') == p2 - 5 and bal('P3') == 20 and bal('P5') is None
-      and [l['outcome'] for l in r['lines']] == ['apply','apply','skipped_untracked','exception'], r)
+      and [l['outcome'] for l in r['lines']] == ['apply','apply','exception','exception'], r)
 check('the unit-mismatch line is recorded as an unresolved exception (not silently dropped)', qs("select count(*) from stock_exceptions where code='unit_mismatch' and resolved_at is null")[0][0] == 1)
 check('mirror follows balance', float(mirror('P1')) == p1 - 10 and float(mirror('P2')) == p2 - 5)
 n = nmv(); r2 = ca.apply(pick)
@@ -164,13 +166,22 @@ p2m = bal('P2'); r = cb.apply(op('mapping_move', [L('P1', 5), L('P2', -5)]))
 check('multi-product mapping move applies atomically', r['status'] == 'applied' and bal('P1') == 5 and bal('P2') == p2m - 5)
 
 print('\n== 5. counts ==')
-p2c = bal('P2'); r = cb.apply(op('count', [L('P2', counted_qty=38)]))
-mv = qs("select delta,proof from stock_movements where op_id=%s", (r['op_id'],))
-check('crew count sets the balance, records the difference and marks it physically verified', bal('P2') == 38 and mv == [(38 - p2c, 'physical_count')] and
-      qs("select last_verified_at is not null from stock_balances where product_id='P2'")[0][0], mv)
-check('negative count rejected', cb.apply(op('count', [L('P2', counted_qty=-1)]))['status'] == 'rejected')
-check('count on an untracked product rejected', cb.apply(op('count', [L('P5', counted_qty=3)]))['status'] == 'rejected')
-check('count with a different unit rejected', cb.apply(op('count', [L('P2', counted_qty=3, unit='L')]))['status'] == 'rejected')
+p2c = bal('P2'); n0 = nmv(); g0 = qs("select count_gen from stock_balances where product_id='P2'")[0][0]
+check('an ordinary crew account CANNOT record a count (42501); no operation row, no movement, balance and verification untouched',
+      raises(lambda: cb.apply(op('count', [L('P2', counted_qty=1)])), '42501') and bal('P2') == p2c and nmv() == n0
+      and qs("select count_gen from stock_balances where product_id='P2'")[0][0] == g0)
+r = cc.apply(op('count', [L('P2', counted_qty=38)]))
+mv = qs("select delta,proof,actor_email from stock_movements where op_id=%s", (r['op_id'],))
+check('a DESIGNATED COUNTER can count: sets the balance, records the difference + who, marks it physically verified, bumps the count generation',
+      bal('P2') == 38 and mv == [(38 - p2c, 'physical_count', 'counter@x.test')] and qs("select last_verified_at is not null from stock_balances where product_id='P2'")[0][0]
+      and qs("select count_gen from stock_balances where product_id='P2'")[0][0] == g0 + 1, mv)
+check('an approver can count too', ca.apply(op('count', [L('P2', counted_qty=38)]))['status'] == 'applied')
+check('the counter role grants nothing else: a counter cannot open, adjust or untrack',
+      all(raises(lambda f=f: cc.apply(f), '42501') for f in [op('opening', [L('P5', counted_qty=1, basis='physical_count')]), op('adjustment', [L('P2', 1)], note='x'), op('untrack', [L('P2')])]))
+check('only the admin functions manage counters', raises(lambda: cb.run("select stock_internal.stock_admin_counter(%s,'x',true)", (B,)), '42501') and raises(lambda: ca.run("select stock_internal.stock_admin_counter(%s,'x',true)", (B,)), '42501'))
+check('negative count rejected', ca.apply(op('count', [L('P2', counted_qty=-1)]))['status'] == 'rejected')
+check('count on an untracked product rejected', ca.apply(op('count', [L('P5', counted_qty=3)]))['status'] == 'rejected')
+check('count with a different unit rejected', ca.apply(op('count', [L('P2', counted_qty=3, unit='L')]))['status'] == 'rejected')
 check('adjustment needs an approver', raises(lambda: cb.apply(op('adjustment', [L('P2', 1)], note='x')), '42501'))
 check('adjustment needs a reason', ca.apply(op('adjustment', [L('P2', 1)]))['status'] == 'rejected')
 
@@ -250,7 +261,10 @@ check('untrack CLOSES the episode: a closing movement takes the balance to 0 and
       row == (0, False, 1) and [m[0] for m in mv] == ['opening', 'pick', 'untrack'] and mv[-1][1:4] == (-6, 6, 0) and 'closing balance 6' in mv[-1][5], (row, mv))
 cb.upsert_product('P6', {'name': 'P6', 'stockQty': 55})
 check('untracked product: stray legacy stockQty is blanked and logged', mirror('P6') == '' and qs("select count(*) from stock_legacy_writes where product_id='P6' and attempted_qty=55")[0][0] == 1)
-check('untracked: picks skipped, counts refused', cb.apply(op('pick', [L('P6', -1)]))['lines'][0]['outcome'] == 'skipped_untracked' and cb.apply(op('count', [L('P6', counted_qty=3)]))['status'] == 'rejected')
+r = cb.apply(op('pick', [L('P6', -1)]))
+check('untracked: a pick is NOT applied and NOT skipped silently (held as an unresolved exception, op status held_for_review); a count is refused',
+      r['status'] == 'held_for_review' and r['lines'][0]['code'] == 'untracked_product' and qs("select count(*) from stock_exceptions where product_id='P6' and code='untracked_product' and resolved_at is null")[0][0] == 1
+      and ca.apply(op('count', [L('P6', counted_qty=3)]))['status'] == 'rejected')
 check('only an approver can re-open', raises(lambda: cb.apply(op('opening', [L('P6', counted_qty=1, basis='derived')])), '42501'))
 ca.apply(op('opening', [L('P6', unit='g', counted_qty=2500, basis='accepted_unverified')], note='re-tracked in grams'))
 row = qs("select qty,unit,tracked,episode,opening_basis,last_verified_at is null, opening_movement_id=(select max(id) from stock_movements where product_id='P6') from stock_balances where product_id='P6'")[0]
@@ -261,7 +275,7 @@ check('history is preserved and each episode has exactly one opening', [(m[0], m
 check('reconciliation: episode 1 closed at 0 + episode 2 chain is clean for the product (no chain_break / ledger_mismatch)', not findings('chain_break', 'P6') and not findings('ledger_mismatch', 'P6'))
 check('reconciliation lists the re-opened balance as UNVERIFIED until a physical count', bool(findings('unverified_balance', 'P6')))
 check('a second opening while tracked is refused (one opening per episode)', ca.apply(op('opening', [L('P6', unit='g', counted_qty=1, basis='derived')]))['status'] == 'rejected')
-check('old unit is no longer accepted after re-open (unit mismatch exception); the new unit is', cb.apply(op('pick', [L('P6', -1, unit='kg')]))['status'] == 'applied_with_exceptions' and cb.apply(op('pick', [L('P6', -100, unit='g')]))['status'] == 'applied' and bal('P6') == 2400)
+check('old unit is no longer accepted after re-open (unit mismatch exception); the new unit is', cb.apply(op('pick', [L('P6', -1, unit='kg')]))['status'] == 'held_for_review' and cb.apply(op('pick', [L('P6', -100, unit='g')]))['status'] == 'applied' and bal('P6') == 2400)
 
 print('\n== 8c. numeric precision (numeric end to end; no float8 round trip) ==')
 import random, decimal
@@ -289,8 +303,8 @@ check('inputs beyond 4 decimals are rounded (half up) by the server, visibly: 1.
 
 print('\n== 9. reconciliation (read-only) detects damage; real inventory is never changed by it ==')
 print('   codes seen on the healthy ledger:', codes())
-check('healthy ledger: no error-level finding', not [r for r in qs("select 1 from stock_reconcile() where severity='error' and not acknowledged")])
-s0 = snap(); n1 = qs('select count(*) from stock_reconcile()')[0][0]; ca.run('select public.stock_reconcile_record()'); 
+check('healthy ledger: no error-level finding', not [r for r in qs("select 1 from stock_internal.stock_reconcile_rows() where severity='error' and not acknowledged")])
+s0 = snap(); n1 = qs('select count(*) from stock_internal.stock_reconcile_rows()')[0][0]; ca.run('select public.stock_reconcile_record()'); 
 check('recording findings changes no balance, movement or mirror', snap()[0] == s0[0] and snap()[1] == s0[1] and snap()[4] == s0[4])
 sc = su.cursor()
 sc.execute("select * from stock_movements where product_id='P2' order by id desc limit 1"); last = sc.fetchone()
@@ -322,7 +336,7 @@ check('append-only: … nor DELETE operations, nor TRUNCATE the ledger or the co
 
 print('\n== 10. recovery procedure on the damaged ledger ==')
 ctl(p_frozen=True, p_frozen_reason='recovery')
-check('while frozen, stock changes are refused (reads/reconcile still work)', raises(lambda: ca.apply(op('pick', [L('P1', -1)])), '55000') and len(qs('select * from stock_reconcile()')) > 0)
+check('while frozen, stock changes are refused (reads/reconcile still work)', raises(lambda: ca.apply(op('pick', [L('P1', -1)])), '55000') and len(qs('select * from stock_internal.stock_reconcile_rows()')) > 0)
 ctl(p_frozen=False)
 b_hist = qs('select count(*) from stock_movements')[0][0]
 r = ca.apply(op('count', [L('P3', counted_qty=20, unit='L')]))
@@ -330,9 +344,9 @@ check('physical count restores the balance and the mirror; history is only ever 
 ca.run('select public.stock_resync_mirror()')
 check('approver re-mirrors authoritative values (repairs a damaged mirror, not the balance)', float(mirror('P4')) == bal('P4'))
 check('a non-approver cannot resolve a finding', raises(lambda: cb.run("select public.stock_resolve_discrepancy('x:1','n')"), '42501'))
-for r in qs("select key from stock_reconcile() where severity='error' and check_code in ('chain_break','ledger_mismatch') and not acknowledged"):
+for r in qs("select key from stock_internal.stock_reconcile_rows() where severity='error' and check_code in ('chain_break','ledger_mismatch') and not acknowledged"):
     ca.run("select public.stock_resolve_discrepancy(%s,'investigated; balance restored by physical count of 2026-10-17')", (r[0],))
-open_err = qs("select check_code from stock_reconcile() where severity='error' and not acknowledged")
+open_err = qs("select check_code from stock_internal.stock_reconcile_rows() where severity='error' and not acknowledged")
 print('   remaining open error findings (injected faults not yet handled):', sorted({r[0] for r in open_err}))
 check('approver-resolved findings are marked acknowledged but remain in the history', len(qs("select 1 from stock_discrepancies where resolved_at is not null and resolution_note like 'investigated%'")) >= 1)
 
@@ -361,9 +375,11 @@ check('after release an old app can write stockQty again (legacy source of truth
 check('… but stock_balances and the ledger are untouched, and reconciliation reports the drift (mirror_mismatch)', bal('P1') == p1 and ledger() == L0 and bool(findings('mirror_mismatch', 'P1')))
 try: ctl(p_mode='ignore', p_leave_untracked=[]); blocked = None
 except psycopg2.Error as e: blocked = str(e)
-check('re-enable is BLOCKED until every tracked product has been physically counted since the rollback (and the message lists them)', blocked and 'not been physically counted since the rollback' in blocked and 'P1' in blocked, blocked)
+check('enforcement (ignore) is BLOCKED until every tracked product has been physically counted since the rollback (and the message lists them)', blocked and 'not been physically counted since the rollback' in blocked and 'P1' in blocked, blocked)
 ctl(p_frozen=False)
-check('(frozen lifted only so the approver can count; ledger operations are accepted again, still nothing automatic)', True)
+check('mode OFF still refuses every stock operation after the freeze is lifted (the legacy guard is off, so the ledger must not move)', raises(lambda: ca.apply(op('count', [L('P1', counted_qty=1)])), '55000', 'mode is off'))
+ctl(p_mode='transition', p_note='re-open for recount: balances protected, legacy writes logged')
+check('transition is allowed after a rollback (counts are accepted there)', qs('select mode, frozen from stock_control')[0] == ('transition', False))
 before_counts = qs("select count(*) from stock_movements where kind='count'")[0][0]
 for pid in tracked_ids:
     if bal(pid) is not None and qs("select unit from stock_balances where product_id=%s", (pid,))[0][0]:
@@ -372,7 +388,7 @@ for pid in tracked_ids:
 check('approver re-baselines every tracked product with a physical count (attributed movements; mirror overwritten deliberately)', all(float(mirror(p)) == bal(p) for p in tracked_ids) and qs("select count(*) from stock_movements where kind='count'")[0][0] == before_counts + len(tracked_ids))
 r = ca.apply(pending_op)
 check('the old offline pick (client_at BEFORE the new count) is NOT applied — the count already includes it; it becomes a visible exception, never a silent double count',
-      r['status'] == 'applied_with_exceptions' and r['lines'][0]['code'] == 'stale_before_count' and qs("select count(*) from stock_exceptions where code='stale_before_count' and resolved_at is null")[0][0] == 1, r)
+      r['status'] == 'held_for_review' and r['lines'][0]['code'] == 'stale_before_count' and qs("select count(*) from stock_exceptions where code='stale_before_count' and resolved_at is null")[0][0] == 1, r)
 time.sleep(0.2); import datetime
 r = ca.apply(op('pick', [L('P1', -1, item_id='fresh1')], order_id='o_fresh', client_at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
 check('an operation created after the count is applied normally', r['status'] == 'applied')
@@ -381,6 +397,6 @@ r = ctl(p_mode='ignore', p_leave_untracked=[], p_note='re-enabled after recount'
 check('re-enable now succeeds; cutover_at is reset (orders finished during the legacy period are not expected to have operations)', r['mode'] == 'ignore' and r['cutover_at'] is not None)
 r = psql('003_uninstall_logic.sql')
 check('uninstall removes the guard + all functions, keeps every table and row and the append-only protection on the ledger', r.returncode == 0 and qs("select count(*) from pg_trigger where tgname='zz_records_stock_guard'")[0][0] == 0
-      and qs("select count(*) from pg_proc where proowner='stock_owner'::regrole")[0][0] == 1 and qs("select count(*) from pg_trigger where tgname like 'append_only%%'")[0][0] == 8 and nmv() == L0[0] + len(tracked_ids) + 1 and qs("select pg_has_role('pgadmin','stock_owner','usage')")[0][0] is False, (r.stderr, nmv(), L0[0]))
+      and qs("select count(*) from pg_proc where proowner='stock_owner'::regrole")[0][0] == 1 and qs("select count(*) from pg_trigger where tgname like 'append_only%%'")[0][0] == 10 and nmv() == L0[0] + len(tracked_ids) + 1 and qs("select pg_has_role('pgadmin','stock_owner','usage')")[0][0] is False, (r.stderr, nmv(), L0[0]))
 
 finish('results.txt')
