@@ -628,7 +628,7 @@ begin
   if p_min_client_version is not null then c.min_client_version := p_min_client_version; end if;
   if p_frozen is not null then c.frozen := p_frozen; c.frozen_reason := case when p_frozen then p_frozen_reason end; end if;
   update public.stock_control set mode = c.mode, min_client_version = c.min_client_version, frozen = c.frozen, frozen_reason = c.frozen_reason,
-         cutover_at = c.cutover_at, rolled_back_at = c.rolled_back_at, updated_at = now();
+         cutover_at = c.cutover_at, rolled_back_at = c.rolled_back_at, updated_at = now() where id;   -- explicit WHERE: Supabase loads pg-safeupdate, which refuses unfiltered UPDATEs
   insert into public.stock_control_log(actor, action, detail) values (session_user, 'control',
      jsonb_build_object('mode_from', v_old_mode, 'mode_to', c.mode, 'frozen', c.frozen, 'min_client_version', c.min_client_version, 'note', p_note,
                         'left_untracked', p_leave_untracked, 'mirrored', v_mirrored));
