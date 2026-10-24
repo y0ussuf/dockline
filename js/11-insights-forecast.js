@@ -71,7 +71,7 @@ function buildForecast(hOrders, hLines, productsById, anchor, days){
 
 route('forecast', async ()=>{
   const days = window.__fcDays;
-  const [hOrders, hLines, products] = await Promise.all([getAll('historyOrders'), getAll('historyLines'), getAll('products')]);
+  const [{hOrders, hLines}, products] = await Promise.all([insightsData(), getAll('products')]);
   if(!hOrders.length){ location.hash='#/insights'; return; }
   const anchor = hOrders.map(o=>o.orderDate).filter(Boolean).sort().pop();
   const byId = new Map(products.map(p=>[p.id,p]));
