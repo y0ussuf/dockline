@@ -73,6 +73,14 @@ const ORDER_CODE_RE = /([A-Za-z]+)-?ALL-?(\d+)/i;
    particular column: whichever of the first few non-empty rows above the
    header matches the LETTERS-ALL-NUMBERS pattern is the code, and the other
    non-empty row right next to it is taken as the vessel name. */
+/* Order sheets carry "CUSTOMER : <company>" next to (or under) the vessel name, e.g.
+   "Briolette CUSTOMER : Gold Star Marine". The company is not part of the vessel name:
+   cut it off the end of a line, and treat a line that is only the customer as not-a-vessel. */
+const CUSTOMER_TAIL_RE = /\s*\bcustomer\b\s*[:：\-–—].*$/i;
+const CUSTOMER_LINE_RE = /^\s*customer\b\s*[:：\-–—]/i;
+function cleanVesselName(text){
+  return String(text==null?'':text).replace(CUSTOMER_TAIL_RE,'').replace(/[\s:：\-–—]+$/,'').replace(/\s+/g,' ').trim();
+}
 function extractVesselAndCodeFromSheet(aoa, headerRowIndex){
   const preambleLines = [];
   for(let r=0; r<headerRowIndex; r++){
@@ -85,13 +93,13 @@ function extractVesselAndCodeFromSheet(aoa, headerRowIndex){
     if(m){ codeLine = line; codeMatch = m; break; }
   }
   if(!codeLine) return null;
-  const others = preambleLines.filter(l=>l!==codeLine);
+  const others = preambleLines.filter(l=>l!==codeLine && !CUSTOMER_LINE_RE.test(l.text) && cleanVesselName(l.text));
   others.sort((a,b)=>Math.abs(a.rowIndex-codeLine.rowIndex)-Math.abs(b.rowIndex-codeLine.rowIndex));
   const vesselLine = others[0] || null;
   return {
     code: codeMatch[0],
     orderNum: codeMatch[2],
-    vessel: vesselLine ? vesselLine.text : ''
+    vessel: vesselLine ? cleanVesselName(vesselLine.text) : ''
   };
 }
 

@@ -97,7 +97,8 @@ function findVesselName(aoa, headerRowIndex, fileName){
   if(found && found.vessel) return {vessel: found.vessel, code: found.code};
   for(let r=0; r<headerRowIndex; r++){
     const text = (aoa[r]||[]).map(c=>String(c==null?'':c).trim()).filter(Boolean).join(' ').trim();
-    if(text && text.length<=60 && !parseDateText(text) && !ORDER_CODE_RE.test(text)) return {vessel:text, code: found?found.code:''};
+    const vessel = cleanVesselName(text);
+    if(vessel && text.length<=60 && !CUSTOMER_LINE_RE.test(text) && !parseDateText(text) && !ORDER_CODE_RE.test(text)) return {vessel, code: found?found.code:''};
   }
   return {vessel:'', code: found?found.code:(extractOrderCodeFromFilename(fileName)||{}).code||''};
 }
