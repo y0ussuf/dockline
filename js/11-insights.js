@@ -237,8 +237,106 @@ function stockAdviceFor(a, product){
   return [];
 }
 
+/* ============================ WHAT INSIGHTS ANALYSES ============================
+   1) the past orders imported from Excel (historyOrders / historyLines), PLUS
+   2) every order finished on the site (status 'completed'), read straight from the live
+      orders / orderItems at the moment a screen opens — nothing is copied, so it is always
+      up to date, can't go stale and can't double up. As with the imports, what counts is what
+      the vessel ASKED for (requested quantity), never what was picked.
+   An order that was both imported from its sheet AND finished on the site is counted once
+   (same vessel + date + order code). */
+async function insightsData(){
+  const [hOrders, hLines, orders, items, matcher] = await Promise.all([getAll('historyOrders'), getAll('historyLines'), getAll('orders'), getAll('orderItems'), buildHistoryMatcher()]);
+  const seenCode = new Set(), seenFp = new Set(hOrders.map(o=>o.fingerprint));
+  for(const o of hOrders){ const f = String(o.fingerprint||'').split('|'); if(f[2]) seenCode.add(f.slice(0,3).join('|')); }
+  const itemsByOrder = new Map();
+  for(const it of items){ (itemsByOrder.get(it.orderId) || itemsByOrder.set(it.orderId, []).get(it.orderId)).push(it); }
+  const liveOrders = [], liveLines = [];
+  for(const o of orders){
+    if(o.status!=='completed') continue;
+    const vesselName = cleanVesselName(o.vessel);
+    const date = String(o.orderDate || o.completedAt || '').slice(0,10);
+    if(!vesselName || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const vesselKey = vesselKeyOf(vesselName), code = String(o.orderNumber||'').trim();
+    if(code && seenCode.has([vesselKey, date, code].join('|'))) continue;
+    const its = (itemsByOrder.get(o.id)||[]).filter(it=>String(it.excelDesc||'').trim());
+    const lines = [];
+    for(const it of its){
+      const qty = parseFloat(it.requestedQty!=null && it.requestedQty!=='' ? it.requestedQty : it.excelQty);
+      if(!(qty>0)) continue;
+      const unit = String(it.requestedUnit || it.excelUnit || '').trim();
+      const product = (it.productId && matcher.byId.get(it.productId)) || matcher.match(it.excelDesc);
+      const b = toBaseQty(qty, unit, product);
+      lines.push({id:'live:'+it.id, historyOrderId:'live:'+o.id, vesselKey, orderDate:date, excelDesc:it.excelDesc, descKey:normalize(it.excelDesc),
+        qty, unit, productId: product?product.id:null, baseQty:b.baseQty, baseUnit:b.baseUnit, baseOk:b.ok, skipped:false, live:true});
+    }
+    if(!lines.length) continue;
+    const fingerprint = [vesselKey, date, code, lines.length, round2(lines.reduce((t,l)=>t+l.qty,0))].join('|');
+    if(seenFp.has(fingerprint)) continue;
+    liveOrders.push({id:'live:'+o.id, fileName:'', vesselName, vesselKey, imo:o.imo||'', orderDate:date, fingerprint, lineCount:lines.length, live:true});
+    liveLines.push(...lines);
+  }
+  return {hOrders: hOrders.concat(liveOrders), hLines: hLines.concat(liveLines), liveOrders: liveOrders.length, importedOrders: hOrders.length};
+}
+
+/* ============================ TIDY VESSEL NAMES ============================
+   Past orders imported before "CUSTOMER : <company>" was kept out of the vessel name still carry
+   it, so they form a separate profile from the same vessel imported later. This cleans those names
+   in the imported history (never the live orders), re-groups them, and drops an order only if it is
+   an exact duplicate of another one once the names agree. Shown as a preview first. */
+function planVesselTidy(hOrders){
+  const imported = hOrders.filter(o=>!o.live);
+  const changes = [], keyOf = new Map();
+  for(const o of imported){
+    const name = cleanVesselName(o.vesselName);
+    if(!name) continue;
+    const key = vesselKeyOf(name);
+    if(name!==String(o.vesselName||'').trim() || key!==o.vesselKey) changes.push({order:o, name, key});
+  }
+  if(!changes.length) return null;
+  const change = new Map(changes.map(c=>[c.order.id,c]));
+  const finalFp = new Map(), dropIds = new Set();
+  for(const o of imported.slice().sort((a,b)=>String(a.importedAt||'').localeCompare(String(b.importedAt||'')))){
+    const c = change.get(o.id);
+    const f = String(o.fingerprint||'').split('|'); if(c) f[0] = c.key;
+    const fp = f.join('|');
+    if(finalFp.has(fp)) dropIds.add(o.id); else finalFp.set(fp, o.id);
+  }
+  const merges = new Map();   // "old name → clean name" with a count
+  for(const c of changes){ const k = c.order.vesselName.trim()+'\u0000'+c.name; merges.set(k, (merges.get(k)||0)+1); }
+  const existingKeys = new Set(imported.filter(o=>!change.has(o.id)).map(o=>o.vesselKey));
+  const mergedVessels = new Set(changes.filter(c=>existingKeys.has(c.key)).map(c=>c.key));
+  return {changes, dropIds, merges:[...merges.entries()].map(([k,n])=>{const [from,to]=k.split('\u0000'); return {from,to,n};}), mergedVessels:mergedVessels.size};
+}
+async function applyVesselTidy(plan){
+  const [hOrders, hLines] = await Promise.all([getAll('historyOrders'), getAll('historyLines')]);
+  const change = new Map(plan.changes.map(c=>[c.order.id,c]));
+  const outOrders = [], outLines = [], delOrders = [], delLines = [];
+  for(const o of hOrders){
+    if(plan.dropIds.has(o.id)){ delOrders.push(o); continue; }
+    const c = change.get(o.id); if(!c) continue;
+    const f = String(o.fingerprint||'').split('|'); f[0] = c.key;
+    outOrders.push(Object.assign({}, o, {vesselName:c.name, vesselKey:c.key, fingerprint:f.join('|'), synced:false}));
+  }
+  const newKeyByOrder = new Map(outOrders.map(o=>[o.id, o.vesselKey]));
+  for(const l of hLines){
+    if(plan.dropIds.has(l.historyOrderId)){ delLines.push(l); continue; }
+    const k = newKeyByOrder.get(l.historyOrderId);
+    if(k && k!==l.vesselKey) outLines.push(Object.assign({}, l, {vesselKey:k, synced:false}));
+  }
+  const prev = await getOne('settings','historyPendingDeletes');
+  const items = prev && prev.items ? prev.items : [];
+  delOrders.forEach(r=>{ if(r.synced) items.push({store:'historyOrders', id:r.id}); });
+  delLines.forEach(r=>{ if(r.synced) items.push({store:'historyLines', id:r.id}); });
+  if(items.length) await rawPut('settings', {id:'historyPendingDeletes', items});
+  await bulkPut('historyOrders', outOrders); await bulkPut('historyLines', outLines);
+  await bulkDelete('historyOrders', delOrders.map(r=>r.id)); await bulkDelete('historyLines', delLines.map(r=>r.id));
+  if(typeof syncNow==='function') syncNow();
+  return {renamed: outOrders.length, dropped: delOrders.length};
+}
+
 async function insightsHome(){
-  const [hOrders, hLines, products] = await Promise.all([getAll('historyOrders'), getAll('historyLines'), getAll('products')]);
+  const [{hOrders, hLines, liveOrders, importedOrders}, products] = await Promise.all([insightsData(), getAll('products')]);
   const byId = new Map(products.map(p=>[p.id,p]));
   if(!hOrders.length){
     $('#main').innerHTML = `
@@ -253,8 +351,9 @@ async function insightsHome(){
   }
   const dates = hOrders.map(o=>o.orderDate).filter(Boolean).sort();
   const anchor = dates[dates.length-1];
-  const unmatchedKeys = new Set(hLines.filter(l=>!l.productId && !l.skipped).map(l=>l.descKey));
-  const reviewLines = hLines.filter(l=>l.productId && !l.baseOk).length;
+  const unmatchedKeys = new Set(hLines.filter(l=>!l.live && !l.productId && !l.skipped).map(l=>l.descKey));
+  const reviewLines = hLines.filter(l=>!l.live && l.productId && !l.baseOk).length;
+  const tidy = planVesselTidy(hOrders);
 
   // ---- vessels (grouped by name) ----
   const vessels = new Map();
@@ -311,6 +410,11 @@ async function insightsHome(){
       <div class="stat"><b>${hLines.length.toLocaleString()}</b><div class="lbl">Order lines</div></div>
       <div class="stat"><b style="font-size:1.1rem;">${fmtDate(dates[0])} → ${fmtDate(anchor)}</b><div class="lbl">Period covered</div></div>
     </div>
+    <p class="subtle" style="margin-top:-6px;">${importedOrders} imported from Excel${liveOrders?` · <b>${liveOrders}</b> finished on the site (added automatically, always up to date)`:' · orders you finish on the site are added here automatically'}.</p>
+    ${tidy ? `<div class="card" style="border-color:var(--warn); margin-bottom:18px;">
+      <div class="section-title" style="margin-top:0;">Tidy vessel names</div>
+      <p class="subtle">${tidy.changes.length} imported order${tidy.changes.length===1?' still has':'s still have'} a customer name in the vessel name (for example “${esc(tidy.merges[0].from)}” → “${esc(tidy.merges[0].to)}”), so ${tidy.mergedVessels?`${tidy.mergedVessels} vessel${tidy.mergedVessels===1?'':'s'} show${tidy.mergedVessels===1?'s':''} up twice`:'those vessels may show up twice'}. Cleaning them joins each vessel's orders into one profile.</p>
+      <button class="btn btn-signal btn-sm" id="histTidy" style="max-width:260px;">Review &amp; tidy…</button></div>` : ''}
     ${(unmatchedKeys.size || reviewLines) ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">
       ${unmatchedKeys.size ? `<a href="#/insights/match" class="btn btn-ghost" style="border-color:var(--warn); color:var(--warn);">⚠ ${unmatchedKeys.size} product name${unmatchedKeys.size===1?'':'s'} not matched yet — match them</a>` : ''}
       ${reviewLines ? `<span class="subtle" style="align-self:center;">${reviewLines} line${reviewLines===1?'':'s'} in a unit that can't be converted — left out of the totals</span>` : ''}
@@ -338,8 +442,16 @@ async function insightsHome(){
       <tbody>${vesselRows.map(v=>`<tr><td><a href="#/insights/vessel/${encodeURIComponent(v.key)}" style="text-decoration:none; color:inherit;"><b>${esc(v.name)}</b> <span class="subtle">›</span></a>${v.variants>1?` <span class="subtle">· ${v.variants} spellings merged</span>`:''}</td>
         <td class="num">${v.orders}</td><td>${fmtDate(v.first)}</td><td>${fmtDate(v.last)}</td><td class="num">${v.gap!=null?v.gap+' days':'—'}</td><td><span class="badge ${VESSEL_BADGE[v.status].cls}">${VESSEL_BADGE[v.status].label}</span></td></tr>`).join('')}</tbody>
     </table></div>
-    <div style="margin-top:24px;"><button class="btn btn-ghost btn-sm" id="histClear">🗑 Delete all imported past orders</button></div>`;
-  $('#histClear').onclick = ()=> showConfirm('Delete every imported past order from this device? Your live orders, products and stock are not affected. You can import the sheets again later.', async ()=>{
+    ${importedOrders ? `<div style="margin-top:24px;"><button class="btn btn-ghost btn-sm" id="histClear">🗑 Delete all imported past orders</button></div>` : ''}`;
+  if(tidy) $('#histTidy').onclick = ()=>{
+    const rows = tidy.merges.slice(0,12).map(m=>`<div class="list-row"><div style="flex:1;"><span class="subtle">${esc(m.from)}</span><br><b>→ ${esc(m.to)}</b></div><span class="subtle">${m.n} order${m.n===1?'':'s'}</span></div>`).join('');
+    showModal(`<h3>Tidy vessel names</h3>
+      <p class="subtle">${tidy.changes.length} imported order${tidy.changes.length===1?'':'s'} will get a clean vessel name${tidy.dropIds.size?`, and ${tidy.dropIds.size} exact duplicate${tidy.dropIds.size===1?'':'s'} (same vessel, date, order code and quantities) will be removed`:''}. Your live orders, stock and products are not touched.</p>
+      <div style="max-height:260px; overflow:auto; margin:10px 0;">${rows}${tidy.merges.length>12?`<p class="subtle">…and ${tidy.merges.length-12} more</p>`:''}</div>
+      <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="tidy_go" style="flex:1;">Tidy up</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+    $('#tidy_go').onclick = async ()=>{ $('#tidy_go').disabled = true; const r = await applyVesselTidy(tidy); closeModal(); showAlert(`Cleaned ${r.renamed} order${r.renamed===1?'':'s'}${r.dropped?` and removed ${r.dropped} duplicate${r.dropped===1?'':'s'}`:''}.`, 'Done'); insightsHome(); };
+  };
+  if(importedOrders) $('#histClear').onclick = ()=> showConfirm('Delete every imported past order from this device? Your live orders, products and stock are not affected. You can import the sheets again later.', async ()=>{
     await deleteAllHistory();
     insightsHome();
   }, {danger:true, yesLabel:'Delete'});
@@ -649,7 +761,7 @@ function monthlyChartSvg(months, avgRate, recentMonths){
 }
 
 async function productInsightScreen(productId){
-  const [product, hLines, hOrders, supers] = await Promise.all([getOne('products', productId), getAll('historyLines'), getAll('historyOrders'), Promise.resolve(null)]);
+  const [product, {hLines, hOrders}] = await Promise.all([getOne('products', productId), insightsData()]);
   if(!product || !hOrders.length){ location.hash='#/insights'; return; }
   const dates = hOrders.map(o=>o.orderDate).filter(Boolean).sort();
   const lines = hLines.filter(l=>l.productId===productId && l.baseOk);

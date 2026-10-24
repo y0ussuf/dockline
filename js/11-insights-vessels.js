@@ -105,7 +105,7 @@ function analyzeVessel(orders, lines, productsById, anchor){
 
 async function vesselProfileScreen(rawKey){
   const key = decodeURIComponent(rawKey||'');
-  const [hOrders, hLines, products] = await Promise.all([getAll('historyOrders'), getAll('historyLines'), getAll('products')]);
+  const [{hOrders, hLines}, products] = await Promise.all([insightsData(), getAll('products')]);
   const mine = hOrders.filter(o=>o.vesselKey===key);
   if(!mine.length){ location.hash = '#/insights'; return; }
   const anchor = hOrders.map(o=>o.orderDate).filter(Boolean).sort().pop();
