@@ -575,65 +575,209 @@ async function historyImportScreen(){
 }
 
 /* ============================== MATCH SCREEN ============================== */
-/* One line per distinct product name that isn't matched yet (not per order line) — pick the product
-   once and every past line with that name is updated. Choices are saved as mappings, so they also
-   help when importing live orders. */
+/* One card per distinct product name that isn't matched yet (not per order line). Each name can be
+   • matched to an existing product (suggested, or searched in the whole database),
+   • added as a NEW product (name + unit, nothing else — it shows up under Products → "Needs setup"),
+   • or left out of the analysis (and brought back later from "Left out").
+   Every choice is saved as a mapping (alias), so it also helps future imports and live orders. */
+
+/* words that say nothing about WHICH product it is: sizes ("1kg", "500"), packing words, fillers */
+const _MATCH_SIZE_RE = /^\d+(?:\.\d+)?(?:kg|g|gm|gms|ml|l|ltr|pcs|pc|pkt|ctn|x)?$/;
+const _MATCH_FILLER = new Set(['of','and','the','with','in','a','an','pack','packet','pkt','pcs','pc','tin','tins','btl','bottle','bag','box','ctn','carton','approx']);
+function nameTokens(s){
+  return normalize(s).split(' ').filter(t=>t && !_MATCH_SIZE_RE.test(t) && !_MATCH_FILLER.has(t))
+    .map(t=> t.length>4 && t.endsWith('ies') ? t.slice(0,-3)+'y' : t.length>3 && t.endsWith('es') && /(o|s|x|ch|sh)es$/.test(t) ? t.slice(0,-2) : t.length>3 && t.endsWith('s') ? t.slice(0,-1) : t);
+}
+/* 0..1 — how likely two names are the same product. Plain similarity() plus word-level matching
+   that ignores sizes/fillers and forgives plurals and small typos, so "TOMATOES FRESH 1KG"
+   finds "Tomato" and "Chicken Breast Boneless" finds "Boneless Chicken Breast". Never reaches 1. */
+function mappingScore(desc, name){
+  const base = similarity(desc, name);
+  const a = [...new Set(nameTokens(desc))], b = [...new Set(nameTokens(name))];
+  if(!a.length || !b.length) return base;
+  const hit = (t, pool)=> pool.some(u=> u===t || (t.length>=4 && u.length>=4 && levRatio(t,u)>=0.8));
+  const ia = a.filter(t=>hit(t,b)).length, ib = b.filter(t=>hit(t,a)).length;
+  const containment = Math.max(ia/a.length, ib/b.length);       // is one name inside the other?
+  const cover = (ia/a.length + ib/b.length)/2;                  // how much do they share, both ways?
+  const word = 0.5*containment + 0.5*cover;
+  let score = Math.min(0.95, Math.max(base, word));
+  // "Milk 1L" vs "Milk 500ml": same words, different pack size → probably two products, so rank it lower
+  const sizes = s=> new Set(normalize(s).split(' ').filter(t=>_MATCH_SIZE_RE.test(t)));
+  const sa = sizes(desc), sb = sizes(name);
+  if(sa.size && sb.size && ![...sa].some(t=>sb.has(t))) score = Math.min(score, 0.8);
+  return score;
+}
+function suggestProducts(desc, products, n=5, min=0.4){
+  return products.map(p=>({p, s:mappingScore(desc, p.name)})).filter(c=>c.s>=min).sort((a,b)=>b.s-a.s).slice(0,n);
+}
+function newProductFromName(name, unit){
+  return {id:uid(), name:String(name||'').replace(/\s+/g,' ').trim(), unit:String(unit||'').trim(), supplier:'', supplierId:'', warehouseId:'', sectionId:'', priority:999, active:true, notes:'', productionDate:'', expiryDate:'', image:''};
+}
+
 async function historyMatchScreen(){
-  const [hLines, products, warehouses, sections] = await Promise.all([getAll('historyLines'), getAll('products'), getAll('warehouses'), getAll('sections')]);
+  const [hLines, products, warehouses, sections, mappings] = await Promise.all([getAll('historyLines'), getAll('products'), getAll('warehouses'), getAll('sections'), getAll('mappings')]);
   const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
   const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
-  const groups = new Map();
+  const groups = new Map(), leftOut = new Map();
   for(const l of hLines){
-    if(l.productId || l.skipped) continue;
-    const g = groups.get(l.descKey) || {key:l.descKey, desc:l.excelDesc, count:0, vessels:new Set(), units:new Map()};
+    if(l.productId) continue;
+    const into = l.skipped ? leftOut : groups;
+    const g = into.get(l.descKey) || {key:l.descKey, desc:l.excelDesc, count:0, vessels:new Set(), units:new Map()};
     g.count++; g.vessels.add(l.vesselKey); g.units.set(l.unit, (g.units.get(l.unit)||0)+1);
-    groups.set(l.descKey, g);
+    into.set(l.descKey, g);
   }
+  const topUnit = g=> [...g.units.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0] || '';
   const list = [...groups.values()].sort((a,b)=>b.count-a.count);
-  if(!list.length){ location.hash = '#/insights'; return; }
+  const outList = [...leftOut.values()].sort((a,b)=>b.count-a.count);
+  if(!list.length && !outList.length){ location.hash = '#/insights'; return; }
   const page = list.slice(0,25);
   const active = products.filter(p=>p.active);
+  const byNormName = new Map(products.map(p=>[normalize(p.name), p]));
   $('#main').innerHTML = `
     <div class="topbar"><h1>Match product names</h1></div>
-    <p class="subtle" style="margin-top:-10px;">${list.length} name${list.length===1?'':'s'} left, most-used first. Pick the product once and every past line with that name is updated. Your choices are remembered, so they also help future orders.</p>
+    <p class="subtle" style="margin-top:-10px;">${list.length} name${list.length===1?'':'s'} left, most-used first. For each one: pick the product it is, add it as a new product, or leave it out. Pick once and every past line with that name is updated — your choices are remembered for future imports too.</p>
+    ${list.length ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <button class="btn btn-ghost btn-sm" id="hm_recheck">↻ Re-check against my products</button>
+      <button class="btn btn-ghost btn-sm" id="hm_addall">➕ Add many as new products…</button>
+    </div>` : ''}
     <div id="hm_list">${page.map(g=>{
-      const cands = active.map(p=>({p, s:similarity(g.desc, p.name)})).sort((a,b)=>b.s-a.s).filter(c=>c.s>=0.35).slice(0,4);
+      const cands = suggestProducts(g.desc, active, 4, 0.4);
+      const exact = byNormName.get(g.key);
       return `<div class="match-card warn" data-key="${esc(g.key)}">
-        <div><b>${esc(g.desc)}</b><div class="subtle">${g.count} line${g.count===1?'':'s'} · ${g.vessels.size} vessel${g.vessels.size===1?'':'s'} · e.g. unit “${esc([...g.units.keys()][0]||'')}”</div></div>
+        <div><b>${esc(g.desc)}</b><div class="subtle">${g.count} line${g.count===1?'':'s'} · ${g.vessels.size} vessel${g.vessels.size===1?'':'s'} · usually “${esc(topUnit(g))}”</div></div>
         <div class="cand-list">
           ${cands.map(c=>`<button class="cand-btn" data-pick="${esc(g.key)}" data-pid="${c.p.id}">${esc(c.p.name)} <span class="subtle">· ${Math.round(c.s*100)}%</span></button>`).join('')}
-          <button class="btn btn-ghost btn-sm" data-search="${esc(g.key)}">🔍 Search database…</button>
-          <button class="btn btn-ghost btn-sm" data-skip="${esc(g.key)}">Leave out of analysis</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-ghost btn-sm" data-search="${esc(g.key)}">🔍 Search database…</button>
+            <button class="btn btn-signal btn-sm" data-new="${esc(g.key)}">➕ Add as new product</button>
+            <button class="btn btn-ghost btn-sm" data-skip="${esc(g.key)}">Leave out of analysis</button>
+          </div>
         </div>
-      </div>`;}).join('')}</div>
+      </div>`;}).join('')}
+      ${list.length>page.length ? `<p class="subtle">…and ${list.length-page.length} more — they'll appear as you go.</p>` : ''}</div>
+    ${outList.length ? `<details style="margin-top:18px;"><summary class="subtle" style="cursor:pointer;">Left out of the analysis (${outList.length} name${outList.length===1?'':'s'}) — bring any back</summary>
+      <div id="hm_out" style="margin-top:8px;">${outList.slice(0,60).map(g=>`<div class="match-card" style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+        <div><b>${esc(g.desc)}</b> <span class="subtle">· ${g.count} line${g.count===1?'':'s'}</span></div>
+        <button class="btn btn-ghost btn-sm" data-back="${esc(g.key)}">Bring back</button></div>`).join('')}</div></details>` : ''}
     <div style="margin-top:16px;"><a href="#/insights" class="btn btn-ghost">Done for now</a></div>`;
 
-  async function assign(key, product){
-    const mappings = await getAll('mappings');
-    if(!mappings.find(m=>m.excelDescNormalized===key)){
-      const g = groups.get(key);
-      await put('mappings', {id:uid(), excelDescNormalized:key, label:g.desc, productId:product.id});
+  async function assign(key, product, quiet){
+    const all = await getAll('mappings');
+    if(!all.find(m=>m.excelDescNormalized===key)){
+      const g = groups.get(key) || leftOut.get(key);
+      await put('mappings', {id:uid(), excelDescNormalized:key, label:g?g.desc:key, productId:product.id});
     }
     const fresh = (await getAll('historyLines')).filter(l=>l.descKey===key && !l.productId);
     for(const l of fresh){
       const b = toBaseQty(l.qty, l.unit, product);
-      l.productId = product.id; l.baseQty=b.baseQty; l.baseUnit=b.baseUnit; l.baseOk=b.ok; l.synced=false;
+      l.productId = product.id; l.baseQty=b.baseQty; l.baseUnit=b.baseUnit; l.baseOk=b.ok; l.skipped=false; l.synced=false;
     }
     await bulkPut('historyLines', fresh);
-    if(typeof syncNow==='function') syncNow();
-    historyMatchScreen();
+    if(!quiet){ if(typeof syncNow==='function') syncNow(); historyMatchScreen(); }
+    return fresh.length;
   }
-  $('#hm_list').querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=> assign(b.dataset.pick, products.find(p=>p.id===b.dataset.pid)));
-  $('#hm_list').querySelectorAll('[data-search]').forEach(b=>b.onclick=()=>{
+  const list_ = $('#hm_list');
+  list_.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=> assign(b.dataset.pick, products.find(p=>p.id===b.dataset.pid)));
+  list_.querySelectorAll('[data-search]').forEach(b=>b.onclick=()=>{
     openProductPicker(null, products, whMap, secMap, picked=> assign(b.dataset.search, picked));
   });
-  $('#hm_list').querySelectorAll('[data-skip]').forEach(b=>b.onclick=async ()=>{
+  list_.querySelectorAll('[data-skip]').forEach(b=>b.onclick=async ()=>{
     const fresh = (await getAll('historyLines')).filter(l=>l.descKey===b.dataset.skip && !l.productId);
     fresh.forEach(l=>{ l.skipped = true; l.synced=false; });
     await bulkPut('historyLines', fresh);
     if(typeof syncNow==='function') syncNow();
     historyMatchScreen();
   });
+  document.querySelectorAll('[data-back]').forEach(b=>b.onclick=async ()=>{
+    const fresh = (await getAll('historyLines')).filter(l=>l.descKey===b.dataset.back && !l.productId);
+    fresh.forEach(l=>{ l.skipped = false; l.synced=false; });
+    await bulkPut('historyLines', fresh);
+    if(typeof syncNow==='function') syncNow();
+    historyMatchScreen();
+  });
+
+  /* ---- add ONE name as a new product ---- */
+  list_.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>{
+    const g = groups.get(b.dataset.new);
+    const similar = suggestProducts(g.desc, active, 3, 0.6);
+    showModal(`<h3>Add as a new product</h3>
+      <p class="subtle">Only the name and unit are needed now. Photo, supplier, warehouse and section can be filled in later (Products → “Needs setup”). Stock is not tracked until you give it a quantity there.</p>
+      ${similar.length ? `<p style="color:var(--warn);"><b>Looks similar to:</b> ${similar.map(c=>esc(c.p.name)).join(' · ')} — cancel and pick one of those if it's the same thing.</p>` : ''}
+      <div class="field"><label>Product name</label><input type="text" id="np_name" value="${esc(newProductFromName(g.desc,'').name)}"></div>
+      <div class="field"><label>Unit</label><input type="text" id="np_unit" value="${esc(topUnit(g))}" placeholder="e.g. KG, PKT 450 GM, LTR, PCS">
+        <div class="subtle">The measure it is counted in. Sheets usually write it in the Unit column (here: “${esc(topUnit(g))||'blank'}”).</div></div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn btn-signal" id="np_save" style="flex:1;">Add product &amp; match ${g.count} line${g.count===1?'':'s'}</button>
+        <button class="btn btn-ghost" id="np_cancel">Cancel</button>
+      </div>`);
+    $('#np_cancel').onclick = closeModal;
+    $('#np_save').onclick = async ()=>{
+      const name = $('#np_name').value.replace(/\s+/g,' ').trim();
+      if(!name){ showAlert('Product name is required.'); return; }
+      $('#np_save').disabled = true;
+      let product = (await getAll('products')).find(p=>normalize(p.name)===normalize(name));
+      const existed = !!product;
+      if(!product){ product = newProductFromName(name, $('#np_unit').value); await put('products', product); }
+      closeModal();
+      await assign(b.dataset.new, product);
+      if(existed) showAlert(`A product called “${product.name}” already existed, so the lines were matched to it instead of creating a duplicate.`, 'Matched to existing');
+    };
+  });
+
+  /* ---- add MANY as new products, with a review step ---- */
+  const addAll = $('#hm_addall');
+  if(addAll) addAll.onclick = ()=>{
+    const rows = list.map((g,i)=>{ const sim = suggestProducts(g.desc, active, 1, 0.6)[0]; return {g, i, sim}; });
+    showModal(`<h3>Add many as new products</h3>
+      <p class="subtle">Tick the names that really are new products. Names that look like a product you already have are left unticked — match those by hand instead, so you don't create duplicates. You can fix a name or unit before adding.</p>
+      <div style="max-height:52vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:6px;">
+        ${rows.map(r=>`<div style="display:grid; grid-template-columns:auto 1fr 90px; gap:8px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line);">
+          <input type="checkbox" data-ck="${r.i}" ${r.sim?'':'checked'}>
+          <div><input type="text" data-nm="${r.i}" value="${esc(newProductFromName(r.g.desc,'').name)}" style="width:100%;">${r.sim?`<div class="subtle" style="color:var(--warn);">looks like: ${esc(r.sim.p.name)} (${Math.round(r.sim.s*100)}%)</div>`:''}<div class="subtle">${r.g.count} line${r.g.count===1?'':'s'}</div></div>
+          <input type="text" data-un="${r.i}" value="${esc(topUnit(r.g))}" placeholder="unit">
+        </div>`).join('')}
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn btn-signal" id="na_go" style="flex:1;">Add ticked products</button>
+        <button class="btn btn-ghost" id="na_cancel">Cancel</button>
+      </div>`);
+    $('#na_cancel').onclick = closeModal;
+    $('#na_go').onclick = async ()=>{
+      const picks = rows.filter(r=>document.querySelector(`[data-ck="${r.i}"]`).checked);
+      if(!picks.length){ showAlert('Tick at least one name.'); return; }
+      $('#na_go').disabled = true; $('#na_go').textContent = 'Adding…';
+      const existing = await getAll('products');
+      const byName = new Map(existing.map(p=>[normalize(p.name), p]));
+      let created=0, reused=0, lines=0;
+      for(const r of picks){
+        const name = document.querySelector(`[data-nm="${r.i}"]`).value.replace(/\s+/g,' ').trim();
+        if(!name) continue;
+        let product = byName.get(normalize(name));
+        if(product) reused++;
+        else { product = newProductFromName(name, document.querySelector(`[data-un="${r.i}"]`).value); await put('products', product); byName.set(normalize(name), product); created++; }
+        lines += await assign(r.g.key, product, true);
+      }
+      closeModal();
+      if(typeof syncNow==='function') syncNow();
+      showAlert(`${created} new product${created===1?'':'s'} added${reused?` and ${reused} matched to products you already had`:''}; ${lines.toLocaleString()} past line${lines===1?'':'s'} matched. Fill in their details under Products → “Needs setup”.`, 'Done');
+      historyMatchScreen();
+    };
+  };
+
+  /* ---- re-check: names you've since added/aliased in Products get matched automatically ---- */
+  const recheck = $('#hm_recheck');
+  if(recheck) recheck.onclick = async ()=>{
+    recheck.disabled = true;
+    const matcher = await buildHistoryMatcher();
+    let names=0, lines=0;
+    for(const g of list){
+      const p = matcher.match(g.desc);
+      if(p){ lines += await assign(g.key, p, true); names++; }
+    }
+    if(typeof syncNow==='function') syncNow();
+    showAlert(names ? `${names} name${names===1?'':'s'} matched automatically (${lines.toLocaleString()} lines).` : 'Nothing new matched. Names are matched automatically when they are an exact product name, a saved alias, or a very close spelling.', 'Re-check done');
+    historyMatchScreen();
+  };
 }
 
 
