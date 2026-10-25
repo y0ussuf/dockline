@@ -55,6 +55,14 @@ async function finishOrder(orderId, skipCheck){
   }
   const order = await getOne('orders', orderId);
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
+  // never close an order whose items were never matched/picked (e.g. an import that didn't finish) —
+  // that would mark everything done, and take nothing or the wrong things off stock
+  if(!items.length || items.some(it=>it.status==='unmatched')){
+    showAlert(!items.length ? 'This order has no items, so it was not finished. Import the Excel file again.' : 'Some items of this order were never matched to a product, so it was not finished. Let\'s match them first.', 'Order not finished');
+    location.hash = items.length ? `#/order/${orderId}/match` : '#/orders';
+    if(location.hash.endsWith('/match')) render();
+    return;
+  }
   if(!order.stockApplied){
     await applyStockDeductions(items);
     order.stockApplied = true;

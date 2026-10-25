@@ -153,87 +153,106 @@ async function newOrderStep1(existing){
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, {type:'array'});
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', blankrows:false});
+      const aoa = sheetToRows(sheet);
       const headerInfo = locateOrderHeaderRow(aoa);
       const fromSheet = headerInfo ? extractVesselAndCodeFromSheet(aoa, headerInfo.rowIndex) : null;
       if(fill(fromSheet, 'sheet')) return;
     }catch(err){ /* fall through to filename-based guess below */ }
     fill(extractOrderCodeFromFilename(file.name), 'filename');
   };
+  let importing = false; // a second tap while the first import is still running used to delete and re-create the items under it
   $('#o_next').onclick = async ()=>{
+    if(importing) return;
     const vessel = $('#o_vessel').value.trim();
     const imo = $('#o_imo').value.trim();
     const num = $('#o_num').value.trim();
     const file = $('#o_file').files[0];
     if(!vessel || !num){ showAlert('Vessel name and order number are required.'); return; }
     if(!file){ showAlert('Please choose an Excel file to import.'); return; }
-    o.vessel=vessel; o.imo=imo; o.orderNumber=num; o.orderDate=$('#o_date').value; o.destination=$('#o_dest').value.trim();
-    await put('orders', o);
+    importing = true;
+    const btn = $('#o_next'); btn.disabled = true; btn.textContent = 'Reading the file…';
+    const fail = msg=>{ importing = false; btn.disabled = false; btn.innerHTML = 'Import &amp; continue'; showAlert(msg); };
+    try{
+      o.vessel=vessel; o.imo=imo; o.orderNumber=num; o.orderDate=$('#o_date').value; o.destination=$('#o_dest').value.trim();
 
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, {type:'array'});
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', blankrows:false});
-    if(!aoa.length){ showAlert('The Excel file appears to be empty.'); return; }
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const aoa = sheetToRows(sheet);
+      if(!aoa.length) return fail('The Excel file appears to be empty.');
 
-    // skip over any vessel-name / order-reference / blank lines above the real table —
-    // the header row is wherever "Description" (and ideally Sr./Quantity/Unit) actually sits
-    const headerInfo = locateOrderHeaderRow(aoa);
-    if(!headerInfo){ showAlert('Could not find a "Description" column anywhere in the first rows of this file — please check the file format.'); return; }
-    const { kSr, kDesc, kQty, kUnit } = headerInfo;
-    const dataRows = aoa.slice(headerInfo.rowIndex+1);
+      // skip over any vessel-name / order-reference / blank lines above the real table —
+      // the header row is wherever "Description" (and ideally Sr./Quantity/Unit) actually sits
+      const headerInfo = locateOrderHeaderRow(aoa);
+      if(!headerInfo) return fail('Could not find a "Description" column anywhere in the first rows of this file — please check the file format.');
+      const { kSr, kDesc, kQty, kUnit } = headerInfo;
+      const dataRows = aoa.slice(headerInfo.rowIndex+1);
 
-    // clear previous items for this order (re-import)
-    const existingItems = (await getAll('orderItems')).filter(it=>it.orderId===o.id);
-    for(const it of existingItems) await del('orderItems', it.id);
+      // build every item first, so nothing is written unless the whole file was readable
+      const newItems = [];
+      for(const row of dataRows){
+        const desc = String((kDesc!==-1 ? row[kDesc] : '') ?? '').trim();
+        if(!desc) continue;
+        const qty = parseFloat(kQty!==-1 ? row[kQty] : '');
+        const unitVal = kUnit!==-1 ? String(row[kUnit] ?? '').trim() : '';
+        newItems.push({
+          id: uid(), orderId: o.id, sr: kSr!==-1 ? String(row[kSr] ?? '').trim() : '', importIndex: newItems.length, excelDesc: desc,
+          excelQty: isNaN(qty) ? 0 : qty, qtyFlag: (kQty!==-1 && isNaN(qty)) ? 'invalid quantity' : '',
+          excelUnit: unitVal,
+          productId: null, warehouseName:'', sectionName:'', productName:'', sortKey:[9999,9999,9999],
+          requestedQty: isNaN(qty)?0:qty, requestedUnit: unitVal,
+          actualQty: null, actualUnit: '', status:'unmatched', matchType:'', replacementName:'', notes:'',
+          actualProductionDate:'', actualExpiryDate:''
+        });
+      }
+      if(!newItems.length) return fail('No usable rows found in the file.');
 
-    let created = 0;
-    for(const row of dataRows){
-      const desc = String((kDesc!==-1 ? row[kDesc] : '') ?? '').trim();
-      if(!desc) continue;
-      const qtyRaw = kQty!==-1 ? row[kQty] : '';
-      const qty = parseFloat(qtyRaw);
-      const srVal = kSr!==-1 ? String(row[kSr] ?? '').trim() : '';
-      const unitVal = kUnit!==-1 ? String(row[kUnit] ?? '').trim() : '';
-      const item = {
-        id: uid(), orderId: o.id, sr: srVal, importIndex: created, excelDesc: desc,
-        excelQty: isNaN(qty) ? 0 : qty, qtyFlag: (kQty!==-1 && isNaN(qty)) ? 'invalid quantity' : '',
-        excelUnit: unitVal,
-        productId: null, warehouseName:'', sectionName:'', productName:'', sortKey:[9999,9999,9999],
-        requestedQty: isNaN(qty)?0:qty, requestedUnit: unitVal,
-        actualQty: null, actualUnit: '', status:'unmatched', matchType:'', replacementName:'', notes:'',
-        actualProductionDate:'', actualExpiryDate:''
-      };
-      await put('orderItems', item);
-      created++;
+      btn.textContent = `Saving ${newItems.length} items…`;
+      await put('orders', o);
+      // clear previous items for this order (re-import)
+      const existingItems = (await getAll('orderItems')).filter(it=>it.orderId===o.id);
+      for(const it of existingItems) await del('orderItems', it.id);
+      for(const it of newItems) await put('orderItems', it);
+      const target = `#/order/${o.id}/match`;
+      if(location.hash===target) render(); else location.hash = target; // (same address → no hashchange, so redraw by hand)
+    }catch(err){
+      fail('Importing failed: '+(err && err.message || err)+' — nothing was lost; please try again.');
     }
-    if(!created){ showAlert('No usable rows found in the file.'); return; }
-    location.hash = `#/order/${o.id}/match`;
   };
 }
 
+let _matchRun = 0; // only the newest matching screen may write or draw — an older one still working is dropped
 async function matchScreen(orderId){
+  const run = ++_matchRun;
   const order = await getOne('orders', orderId);
-  let items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
-  const [products, warehouses, sections, suppliers] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
+  let items = (await getAll('orderItems')).filter(it=>it.orderId===orderId).sort((a,b)=>(a.importIndex||0)-(b.importIndex||0));
+  const [ctx, warehouses, sections, suppliers] = await Promise.all([loadMatchContext(), getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
+  const products = ctx.products;
   const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
   const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
-  const productsById = new Map(products.map(p=>[p.id,p]));
+  const productsById = ctx.byId;
   const needsSetup = (productId)=>{ const p = productsById.get(productId); return p && !p.warehouseId; };
 
   // auto-run matching for items that haven't been resolved yet
-  for(const it of items){
-    if(it.productId || it.status==='not_available') continue;
-    const r = await matchExcelRow(it.excelDesc);
-    if(r.status==='mapped' || r.status==='auto'){
-      applyMatch(it, r.product, r.status==='mapped'?'saved mapping':'auto-matched');
-    } else if(r.status==='suggest'){
-      it._candidates = r.candidates.map(c=>({id:c.p.id, name:c.p.name, score:c.score}));
-      it.status='unmatched';
-    } else {
-      it.status='unmatched'; it._candidates=[];
+  const todo = items.filter(it=>!it.productId && it.status!=='not_available');
+  if(todo.length){
+    $('#main').innerHTML = `<div class="topbar"><h1>Review matching</h1></div><p class="subtle" id="mt_prog">Matching ${todo.length} line item${todo.length===1?'':'s'} to your products…</p>`;
+    let n = 0;
+    for(const it of todo){
+      if(run!==_matchRun) return;
+      const r = await matchExcelRow(it.excelDesc, ctx);
+      if(r.status==='mapped' || r.status==='auto'){
+        applyMatch(it, r.product, r.status==='mapped'?'saved mapping':'auto-matched');
+      } else if(r.status==='suggest'){
+        it._candidates = r.candidates.map(c=>({id:c.p.id, name:c.p.name, score:c.score}));
+        it.status='unmatched';
+      } else {
+        it.status='unmatched'; it._candidates=[];
+      }
+      await put('orderItems', it);
+      if(++n % 25 === 0){ const el = $('#mt_prog'); if(el) el.textContent = `Matching… ${n} of ${todo.length}`; await new Promise(r=>setTimeout(r,0)); }
     }
-    await put('orderItems', it);
+    if(run!==_matchRun) return;
   }
 
   function applyMatch(it, product, matchType){
@@ -331,9 +350,11 @@ async function matchScreen(orderId){
   }
 
   async function goToPicking(){
-    const stillUnresolved = items.some(it=>it.status==='unmatched');
-    if(stillUnresolved) return;
-    const sorted = items.filter(it=>it.status==='pending').sort((a,b)=>{
+    // decide from what is actually saved, not from this screen's copy — it may be out of date
+    const fresh = (await getAll('orderItems')).filter(it=>it.orderId===order.id);
+    if(!fresh.length){ showAlert('This order has no items saved. Please import the Excel file again.', 'Nothing to pick'); return; }
+    if(fresh.some(it=>it.status==='unmatched')){ showAlert('Some items are still unmatched. Refreshing the list.', 'Not ready yet'); items = fresh; draw(); return; }
+    const sorted = fresh.filter(it=>it.status==='pending').sort((a,b)=>{
       for(let i=0;i<3;i++){ if(a.sortKey[i]!==b.sortKey[i]) return a.sortKey[i]-b.sortKey[i]; }
       return 0;
     });
