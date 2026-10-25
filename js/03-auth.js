@@ -337,17 +337,29 @@ async function compressExistingImages(){
 
 
 /* -------------------------- product matching -------------------------- */
-async function matchExcelRow(desc){
+/* Loads what matching needs once. matchExcelRow(desc) without it re-reads the whole products table
+   (photos included) on every call — fine for one line, painfully slow for a 300-line order. */
+async function loadMatchContext(){
   const [products, mappings] = await Promise.all([getAll('products'), getAll('mappings')]);
+  const mapByKey = new Map();
+  for(const m of mappings) if(!mapByKey.has(m.excelDescNormalized)) mapByKey.set(m.excelDescNormalized, m);
+  const byId = new Map(products.map(p=>[p.id,p]));
+  const active = products.filter(p=>p.active);
+  const byName = new Map();
+  for(const p of active){ const k = normalize(p.name); if(!byName.has(k)) byName.set(k, p); }
+  return {products, mapByKey, byId, active, byName};
+}
+async function matchExcelRow(desc, ctx){
+  ctx = ctx || await loadMatchContext();
   const norm = normalize(desc);
-  const mapping = mappings.find(m=>m.excelDescNormalized===norm);
+  const mapping = ctx.mapByKey.get(norm);
   if(mapping){
-    const p = products.find(x=>x.id===mapping.productId);
+    const p = ctx.byId.get(mapping.productId);
     if(p) return {status:'mapped', product:p};
   }
-  const exact = products.find(p=>normalize(p.name)===norm && p.active);
+  const exact = ctx.byName.get(norm);
   if(exact) return {status:'auto', product:exact};
-  const scored = products.filter(p=>p.active).map(p=>({p,score:similarity(desc,p.name)})).sort((a,b)=>b.score-a.score);
+  const scored = ctx.active.map(p=>({p,score:similarity(desc,p.name)})).sort((a,b)=>b.score-a.score);
   if(scored[0] && scored[0].score >= 0.82) return {status:'auto', product:scored[0].p};
   const candidates = scored.filter(s=>s.score>=0.4).slice(0,4);
   if(candidates.length) return {status:'suggest', candidates};

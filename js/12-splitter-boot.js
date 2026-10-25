@@ -85,7 +85,7 @@ route('splitter', async ()=>{
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array'});
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', blankrows:false});
+    const aoa = sheetToRows(sheet);
     if(!aoa.length){ showAlert('The Excel file appears to be empty.'); return false; }
     const headerInfo = locateOrderHeaderRow(aoa);
     if(!headerInfo){ showAlert('Could not find a "Description" column anywhere in the first rows of this file — please check the file format.'); return false; }

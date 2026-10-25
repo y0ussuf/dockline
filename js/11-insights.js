@@ -182,7 +182,7 @@ async function parseHistorySheet(file){
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array', cellDates:true});
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', blankrows:false});
+    const aoa = sheetToRows(sheet);
     if(!aoa.length){ out.error='empty file'; return out; }
     const headerInfo = locateOrderHeaderRow(aoa);
     if(!headerInfo){ out.error='no "Description" column found'; return out; }

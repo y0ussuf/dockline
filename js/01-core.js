@@ -129,6 +129,26 @@ function expiryModeOf(prefix){
   return $('#'+prefix+'_mode')?.querySelector('.chip.active')?.dataset.mode || 'date';
 }
 
+/* Reads a worksheet into rows. Some exporters write a wrong/stale <dimension> tag (e.g. "A1:D40" for a
+   300-row sheet) and SheetJS then silently ignores every row below it — a big order would import as only
+   its first few dozen lines. So the real extent is worked out from the cells themselves first. */
+function sheetToRows(sheet, opts){
+  let r0=Infinity, c0=Infinity, r1=-1, c1=-1;
+  for(const k in sheet){
+    if(k.charCodeAt(0)===33) continue; // "!ref", "!merges"…
+    const a = XLSX.utils.decode_cell(k);
+    if(a.r<r0) r0=a.r; if(a.r>r1) r1=a.r; if(a.c<c0) c0=a.c; if(a.c>c1) c1=a.c;
+  }
+  if(r1>=0){
+    const cur = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : null;
+    sheet['!ref'] = XLSX.utils.encode_range({
+      s:{r:Math.min(cur?cur.s.r:r0, r0), c:Math.min(cur?cur.s.c:c0, c0)},
+      e:{r:Math.max(cur?cur.e.r:r1, r1), c:Math.max(cur?cur.e.c:c1, c1)}
+    });
+  }
+  return XLSX.utils.sheet_to_json(sheet, Object.assign({header:1, defval:'', blankrows:false}, opts||{}));
+}
+
 function normalize(s){
   return (s||'').toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
 }
