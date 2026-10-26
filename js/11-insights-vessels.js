@@ -56,7 +56,7 @@ function analyzeVessel(orders, lines, productsById, anchor){
     const e = m.get(lineKey(l)) || {name:nameOfLine(l), unit:unitOfLine(l), qty:0, usable:l.baseOk};
     e.qty += l.baseOk ? l.baseQty : l.qty; m.set(lineKey(l), e);
   }
-  const orderItems = sorted.map(o=>({date:o.orderDate, items:byOrder.get(o.id)}));
+  const orderItems = sorted.map(o=>({id:o.id, date:o.orderDate, code:o.imo||'', live:!!o.live, items:byOrder.get(o.id)}));
   const n = orderItems.length;
 
   // basket: how often each product appears, and its usual quantity
@@ -141,9 +141,12 @@ async function vesselProfileScreen(rawKey){
       <tbody>${a.staples.slice(0,30).map(p=>`<tr><td>${p.key.startsWith('x:')?esc(p.name):`<a href="#/insights/product/${p.key}" style="text-decoration:none; color:inherit;"><b>${esc(p.name)}</b> <span class="subtle">›</span></a>`}</td><td class="num">${Math.round(p.share*100)}%</td><td class="num">${fmtUsual(p)}</td></tr>`).join('') || '<tr><td colspan="3" class="subtle">No product appears in half of its orders yet.</td></tr>'}</tbody>
     </table>${a.staples.length>30?`<p class="subtle" style="padding:8px 10px;">Showing 30 of ${a.staples.length}.</p>`:''}</div>
     <h3 class="section-title">Order history</h3>
-    <div class="card tbl-wrap"><table class="tbl">
-      <thead><tr><th>Date</th><th class="num">Different items</th></tr></thead>
-      <tbody>${[...a.orders].reverse().slice(0,40).map(o=>`<tr><td>${fmtDate(o.date)}</td><td class="num">${o.items.size}</td></tr>`).join('')}</tbody>
-    </table>${a.orders.length>40?`<p class="subtle" style="padding:8px 10px;">Showing the latest 40 of ${a.orders.length}.</p>`:''}</div>
+    <p class="subtle" style="margin-top:-8px;">Every past order of this vessel, newest first. Tap one to see everything that was asked for.</p>
+    <div class="card tbl-wrap" style="max-height:480px; overflow:auto;"><table class="tbl">
+      <thead><tr><th>Order</th><th>Date</th><th class="num">Different items</th></tr></thead>
+      <tbody>${[...a.orders].reverse().map(o=>{
+        const href = o.live ? `#/order/${o.id.replace(/^live:/,'')}/summary` : `#/insights/order/${o.id}`;
+        return `<tr><td><a href="${href}" style="text-decoration:none; color:inherit;"><b>${esc(o.code||'No code')}</b> <span class="subtle">›</span></a>${o.live?' <span class="badge b-completed">picked on the site</span>':''}</td><td>${fmtDate(o.date)}</td><td class="num">${o.items.size}</td></tr>`; }).join('')}</tbody>
+    </table></div>
     <p class="subtle" style="margin-top:14px;">Read as a guide, not a prediction: vessels change supplier, route and menu without warning. The name is how vessels are told apart, so a renamed or misspelt vessel shows up as a separate one.</p>`;
 }

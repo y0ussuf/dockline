@@ -220,6 +220,7 @@ route('insights', async (parts)=>{
   if(parts[0]==='product') return productInsightScreen(parts[1]);
   if(parts[0]==='vessel') return vesselProfileScreen(parts[1]);
   if(parts[0]==='live') return insightsLiveScreen();
+  if(parts[0]==='order') return insightsOrderScreen(parts[1]);
   return insightsHome();
 });
 
@@ -315,6 +316,31 @@ async function insightsLiveScreen(){
   const all = hide=> async ()=>{ for(const o of done) await setFlag(o, hide); insightsLiveScreen(); };
   if($('#lv_none')) $('#lv_none').onclick = all(true);
   if($('#lv_all')) $('#lv_all').onclick = all(false);
+}
+
+/* ============================ ONE PAST ORDER ============================
+   Opened from a vessel's order history: the whole imported sheet as it was asked for — description, quantity,
+   unit — plus the product each line was matched to. (Orders finished on the site open the normal order page.) */
+async function insightsOrderScreen(id){
+  const order = await getOne('historyOrders', id);
+  if(!order){ location.hash = '#/insights'; return; }
+  const [allLines, products] = await Promise.all([getAll('historyLines'), getAll('products')]);
+  const byId = new Map(products.map(p=>[p.id,p]));
+  const lines = allLines.filter(l=>l.historyOrderId===id).sort((a,b)=>(a.idx==null||b.idx==null) ? String(a.excelDesc).localeCompare(String(b.excelDesc)) : a.idx-b.idx);
+  const sheetOrder = lines.length && lines.every(l=>l.idx!=null);
+  const back = `#/insights/vessel/${encodeURIComponent(order.vesselKey)}`;
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>${esc(order.imo||'Past order')}</h1><a href="${back}" class="btn btn-ghost btn-sm">← ${esc(order.vesselName)}</a></div>
+    <p class="subtle" style="margin-top:-10px;"><b>${esc(order.vesselName)}</b> · ${fmtDate(order.orderDate)} · ${lines.length} line${lines.length===1?'':'s'}${order.fileName?` · from “${esc(order.fileName)}”`:''}</p>
+    <div class="card tbl-wrap"><table class="tbl">
+      <thead><tr><th class="num">#</th><th>Description</th><th class="num">Asked for</th><th>Matched product</th></tr></thead>
+      <tbody>${lines.map((l,i)=>{
+        const p = l.productId && byId.get(l.productId);
+        return `<tr><td class="num">${esc(l.sr||String(i+1))}</td><td>${esc(l.excelDesc)}</td><td class="num">${_fmtQty(l.qty)} ${esc(l.unit||'')}</td>
+          <td>${p ? `<a href="#/insights/product/${p.id}" style="text-decoration:none; color:inherit;">${esc(p.name)} <span class="subtle">›</span></a>${l.baseOk?'':' <span class="badge b-modified" title="The unit differs from the product\'s unit">check unit</span>'}`
+            : l.skipped ? '<span class="subtle">left out of analysis</span>' : '<span class="badge b-unmatched">not matched</span>'}</td></tr>`; }).join('')}</tbody>
+    </table></div>
+    ${sheetOrder ? '' : '<p class="subtle" style="margin-top:10px;">This order was imported before line positions were saved, so lines are listed alphabetically. Orders imported from now on keep the order of the sheet.</p>'}`;
 }
 
 /* ============================ TIDY VESSEL NAMES ============================
@@ -611,12 +637,13 @@ async function historyImportScreen(){
       seen.add(fingerprint);
       const oid = uid();
       newOrders.push({id:oid, fileName:p.fileName, vesselName:p.vessel.trim(), vesselKey, imo:p.imo||'', orderDate:p.date, fingerprint, lineCount:p.lines.length, importedAt:new Date().toISOString()});
-      for(const l of p.lines){
+      p.lines.forEach((l, li)=>{
         const product = matcher.match(l.desc);
         const b = toBaseQty(l.qty, l.unit, product);
         newLines.push({id:uid(), historyOrderId:oid, vesselKey, orderDate:p.date, excelDesc:l.desc, descKey:normalize(l.desc),
-          qty:l.qty, unit:l.unit, productId: product?product.id:null, baseQty:b.baseQty, baseUnit:b.baseUnit, baseOk:b.ok, skipped:false});
-      }
+          qty:l.qty, unit:l.unit, productId: product?product.id:null, baseQty:b.baseQty, baseUnit:b.baseUnit, baseOk:b.ok, skipped:false,
+          sr:l.sr||'', idx:li});   // sr/idx: the line's place in the sheet, so the order can be shown as it was written
+      });
     }
     await bulkPut('historyOrders', newOrders);
     await bulkPut('historyLines', newLines);
