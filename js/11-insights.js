@@ -219,6 +219,7 @@ route('insights', async (parts)=>{
   if(parts[0]==='match') return historyMatchScreen();
   if(parts[0]==='product') return productInsightScreen(parts[1]);
   if(parts[0]==='vessel') return vesselProfileScreen(parts[1]);
+  if(parts[0]==='live') return insightsLiveScreen();
   return insightsHome();
 });
 
@@ -261,8 +262,10 @@ async function insightsData(){
   const itemsByOrder = new Map();
   for(const it of items){ (itemsByOrder.get(it.orderId) || itemsByOrder.set(it.orderId, []).get(it.orderId)).push(it); }
   const liveOrders = [], liveLines = [];
+  let ignoredLive = 0;
   for(const o of orders){
     if(o.status!=='completed') continue;
+    if(o.insightsIgnore){ ignoredLive++; continue; }   // hidden from Insights by the user (the order itself is untouched)
     const vesselName = cleanVesselName(o.vessel);
     const date = String(o.orderDate || o.completedAt || '').slice(0,10);
     if(!vesselName || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
@@ -285,7 +288,33 @@ async function insightsData(){
     liveOrders.push({id:'live:'+o.id, fileName:'', vesselName, vesselKey, imo:o.imo||'', orderDate:date, fingerprint, lineCount:lines.length, live:true});
     liveLines.push(...lines);
   }
-  return {hOrders: hOrders.concat(liveOrders), hLines: hLines.concat(liveLines), liveOrders: liveOrders.length, importedOrders: hOrders.length};
+  return {hOrders: hOrders.concat(liveOrders), hLines: hLines.concat(liveLines), liveOrders: liveOrders.length, ignoredLive, importedOrders: hOrders.length};
+}
+
+/* ============================ WHICH SITE ORDERS COUNT ============================
+   Orders finished on the site feed Insights automatically. Test orders can be hidden here — the order
+   itself, its stock and its reports are not touched; it just carries a flag (insightsIgnore) that Insights
+   respects. Un-hide any time. The flag lives on the order, so it syncs to other devices with it. */
+async function insightsLiveScreen(){
+  const [orders, items] = await Promise.all([getAll('orders'), getAll('orderItems')]);
+  const n = new Map(); items.forEach(it=>n.set(it.orderId,(n.get(it.orderId)||0)+1));
+  const done = orders.filter(o=>o.status==='completed').sort((a,b)=>String(b.orderDate||b.completedAt||'').localeCompare(String(a.orderDate||a.completedAt||'')));
+  const hidden = done.filter(o=>o.insightsIgnore).length;
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Site orders in Insights</h1><a href="#/insights" class="btn btn-ghost btn-sm">← Insights</a></div>
+    <p class="subtle" style="margin-top:-10px;">Orders you finished on the site count in Insights automatically. Untick any that were only tests. This only hides them from Insights — the orders, their stock and reports stay exactly as they are.</p>
+    ${done.length ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+      <button class="btn btn-ghost btn-sm" id="lv_none">Hide all (${done.length})</button>
+      <button class="btn btn-ghost btn-sm" id="lv_all">Include all</button>
+      <span class="subtle" style="align-self:center;">${done.length-hidden} included · ${hidden} hidden</span></div>
+    <div class="card">${done.map(o=>`<label class="list-row" style="cursor:pointer; gap:12px;">
+      <input type="checkbox" data-lv="${o.id}" ${o.insightsIgnore?'':'checked'}>
+      <div style="flex:1; min-width:0;"><b>${esc(cleanVesselName(o.vessel)||'—')}</b> <span class="subtle">· ${esc(o.orderNumber||'')}</span><div class="subtle">${esc(String(o.orderDate||o.completedAt||'').slice(0,10))} · ${n.get(o.id)||0} item${(n.get(o.id)||0)===1?'':'s'}</div></div></label>`).join('')}</div>` : `<div class="card"><p class="subtle">No finished orders on the site yet.</p></div>`}`;
+  const setFlag = async (o, hide)=>{ if(!!o.insightsIgnore===hide) return; if(hide) o.insightsIgnore = true; else delete o.insightsIgnore; await put('orders', o); };
+  document.querySelectorAll('[data-lv]').forEach(c=>c.onchange = async ()=>{ const o = done.find(x=>x.id===c.dataset.lv); await setFlag(o, !c.checked); insightsLiveScreen(); });
+  const all = hide=> async ()=>{ for(const o of done) await setFlag(o, hide); insightsLiveScreen(); };
+  if($('#lv_none')) $('#lv_none').onclick = all(true);
+  if($('#lv_all')) $('#lv_all').onclick = all(false);
 }
 
 /* ============================ TIDY VESSEL NAMES ============================
@@ -345,7 +374,7 @@ async function applyVesselTidy(plan){
 }
 
 async function insightsHome(){
-  const [{hOrders, hLines, liveOrders, importedOrders}, products] = await Promise.all([insightsData(), getAll('products')]);
+  const [{hOrders, hLines, liveOrders, ignoredLive, importedOrders}, products] = await Promise.all([insightsData(), getAll('products')]);
   const byId = new Map(products.map(p=>[p.id,p]));
   if(!hOrders.length){
     $('#main').innerHTML = `
@@ -355,6 +384,7 @@ async function insightsHome(){
         <p class="subtle">Import your old order sheets (the same Excel files you use to start an order) and Dockline will show how demand for each product and each vessel has been changing — the first step toward knowing what to buy and what not to.</p>
         <p class="subtle">What the vessel <b>asked for</b> is what counts, not what was picked. Past orders are kept separate: they never touch your stock, your live orders or reports.</p>
         <a href="#/insights/import" class="btn btn-signal btn-lg" style="max-width:320px;">Import past orders</a>
+        ${ignoredLive ? `<p class="subtle" style="margin-top:14px;">${ignoredLive} finished order${ignoredLive===1?' is':'s are'} hidden from Insights. <a href="#/insights/live">Choose which to include</a></p>` : ''}
       </div>`;
     return;
   }
@@ -419,7 +449,7 @@ async function insightsHome(){
       <div class="stat"><b>${hLines.length.toLocaleString()}</b><div class="lbl">Order lines</div></div>
       <div class="stat"><b style="font-size:1.1rem;">${fmtDate(dates[0])} → ${fmtDate(anchor)}</b><div class="lbl">Period covered</div></div>
     </div>
-    <p class="subtle" style="margin-top:-6px;">${importedOrders} imported from Excel${liveOrders?` · <b>${liveOrders}</b> finished on the site (added automatically, always up to date)`:' · orders you finish on the site are added here automatically'}.</p>
+    <p class="subtle" style="margin-top:-6px;">${importedOrders} imported from Excel${liveOrders?` · <b>${liveOrders}</b> finished on the site (added automatically, always up to date)`:' · orders you finish on the site are added here automatically'}${ignoredLive?` · ${ignoredLive} hidden`:''}. <a href="#/insights/live">Choose which site orders to include</a></p>
     ${tidy ? `<div class="card" style="border-color:var(--warn); margin-bottom:18px;">
       <div class="section-title" style="margin-top:0;">Tidy vessel names</div>
       <p class="subtle">${tidy.changes.length} imported order${tidy.changes.length===1?' still has':'s still have'} a customer name in the vessel name (for example “${esc(tidy.merges[0].from)}” → “${esc(tidy.merges[0].to)}”), so ${tidy.mergedVessels?`${tidy.mergedVessels} vessel${tidy.mergedVessels===1?'':'s'} show${tidy.mergedVessels===1?'s':''} up twice`:'those vessels may show up twice'}. Cleaning them joins each vessel's orders into one profile.</p>
@@ -474,7 +504,7 @@ async function insightsHome(){
     if(left) msg += `\n⚠ ${left} came back from the cloud — press delete again.`;
     else if(st && st.ok===false) msg += `\n⚠ Removed here, but the cloud did not confirm yet (${st.error}). It will retry automatically; other devices keep the old orders until then.`;
     else if(st && st.ok) msg += '\nThe cloud copy was removed too.';
-    if(live) msg += `\n${live} order${live===1?'':'s'} you finished on the site still count in Insights — those are real orders, so they were not deleted.`;
+    if(live) msg += `\n${live} order${live===1?'':'s'} you finished on the site still count in Insights — those are real orders, so they were not deleted. You can hide the test ones from Insights under “Choose which site orders to include”.`;
     showAlert(msg, 'Done');
     insightsHome();
   }, {danger:true, yesLabel:'Delete'});
