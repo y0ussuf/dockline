@@ -406,6 +406,14 @@ window.addEventListener('hashchange', render);
 function showModal(html){
   $('#modal-root').innerHTML = `<div class="modal-bg" id="modal-bg"><div class="modal">${html}</div></div>`;
   $('#modal-bg').addEventListener('click', e=>{ if(e.target.id==='modal-bg') closeModal(); });
+  focusAutofocus($('#modal-bg')); // the autofocus attribute is ignored on markup added after the page has loaded
+}
+/* puts the cursor in the first [autofocus] field of freshly added markup */
+function focusAutofocus(root){
+  const el = root && root.querySelector('[autofocus]');
+  if(!el) return;
+  el.focus();
+  setTimeout(()=>{ if(document.activeElement!==el) el.focus(); }, 60); // some browsers need a moment after the element appears
 }
 function closeModal(){ $('#modal-root').innerHTML=''; }
 window.closeModal = closeModal;
