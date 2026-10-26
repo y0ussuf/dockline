@@ -417,6 +417,7 @@ function openProductPicker(it, products, whMap, secMap, onPick){
     });
   }
   draw('');
+  focusAutofocus(overlay);
   let ppDebounce;
   overlay.querySelector('#pp_search').oninput = e=>{
     const val = e.target.value;

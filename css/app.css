@@ -203,8 +203,9 @@ textarea{resize:vertical; min-height:70px;}
 .match-card.warn{border-color:var(--warn);}
 .match-card.bad{border-color:var(--danger);}
 .cand-list{display:flex; flex-direction:column; gap:6px; margin-top:10px;}
-.cand-btn{text-align:left; padding:9px 12px; border-radius:8px; border:1.5px solid var(--line); background:var(--paper); font-weight:600; font-size:.9rem;}
-.cand-btn:hover{border-color:var(--sea);}
+.cand-btn{text-align:left; padding:10px 13px; border-radius:8px; border:1.5px solid var(--sea); background:var(--card); color:var(--ink); font-weight:700; font-size:.98rem; line-height:1.3;}
+.cand-btn .subtle{color:var(--ink-soft); font-weight:600; font-size:.85rem;}
+.cand-btn:hover,.cand-btn:focus-visible{background:var(--paper-dim); border-color:var(--sea); outline:none;}
 /* ---- login gate (real Supabase accounts — see the LOGIN section in the script) ---- */
 #authGate{position:fixed; inset:0; z-index:9999; background:var(--paper); display:flex; align-items:center; justify-content:center; padding:20px;}
 #authGate.hidden{display:none;}
