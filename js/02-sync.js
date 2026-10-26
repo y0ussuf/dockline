@@ -22,7 +22,7 @@ async function seedSyncConfigIfEmpty(){
   if(existing) return;
   await rawPut('settings', {id:'syncConfig', url:DEFAULT_SUPABASE_URL, key:DEFAULT_SUPABASE_KEY, crewName:''});
 }
-let syncDebounceTimer=null, syncInFlight=false, syncIntervalHandle=null;
+let syncDebounceTimer=null, syncInFlight=false, syncIntervalHandle=null, syncPaused=false; // paused while a bulk delete runs
 
 function queueSync(store,id,op){
   const key = store+':'+id;
@@ -165,7 +165,7 @@ async function syncNow(){
   if(DEMO_MODE) return; // demo sessions are local-only — never touch the network, by design
   const cfg = await getSyncConfig();
   if(!cfg || !cfg.url || !cfg.key) return;
-  if(syncInFlight) return;
+  if(syncInFlight || syncPaused) return;
   if(typeof navigator!=='undefined' && navigator.onLine===false) return;
   syncInFlight = true;
   renderSyncIndicator('syncing');

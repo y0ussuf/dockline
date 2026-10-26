@@ -20,21 +20,30 @@ async function bulkPut(store, records){
     t.oncomplete = resolve; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error);
   });
 }
-/* deletes every past order here, and queues the same deletion for the cloud so other devices lose them too */
+/* deletes every past order here, and queues the same deletion for the cloud so other devices lose them too.
+   A sync that is already running when this starts would write its (old) rows back right after they are
+   cleared — that looked like "nothing happens" — so sync is held, and a running one is waited for first. */
 async function deleteAllHistory(){
-  const prev = await getOne('settings','historyPendingDeletes');
-  const items = prev && prev.items ? prev.items : [];
-  for(const s of HISTORY_STORES) (await getAll(s)).forEach(r=>{ if(r.synced) items.push({store:s, id:r.id}); });
-  if(items.length) await rawPut('settings', {id:'historyPendingDeletes', items});
-  await clearStore('historyOrders'); await clearStore('historyLines');
-  if(typeof syncNow==='function') syncNow();
+  syncPaused = true;
+  try{
+    const t0 = Date.now();
+    while(syncInFlight && Date.now()-t0 < 120000) await new Promise(r=>setTimeout(r,200));
+    const prev = await getOne('settings','historyPendingDeletes');
+    const items = prev && prev.items ? prev.items : [];
+    const nO = (await getAll('historyOrders')).length;
+    let nL = 0;
+    for(const s of HISTORY_STORES){ const rows = await getAll(s); if(s==='historyLines') nL = rows.length; rows.forEach(r=>{ if(r.synced) items.push({store:s, id:r.id}); }); }
+    if(items.length) await rawPut('settings', {id:'historyPendingDeletes', items});
+    await clearStore('historyOrders'); await clearStore('historyLines');
+    return {orders:nO, lines:nL};
+  } finally { syncPaused = false; }
 }
 async function clearStore(store){
   const db = await dbp;
   await new Promise((resolve,reject)=>{
     const t = db.transaction(store,'readwrite');
     t.objectStore(store).clear();
-    t.oncomplete = resolve; t.onerror = ()=>reject(t.error);
+    t.oncomplete = resolve; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error||new Error('cancelled'));
   });
 }
 const _pad2 = n=>String(n).padStart(2,'0');
@@ -451,8 +460,22 @@ async function insightsHome(){
       <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="tidy_go" style="flex:1;">Tidy up</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
     $('#tidy_go').onclick = async ()=>{ $('#tidy_go').disabled = true; const r = await applyVesselTidy(tidy); closeModal(); showAlert(`Cleaned ${r.renamed} order${r.renamed===1?'':'s'}${r.dropped?` and removed ${r.dropped} duplicate${r.dropped===1?'':'s'}`:''}.`, 'Done'); insightsHome(); };
   };
-  if(importedOrders) $('#histClear').onclick = ()=> showConfirm('Delete every imported past order from this device? Your live orders, products and stock are not affected. You can import the sheets again later.', async ()=>{
-    await deleteAllHistory();
+  if(importedOrders) $('#histClear').onclick = ()=> showConfirm('Delete every imported past order from this device and from the cloud (so your other devices lose them too)? Orders you finished on the site, your products and your stock are not affected. You can import the sheets again later.', async ()=>{
+    showModal('<h3>Deleting…</h3><p class="subtle">Removing the imported past orders. Please wait.</p>');
+    let res;
+    try{ res = await deleteAllHistory(); }
+    catch(e){ closeModal(); showAlert('Could not delete: '+(e && e.message || e)+'. Nothing else was changed.', 'Delete failed'); return; }
+    await syncNow();                                   // tell the cloud now, and see whether it accepted
+    const st = await getSyncStatus();
+    const left = (await getAll('historyOrders')).length;
+    const live = (await insightsData()).liveOrders;
+    closeModal();
+    let msg = `Deleted ${res.orders.toLocaleString()} imported order${res.orders===1?'':'s'} (${res.lines.toLocaleString()} lines).`;
+    if(left) msg += `\n⚠ ${left} came back from the cloud — press delete again.`;
+    else if(st && st.ok===false) msg += `\n⚠ Removed here, but the cloud did not confirm yet (${st.error}). It will retry automatically; other devices keep the old orders until then.`;
+    else if(st && st.ok) msg += '\nThe cloud copy was removed too.';
+    if(live) msg += `\n${live} order${live===1?'':'s'} you finished on the site still count in Insights — those are real orders, so they were not deleted.`;
+    showAlert(msg, 'Done');
     insightsHome();
   }, {danger:true, yesLabel:'Delete'});
 }
