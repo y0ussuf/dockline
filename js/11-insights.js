@@ -577,7 +577,7 @@ async function historyImportScreen(){
 /* ============================== MATCH SCREEN ============================== */
 /* One card per distinct product name that isn't matched yet (not per order line). Each name can be
    • matched to an existing product (suggested, or searched in the whole database),
-   • added as a NEW product (name + unit, nothing else — it shows up under Products → "Needs setup"),
+   • added as a NEW product (opens the same product form as the order screen),
    • or left out of the analysis (and brought back later from "Left out").
    Every choice is saved as a mapping (alias), so it also helps future imports and live orders. */
 
@@ -696,32 +696,15 @@ async function historyMatchScreen(){
     historyMatchScreen();
   });
 
-  /* ---- add ONE name as a new product ---- */
-  list_.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>{
-    const g = groups.get(b.dataset.new);
-    const similar = suggestProducts(g.desc, active, 3, 0.6);
-    showModal(`<h3>Add as a new product</h3>
-      <p class="subtle">Only the name and unit are needed now. Photo, supplier, warehouse and section can be filled in later (Products → “Needs setup”). Stock is not tracked until you give it a quantity there.</p>
-      ${similar.length ? `<p style="color:var(--warn);"><b>Looks similar to:</b> ${similar.map(c=>esc(c.p.name)).join(' · ')} — cancel and pick one of those if it's the same thing.</p>` : ''}
-      <div class="field"><label>Product name</label><input type="text" id="np_name" value="${esc(newProductFromName(g.desc,'').name)}"></div>
-      <div class="field"><label>Unit</label><input type="text" id="np_unit" value="${esc(topUnit(g))}" placeholder="e.g. KG, PKT 450 GM, LTR, PCS">
-        <div class="subtle">The measure it is counted in. Sheets usually write it in the Unit column (here: “${esc(topUnit(g))||'blank'}”).</div></div>
-      <div style="display:flex; gap:10px; margin-top:14px;">
-        <button class="btn btn-signal" id="np_save" style="flex:1;">Add product &amp; match ${g.count} line${g.count===1?'':'s'}</button>
-        <button class="btn btn-ghost" id="np_cancel">Cancel</button>
-      </div>`);
-    $('#np_cancel').onclick = closeModal;
-    $('#np_save').onclick = async ()=>{
-      const name = $('#np_name').value.replace(/\s+/g,' ').trim();
-      if(!name){ showAlert('Product name is required.'); return; }
-      $('#np_save').disabled = true;
-      let product = (await getAll('products')).find(p=>normalize(p.name)===normalize(name));
-      const existed = !!product;
-      if(!product){ product = newProductFromName(name, $('#np_unit').value); await put('products', product); }
-      closeModal();
-      await assign(b.dataset.new, product);
-      if(existed) showAlert(`A product called “${product.name}” already existed, so the lines were matched to it instead of creating a duplicate.`, 'Matched to existing');
-    };
+  /* ---- add ONE name as a new product: the same full product form the order screen uses ---- */
+  list_.querySelectorAll('[data-new]').forEach(b=>b.onclick=async ()=>{
+    const key = b.dataset.new, g = groups.get(key);
+    // a product with exactly this name already exists → use it, don't create a duplicate
+    const dup = (await getAll('products')).find(p=>normalize(p.name)===normalize(g.desc));
+    if(dup){ await assign(key, dup); showAlert(`A product called “${dup.name}” already existed, so the lines were matched to it instead of creating a duplicate.`, 'Matched to existing'); return; }
+    const suppliers = await getAll('suppliers');
+    const draft = {id:uid(), name:newProductFromName(g.desc,'').name, unit:topUnit(g), supplierId:'', warehouseId:'', sectionId:'', priority:999, active:true, notes:'', productionDate:'', expiryDate:'', image:''};
+    openProductForm(draft, warehouses, sections, suppliers, async saved=>{ await assign(key, saved); });
   });
 
   /* ---- add MANY as new products, with a review step ---- */
