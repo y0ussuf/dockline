@@ -290,14 +290,50 @@ let dbp = new Promise((resolve,reject)=>{
   req.onsuccess = ()=>resolve(req.result);
   req.onerror = ()=>reject(req.error);
 });
+/* Read cache for the heavy screens (Insights). Every write bumps its store's version — at the start AND at
+   the end of the write, so nothing read mid-write is ever trusted — and a cached read is only reused while
+   the version is unchanged. Cached arrays are shared: treat them as READ-ONLY. */
+const _dataVer = {};
+function markDirty(store){ _dataVer[store] = (_dataVer[store]||0)+1; }
+function dataStamp(stores){ return stores.map(s=>_dataVer[s]||0).join('.'); }
+const _readCache = new Map();
+function cachedAll(store){
+  const v = _dataVer[store]||0, c = _readCache.get(store);
+  if(c && c.v===v) return c.p;
+  const p = getAll(store);
+  _readCache.set(store, {v, p});
+  p.catch(()=>{ if(_readCache.get(store) && _readCache.get(store).p===p) _readCache.delete(store); });
+  return p;
+}
+/* products without their photos (a photo is megabytes of text; analysis never needs it) */
+let _slimMemo = null;
+async function slimProducts(){
+  const stamp = dataStamp(['products']);
+  if(_slimMemo && _slimMemo.stamp===stamp) return _slimMemo.p;
+  const p = cachedAll('products').then(list=>list.map(x=>{ const {image, ...rest} = x; return rest; }));
+  _slimMemo = {stamp, p};
+  p.catch(()=>{ if(_slimMemo && _slimMemo.p===p) _slimMemo = null; });
+  return p;
+}
 async function tx(store, mode, fn){
   const db = await dbp;
   return new Promise((resolve,reject)=>{
     const t = db.transaction(store, mode);
     const os = t.objectStore(store);
+    if(mode==='readwrite') markDirty(store);
     const result = fn(os);
-    t.oncomplete = ()=>resolve(result);
+    t.oncomplete = ()=>{ if(mode==='readwrite') markDirty(store); resolve(result); };
     t.onerror = ()=>reject(t.error);
+  });
+}
+/* reads a handful of records by id in one go (much cheaper than scanning a store with tens of thousands) */
+async function getMany(store, ids){
+  if(!ids.length) return [];
+  const db = await dbp;
+  return new Promise((resolve,reject)=>{
+    const t = db.transaction(store,'readonly'), os = t.objectStore(store), out = [];
+    let left = ids.length;
+    for(const id of ids){ const r = os.get(id); r.onsuccess = ()=>{ if(r.result) out.push(r.result); if(--left===0) resolve(out); }; r.onerror = ()=>reject(r.error); }
   });
 }
 async function getAll(store){
