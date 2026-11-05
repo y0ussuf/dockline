@@ -80,8 +80,9 @@ async function bulkDelete(store, ids){
   const db = await dbp;
   await new Promise((resolve,reject)=>{
     const t = db.transaction(store,'readwrite'); const os = t.objectStore(store);
+    markDirty(store);
     for(const id of ids) os.delete(id);
-    t.oncomplete = resolve; t.onerror = ()=>reject(t.error);
+    t.oncomplete = ()=>{ markDirty(store); resolve(); }; t.onerror = ()=>reject(t.error);
   });
 }
 async function historyPendingCount(){

@@ -16,8 +16,9 @@ async function bulkPut(store, records){
   await new Promise((resolve,reject)=>{
     const t = db.transaction(store,'readwrite');
     const os = t.objectStore(store);
+    markDirty(store);
     for(const r of records) os.put(r);
-    t.oncomplete = resolve; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error);
+    t.oncomplete = ()=>{ markDirty(store); resolve(); }; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error);
   });
 }
 /* deletes every past order here, and queues the same deletion for the cloud so other devices lose them too.
@@ -42,8 +43,9 @@ async function clearStore(store){
   const db = await dbp;
   await new Promise((resolve,reject)=>{
     const t = db.transaction(store,'readwrite');
+    markDirty(store);
     t.objectStore(store).clear();
-    t.oncomplete = resolve; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error||new Error('cancelled'));
+    t.oncomplete = ()=>{ markDirty(store); resolve(); }; t.onerror = ()=>reject(t.error); t.onabort = ()=>reject(t.error||new Error('cancelled'));
   });
 }
 const _pad2 = n=>String(n).padStart(2,'0');
@@ -158,7 +160,7 @@ function toBaseQty(qty, lineUnit, product){
 
 /* product matcher that loads the database once (matchExcelRow reloads it on every call) */
 async function buildHistoryMatcher(){
-  const [products, mappings] = await Promise.all([getAll('products'), getAll('mappings')]);
+  const [products, mappings] = await Promise.all([slimProducts(), cachedAll('mappings')]);
   const byId = new Map(products.map(p=>[p.id,p]));
   const mapByKey = new Map(mappings.map(m=>[m.excelDescNormalized, m]));
   const active = products.filter(p=>p.active);
@@ -256,8 +258,19 @@ function stockAdviceFor(a, product){
       the vessel ASKED for (requested quantity), never what was picked.
    An order that was both imported from its sheet AND finished on the site is counted once
    (same vessel + date + order code). */
-async function insightsData(){
-  const [hOrders, hLines, orders, items, matcher] = await Promise.all([getAll('historyOrders'), getAll('historyLines'), getAll('orders'), getAll('orderItems'), buildHistoryMatcher()]);
+/* The result is kept until any of the data it is built from changes, so moving between Insights screens
+   (home → vessel → product → forecast) doesn't re-read and re-crunch everything each time. Read-only. */
+let _insightsMemo = null;
+function insightsData(){
+  const stamp = dataStamp(['historyOrders','historyLines','orders','orderItems','products','mappings']);
+  if(_insightsMemo && _insightsMemo.stamp===stamp) return _insightsMemo.p;
+  const p = _computeInsightsData();
+  _insightsMemo = {stamp, p};
+  p.catch(()=>{ if(_insightsMemo && _insightsMemo.p===p) _insightsMemo = null; });
+  return p;
+}
+async function _computeInsightsData(){
+  const [hOrders, hLines, orders, items, matcher] = await Promise.all([cachedAll('historyOrders'), cachedAll('historyLines'), cachedAll('orders'), cachedAll('orderItems'), buildHistoryMatcher()]);
   const seenCode = new Set(), seenFp = new Set(hOrders.map(o=>o.fingerprint));
   for(const o of hOrders){ const f = String(o.fingerprint||'').split('|'); if(f[2]) seenCode.add(f.slice(0,3).join('|')); }
   const itemsByOrder = new Map();
@@ -324,7 +337,7 @@ async function insightsLiveScreen(){
 async function insightsOrderScreen(id){
   const order = await getOne('historyOrders', id);
   if(!order){ location.hash = '#/insights'; return; }
-  const [allLines, products] = await Promise.all([getAll('historyLines'), getAll('products')]);
+  const [allLines, products] = await Promise.all([cachedAll('historyLines'), slimProducts()]);
   const byId = new Map(products.map(p=>[p.id,p]));
   const lines = allLines.filter(l=>l.historyOrderId===id).sort((a,b)=>(a.idx==null||b.idx==null) ? String(a.excelDesc).localeCompare(String(b.excelDesc)) : a.idx-b.idx);
   const sheetOrder = lines.length && lines.every(l=>l.idx!=null);
@@ -400,7 +413,8 @@ async function applyVesselTidy(plan){
 }
 
 async function insightsHome(){
-  const [{hOrders, hLines, liveOrders, ignoredLive, importedOrders}, products] = await Promise.all([insightsData(), getAll('products')]);
+  $('#main').innerHTML = '<div class="topbar"><h1>Insights</h1></div><p class="subtle">Loading your past orders…</p>';   // shown only while the data is being read
+  const [{hOrders, hLines, liveOrders, ignoredLive, importedOrders}, products] = await Promise.all([insightsData(), slimProducts()]);
   const byId = new Map(products.map(p=>[p.id,p]));
   if(!hOrders.length){
     $('#main').innerHTML = `
@@ -664,7 +678,12 @@ async function historyImportScreen(){
 /* words that say nothing about WHICH product it is: sizes ("1kg", "500"), packing words, fillers */
 const _MATCH_SIZE_RE = /^\d+(?:\.\d+)?(?:kg|g|gm|gms|ml|l|ltr|pcs|pc|pkt|ctn|x)?$/;
 const _MATCH_FILLER = new Set(['of','and','the','with','in','a','an','pack','packet','pkt','pcs','pc','tin','tins','btl','bottle','bag','box','ctn','carton','approx']);
+const _tokMemo = new Map();
 function nameTokens(s){
+  let r = _tokMemo.get(s); if(r) return r;
+  r = _nameTokens(s); if(_tokMemo.size>5000) _tokMemo.clear(); _tokMemo.set(s, r); return r;
+}
+function _nameTokens(s){
   return normalize(s).split(' ').filter(t=>t && !_MATCH_SIZE_RE.test(t) && !_MATCH_FILLER.has(t))
     .map(t=> t.length>4 && t.endsWith('ies') ? t.slice(0,-3)+'y' : t.length>3 && t.endsWith('es') && /(o|s|x|ch|sh)es$/.test(t) ? t.slice(0,-2) : t.length>3 && t.endsWith('s') ? t.slice(0,-1) : t);
 }
@@ -694,8 +713,17 @@ function newProductFromName(name, unit){
   return {id:uid(), name:String(name||'').replace(/\s+/g,' ').trim(), unit:String(unit||'').trim(), supplier:'', supplierId:'', warehouseId:'', sectionId:'', priority:999, active:true, notes:'', productionDate:'', expiryDate:'', image:''};
 }
 
-async function historyMatchScreen(){
-  const [hLines, products, warehouses, sections, mappings] = await Promise.all([getAll('historyLines'), getAll('products'), getAll('warehouses'), getAll('sections'), getAll('mappings')]);
+/* The screen keeps what it loaded in memory (_hm) and redraws from that after each choice, instead of
+   re-reading ~tens of thousands of lines and every product photo after every click. A choice itself
+   re-reads only the few lines of that one name, fresh from the database, before changing them. */
+let _hm = null;
+async function historyMatchScreen(keep){
+  if(!keep || !_hm){
+    $('#main').innerHTML = '<div class="topbar"><h1>Match product names</h1></div><p class="subtle">Loading your past orders…</p>';
+    const [lines, products, warehouses, sections, mappings] = await Promise.all([cachedAll('historyLines'), cachedAll('products'), getAll('warehouses'), getAll('sections'), cachedAll('mappings')]);
+    _hm = {lines, products, warehouses, sections, mappings};
+  }
+  const {lines:hLines, products, warehouses, sections} = _hm;
   const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
   const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
   const groups = new Map(), leftOut = new Map();
@@ -741,19 +769,29 @@ async function historyMatchScreen(){
         <button class="btn btn-ghost btn-sm" data-back="${esc(g.key)}">Bring back</button></div>`).join('')}</div></details>` : ''}
     <div style="margin-top:16px;"><a href="#/insights" class="btn btn-ghost">Done for now</a></div>`;
 
+  const freshLines = async key=>{
+    const ids = _hm.lines.filter(l=>l.descKey===key && !l.productId).map(l=>l.id);
+    return (await getMany('historyLines', ids)).filter(l=>!l.productId);
+  };
+  const applyToState = changed=>{ const m = new Map(changed.map(l=>[l.id,l])); _hm.lines = _hm.lines.map(l=>m.get(l.id)||l); };
   async function assign(key, product, quiet){
     const all = await getAll('mappings');
     if(!all.find(m=>m.excelDescNormalized===key)){
       const g = groups.get(key) || leftOut.get(key);
       await put('mappings', {id:uid(), excelDescNormalized:key, label:g?g.desc:key, productId:product.id});
     }
-    const fresh = (await getAll('historyLines')).filter(l=>l.descKey===key && !l.productId);
+    const fresh = await freshLines(key);
     for(const l of fresh){
       const b = toBaseQty(l.qty, l.unit, product);
       l.productId = product.id; l.baseQty=b.baseQty; l.baseUnit=b.baseUnit; l.baseOk=b.ok; l.skipped=false; l.synced=false;
     }
     await bulkPut('historyLines', fresh);
-    if(!quiet){ if(typeof syncNow==='function') syncNow(); historyMatchScreen(); }
+    applyToState(fresh);
+    if(!quiet){
+      if(typeof syncNow==='function') syncNow();
+      _hm.products = await cachedAll('products'); _hm.mappings = await cachedAll('mappings');   // picks up a product that was just created
+      historyMatchScreen(true);
+    }
     return fresh.length;
   }
   const list_ = $('#hm_list');
@@ -762,25 +800,25 @@ async function historyMatchScreen(){
     openProductPicker(null, products, whMap, secMap, picked=> assign(b.dataset.search, picked));
   });
   list_.querySelectorAll('[data-skip]').forEach(b=>b.onclick=async ()=>{
-    const fresh = (await getAll('historyLines')).filter(l=>l.descKey===b.dataset.skip && !l.productId);
+    const fresh = await freshLines(b.dataset.skip);
     fresh.forEach(l=>{ l.skipped = true; l.synced=false; });
-    await bulkPut('historyLines', fresh);
+    await bulkPut('historyLines', fresh); applyToState(fresh);
     if(typeof syncNow==='function') syncNow();
-    historyMatchScreen();
+    historyMatchScreen(true);
   });
   document.querySelectorAll('[data-back]').forEach(b=>b.onclick=async ()=>{
-    const fresh = (await getAll('historyLines')).filter(l=>l.descKey===b.dataset.back && !l.productId);
+    const fresh = await freshLines(b.dataset.back);
     fresh.forEach(l=>{ l.skipped = false; l.synced=false; });
-    await bulkPut('historyLines', fresh);
+    await bulkPut('historyLines', fresh); applyToState(fresh);
     if(typeof syncNow==='function') syncNow();
-    historyMatchScreen();
+    historyMatchScreen(true);
   });
 
   /* ---- add ONE name as a new product: the same full product form the order screen uses ---- */
   list_.querySelectorAll('[data-new]').forEach(b=>b.onclick=async ()=>{
     const key = b.dataset.new, g = groups.get(key);
     // a product with exactly this name already exists → use it, don't create a duplicate
-    const dup = (await getAll('products')).find(p=>normalize(p.name)===normalize(g.desc));
+    const dup = (await cachedAll('products')).find(p=>normalize(p.name)===normalize(g.desc));
     if(dup){ await assign(key, dup); showAlert(`A product called “${dup.name}” already existed, so the lines were matched to it instead of creating a duplicate.`, 'Matched to existing'); return; }
     const suppliers = await getAll('suppliers');
     const draft = {id:uid(), name:newProductFromName(g.desc,'').name, unit:topUnit(g), supplierId:'', warehouseId:'', sectionId:'', priority:999, active:true, notes:'', productionDate:'', expiryDate:'', image:''};
@@ -809,7 +847,7 @@ async function historyMatchScreen(){
       const picks = rows.filter(r=>document.querySelector(`[data-ck="${r.i}"]`).checked);
       if(!picks.length){ showAlert('Tick at least one name.'); return; }
       $('#na_go').disabled = true; $('#na_go').textContent = 'Adding…';
-      const existing = await getAll('products');
+      const existing = await cachedAll('products');
       const byName = new Map(existing.map(p=>[normalize(p.name), p]));
       let created=0, reused=0, lines=0;
       for(const r of picks){
@@ -823,7 +861,8 @@ async function historyMatchScreen(){
       closeModal();
       if(typeof syncNow==='function') syncNow();
       showAlert(`${created} new product${created===1?'':'s'} added${reused?` and ${reused} matched to products you already had`:''}; ${lines.toLocaleString()} past line${lines===1?'':'s'} matched. Fill in their details under Products → “Needs setup”.`, 'Done');
-      historyMatchScreen();
+      _hm.products = await cachedAll('products'); _hm.mappings = await cachedAll('mappings');
+      historyMatchScreen(true);
     };
   };
 
@@ -838,8 +877,9 @@ async function historyMatchScreen(){
       if(p){ lines += await assign(g.key, p, true); names++; }
     }
     if(typeof syncNow==='function') syncNow();
+    _hm.mappings = await cachedAll('mappings');
     showAlert(names ? `${names} name${names===1?'':'s'} matched automatically (${lines.toLocaleString()} lines).` : 'Nothing new matched. Names are matched automatically when they are an exact product name, a saved alias, or a very close spelling.', 'Re-check done');
-    historyMatchScreen();
+    historyMatchScreen(true);
   };
 }
 
@@ -855,10 +895,16 @@ const ANALYSIS = {            // the knobs — tuned later against real data
   concentration: 0.5
 };
 const DAYMS = 86400000;
-const _t = iso=> Date.parse(iso+'T00:00:00Z');
+const _tMemo = new Map();
+const _t = iso=>{ let v = _tMemo.get(iso); if(v===undefined){ v = Date.parse(iso+'T00:00:00Z'); _tMemo.set(iso, v); } return v; };   // same dates come up thousands of times
 const _median = a=>{ if(!a.length) return 0; const s=[...a].sort((x,y)=>x-y), m=s.length>>1; return s.length%2 ? s[m] : (s[m-1]+s[m])/2; };
 const _monthKey = iso=> iso.slice(0,7);
-function _monthLabel(key){ const [y,m]=key.split('-'); return new Date(Date.UTC(+y,+m-1,1)).toLocaleString('en',{month:'short', year:'2-digit', timeZone:'UTC'}); }
+const _monthLabelMemo = new Map();
+function _monthLabel(key){   // formatting a date is slow and every product asks for the same ~24 months
+  let v = _monthLabelMemo.get(key);
+  if(v===undefined){ const [y,m]=key.split('-'); v = new Date(Date.UTC(+y,+m-1,1)).toLocaleString('en',{month:'short', year:'2-digit', timeZone:'UTC'}); _monthLabelMemo.set(key, v); }
+  return v;
+}
 
 /* Pure function: everything the product page shows comes from here.
    lines = this product's history lines (already limited to ones with a usable quantity),
