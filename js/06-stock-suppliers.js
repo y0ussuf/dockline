@@ -1,13 +1,15 @@
 /* ==================================== STOCK ==================================== */
 function openStockEditModal(product, onSaved){
   showModal(`
-    <h3>Stock — ${esc(product.name)}</h3>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+      <h3 style="flex:1; min-width:0; margin:0;">Stock — ${esc(product.name)}</h3>
+      <button type="button" class="iconbtn" id="stk_editprod" title="Edit product" aria-label="Edit product">✎</button>
+    </div>
     <p class="subtle">Leave "Stock on hand" blank to stop tracking this product again.</p>
     <div class="row2">
       <div class="field"><label>Stock on hand</label><input type="number" id="stk_qty" step="any" placeholder="not tracked" value="${product.stockQty===''||product.stockQty==null?'':esc(product.stockQty)}"></div>
       <div class="field"><label>Low stock limit</label><input type="number" id="stk_limit" step="any" placeholder="0" value="${product.lowStockLimit===''||product.lowStockLimit==null?'':esc(product.lowStockLimit)}"></div>
     </div>
-    <button type="button" class="btn btn-ghost btn-sm" id="stk_editprod" style="margin-top:4px;">✎ Edit product (name, photo, dates, location…)</button>
     <div style="display:flex; gap:10px; margin-top:14px;">
       <button class="btn btn-signal" id="stk_save" style="flex:1;">Save</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -187,7 +189,7 @@ route('stock', async (parts)=>{
         </div>
       </div>
       <p class="subtle" style="margin-top:-10px;">Only products with a stock number entered are tracked — the rest are left exactly alone. Stock reduces automatically when an order finishes.</p>
-      <div class="field" style="max-width:360px;"><input type="search" id="stkSearch" placeholder="Search…" enterkeyhint="search" autocomplete="off" value="${esc(window.__stockSearch)}"></div>
+      <div class="field" style="max-width:360px;"><input type="text" id="stkSearch" placeholder="Search…" enterkeyhint="search" autocomplete="off" value="${esc(window.__stockSearch)}"></div>
       <div class="tag-row">
         <button class="chip ${window.__stockFilter==='low'?'active':''}" data-f="low">⚠ Low stock (${low.length})</button>
         <button class="chip ${window.__stockFilter==='tracked'?'active':''}" data-f="tracked">All tracked (${tracked.length})</button>
@@ -206,7 +208,6 @@ route('stock', async (parts)=>{
     const apply = ()=>{ clearTimeout(stkDebounce); window.__stockSearch = $('#stkSearch').value; refreshList(); };
     $('#stkSearch').oninput = ()=>{ clearTimeout(stkDebounce); stkDebounce = setTimeout(apply, 600); };
     $('#stkSearch').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); apply(); e.target.blur(); } };
-    $('#stkSearch').onsearch = apply; // the little ✕ inside a search box
     $('#main').querySelector('.tag-row').onclick = e=>{
       const b = e.target.closest('[data-f]'); if(!b) return;
       window.__stockFilter = b.dataset.f;
