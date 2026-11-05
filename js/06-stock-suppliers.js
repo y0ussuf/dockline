@@ -7,10 +7,20 @@ function openStockEditModal(product, onSaved){
       <div class="field"><label>Stock on hand</label><input type="number" id="stk_qty" step="any" placeholder="not tracked" value="${product.stockQty===''||product.stockQty==null?'':esc(product.stockQty)}"></div>
       <div class="field"><label>Low stock limit</label><input type="number" id="stk_limit" step="any" placeholder="0" value="${product.lowStockLimit===''||product.lowStockLimit==null?'':esc(product.lowStockLimit)}"></div>
     </div>
-    <div style="display:flex; gap:10px; margin-top:10px;">
+    <button type="button" class="btn btn-ghost btn-sm" id="stk_editprod" style="margin-top:4px;">✎ Edit product (name, photo, dates, location…)</button>
+    <div style="display:flex; gap:10px; margin-top:14px;">
       <button class="btn btn-signal" id="stk_save" style="flex:1;">Save</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
     </div>`);
+  // opens the full product form (the same one as on the Products page) without leaving; any stock numbers typed
+  // so far come along, and saving there saves everything together
+  $('#stk_editprod').onclick = async ()=>{
+    const draft = Object.assign({}, product);
+    if($('#stk_qty').value.trim()!=='') draft.stockQty = parseFloat($('#stk_qty').value); else draft.stockQty = '';
+    if($('#stk_limit').value.trim()!=='') draft.lowStockLimit = parseFloat($('#stk_limit').value); else draft.lowStockLimit = '';
+    const [warehouses, sections, suppliers] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
+    openProductForm(draft, warehouses, sections, suppliers, ()=>{ onSaved(); });
+  };
   $('#stk_save').onclick = async ()=>{
     product.stockQty = $('#stk_qty').value.trim()==='' ? '' : parseFloat($('#stk_qty').value);
     product.lowStockLimit = $('#stk_limit').value.trim()==='' ? '' : parseFloat($('#stk_limit').value);
@@ -119,7 +129,7 @@ route('stock', async (parts)=>{
     return [wh?wh.name:'', sec?sec.name:''].filter(Boolean).join(' / ') || 'Unassigned';
   }
 
-  function draw(){
+  const partsOf = ()=>{
     const tracked = products.filter(isStockTracked);
     const low = tracked.filter(isLowStock);
     const untracked = products.filter(p=>!isStockTracked(p));
@@ -135,24 +145,9 @@ route('stock', async (parts)=>{
       }
       return a.name.localeCompare(b.name);
     });
-
-    $('#main').innerHTML = `
-      <a href="#/warehouse" class="subtle" style="display:inline-block; margin-bottom:10px; text-decoration:none;">‹ Warehouse management</a>
-      <div class="topbar"><h1>Stock</h1>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-ghost" id="stkExportLow" ${low.length?'':'disabled'}>⬇ Export low stock (${low.length})</button>
-          <button class="btn btn-signal" id="stkTrackNew">+ Start tracking a product</button>
-        </div>
-      </div>
-      <p class="subtle" style="margin-top:-10px;">Only products with a stock number entered are tracked — the rest are left exactly alone. Stock reduces automatically when an order finishes.</p>
-      <div class="field" style="max-width:360px;"><input type="text" id="stkSearch" placeholder="Search…" value="${esc(window.__stockSearch)}"></div>
-      <div class="tag-row">
-        <button class="chip ${window.__stockFilter==='low'?'active':''}" data-f="low">⚠ Low stock (${low.length})</button>
-        <button class="chip ${window.__stockFilter==='tracked'?'active':''}" data-f="tracked">All tracked (${tracked.length})</button>
-        <button class="chip ${window.__stockFilter==='untracked'?'active':''}" data-f="untracked">Not tracked (${untracked.length})</button>
-      </div>
-      <div class="card" id="stkList">
-        ${list.length ? list.map(p=>`
+    return {tracked, low, untracked, list};
+  };
+  const rowsHtml = list => list.length ? list.map(p=>`
           <div class="list-row">
             <div class="thumb">${p.image?`<img src="${p.image}" loading="lazy" decoding="async">`:'📦'}</div>
             <div style="flex:1; min-width:0;">
@@ -166,11 +161,39 @@ route('stock', async (parts)=>{
               </div>` : ''}
             <button class="btn btn-ghost btn-sm" data-edit="${p.id}">${isStockTracked(p)?'Update':'Set stock'}</button>
           </div>`).join('') : `<div class="empty"><div class="ic">▣</div>${
+            window.__stockSearch ? 'No product matches your search.' :
             window.__stockFilter==='low' ? 'Nothing is low right now.' :
             window.__stockFilter==='tracked' ? 'No products are tracked yet — use "Start tracking a product" or set a stock number from a product’s edit form.' :
             'Every active product is tracked.'
-          }</div>`}
-      </div>`;
+          }</div>`;
+  function bindRows(){
+    $('#stkList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{
+      const p = products.find(x=>x.id===b.dataset.edit);
+      openStockEditModal(p, ()=>{ routes['stock']([]); });
+    });
+  }
+  /* only the list is redrawn while typing — rebuilding the page replaced the search box itself, which is
+     what closed the keyboard after every letter */
+  function refreshList(){ $('#stkList').innerHTML = rowsHtml(partsOf().list); bindRows(); }
+
+  function draw(){
+    const {tracked, low, untracked, list} = partsOf();
+    $('#main').innerHTML = `
+      <a href="#/warehouse" class="subtle" style="display:inline-block; margin-bottom:10px; text-decoration:none;">‹ Warehouse management</a>
+      <div class="topbar"><h1>Stock</h1>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-ghost" id="stkExportLow" ${low.length?'':'disabled'}>⬇ Export low stock (${low.length})</button>
+          <button class="btn btn-signal" id="stkTrackNew">+ Start tracking a product</button>
+        </div>
+      </div>
+      <p class="subtle" style="margin-top:-10px;">Only products with a stock number entered are tracked — the rest are left exactly alone. Stock reduces automatically when an order finishes.</p>
+      <div class="field" style="max-width:360px;"><input type="search" id="stkSearch" placeholder="Search…" enterkeyhint="search" autocomplete="off" value="${esc(window.__stockSearch)}"></div>
+      <div class="tag-row">
+        <button class="chip ${window.__stockFilter==='low'?'active':''}" data-f="low">⚠ Low stock (${low.length})</button>
+        <button class="chip ${window.__stockFilter==='tracked'?'active':''}" data-f="tracked">All tracked (${tracked.length})</button>
+        <button class="chip ${window.__stockFilter==='untracked'?'active':''}" data-f="untracked">Not tracked (${untracked.length})</button>
+      </div>
+      <div class="card" id="stkList">${rowsHtml(list)}</div>`;
 
     $('#stkTrackNew').onclick = ()=>{
       openProductPicker(null, products, whMap, secMap, (picked)=>{
@@ -178,21 +201,18 @@ route('stock', async (parts)=>{
       });
     };
     if(low.length) $('#stkExportLow').onclick = ()=> exportLowStockExcel(low, supMap);
+    // wait until you stop typing (not letter by letter); Enter searches straight away
     let stkDebounce;
-    $('#stkSearch').oninput = e=>{
-      const val = e.target.value;
-      clearTimeout(stkDebounce);
-      stkDebounce = setTimeout(()=>{ window.__stockSearch = val; draw(); }, 180);
-    };
+    const apply = ()=>{ clearTimeout(stkDebounce); window.__stockSearch = $('#stkSearch').value; refreshList(); };
+    $('#stkSearch').oninput = ()=>{ clearTimeout(stkDebounce); stkDebounce = setTimeout(apply, 600); };
+    $('#stkSearch').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); apply(); e.target.blur(); } };
+    $('#stkSearch').onsearch = apply; // the little ✕ inside a search box
     $('#main').querySelector('.tag-row').onclick = e=>{
       const b = e.target.closest('[data-f]'); if(!b) return;
       window.__stockFilter = b.dataset.f;
       draw();
     };
-    $('#stkList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{
-      const p = products.find(x=>x.id===b.dataset.edit);
-      openStockEditModal(p, ()=>{ routes['stock']([]); });
-    });
+    bindRows();
   }
   draw();
 });
