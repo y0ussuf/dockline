@@ -120,46 +120,206 @@ route('receiving', async (parts)=>{
 });
 
 async function deliveryListScreen(){
-  const [invoices, receipts] = await Promise.all([getAll('receivingInvoices'), getAll('productReceipts')]);
-  const counts = {}; receipts.forEach(r=>{ if(r.invoiceId) counts[r.invoiceId]=(counts[r.invoiceId]||0)+1; });
+  const [invoices, receipts, suppliers] = await Promise.all([
+    getAll('receivingInvoices'),
+    getAll('productReceipts'),
+    getAll('suppliers')
+  ]);
+  const counts = {};
+  const qtyByInv = {};
+  receipts.forEach(r=>{
+    if(r.invoiceId){
+      counts[r.invoiceId] = (counts[r.invoiceId]||0) + 1;
+      qtyByInv[r.invoiceId] = (qtyByInv[r.invoiceId]||0) + (parseFloat(r.qty)||0);
+    }
+  });
+
+  const nowMonth = todayISO().slice(0,7);
+  const thisMonthInvoices = invoices.filter(i=> (i.receivedAt||'').startsWith(nowMonth));
+  const totalUnitsThisMonth = receipts
+    .filter(r=> (r.receivedAt||'').startsWith(nowMonth))
+    .reduce((sum, r)=> sum + (parseFloat(r.qty)||0), 0);
+  const uniqueSuppliersCount = new Set(invoices.map(i=> i.supplierId).filter(Boolean)).size;
+
   const legacy = receipts.filter(r=>!r.invoiceId);
-  const entries = invoices.map(i=>({kind:'inv', date:i.receivedAt||'', ts:i.createdAt||'', i, n:counts[i.id]||i.lineCount||0}))
-    .concat(legacy.map(r=>({kind:'old', date:r.receivedAt||'', ts:r.receivedAt||'', r})))
+  const entries = invoices.map(i=>({kind:'inv', date:i.receivedAt||'', ts:i.createdAt||'', i, n:counts[i.id]||i.lineCount||0, totalQty:qtyByInv[i.id]||0}))
+    .concat(legacy.map(r=>({kind:'old', date:r.receivedAt||'', ts:r.receivedAt||'', r, n:1, totalQty:parseFloat(r.qty)||0})))
     .sort((a,b)=>(b.date.localeCompare(a.date))||(String(b.ts).localeCompare(String(a.ts))));
   const draft = loadDraft();
+
+  const supOptions = suppliers.slice().sort((a,b)=>a.name.localeCompare(b.name))
+    .map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Product receiving</h1></div>
-    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-      <a href="#/receiving/new" class="btn btn-signal">+ New delivery</a>
-      <a href="#/warehouse" class="btn btn-ghost">Back</a>
+    <div class="topbar">
+      <div>
+        <h1>Goods Inward / Receiving</h1>
+        <div class="subtle">Record inbound stock receipts, track batches & manage supplier delivery notes</div>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a href="#/receiving/new" class="btn btn-signal" id="rcNewBtn"><b>+</b> Receive Delivery</a>
+        <a href="#/warehouse" class="btn btn-ghost">Warehouses</a>
+      </div>
     </div>
-    ${draft && draft.lines && draft.lines.length ? `<div class="card" style="border:1.5px solid var(--warn); margin-bottom:14px;">
-      <b>Unfinished delivery</b> <span class="subtle">· ${draft.lines.length} item${draft.lines.length===1?'':'s'}${draft.supplierName?' · '+esc(draft.supplierName):''}</span>
-      <div style="margin-top:8px; display:flex; gap:10px;"><a href="#/receiving/new" class="btn btn-ghost">Continue</a><button class="btn btn-ghost" id="rcDropDraft">Discard</button></div></div>` : ''}
-    <div class="field"><input type="text" id="rcSearch" placeholder="Search supplier, invoice no. or product…"></div>
-    <div id="rcList"></div>`;
-  const dd = $('#rcDropDraft'); if(dd) dd.onclick = ()=>{ clearDraft(); deliveryListScreen(); };
-  const prodByInv = {}; receipts.forEach(r=>{ if(r.invoiceId) (prodByInv[r.invoiceId]=prodByInv[r.invoiceId]||[]).push(normalize(r.productName)); });
-  function draw(q){
+
+    <!-- Receiving KPI Summary Strip -->
+    <div class="rcv-kpi-grid">
+      <div class="rcv-kpi-card">
+        <div class="rcv-kpi-icon orange">🚚</div>
+        <div class="rcv-kpi-info">
+          <div class="rcv-kpi-val">${thisMonthInvoices.length}</div>
+          <div class="rcv-kpi-lbl">Deliveries This Month</div>
+        </div>
+      </div>
+      <div class="rcv-kpi-card">
+        <div class="rcv-kpi-icon green">📦</div>
+        <div class="rcv-kpi-info">
+          <div class="rcv-kpi-val">${round2(totalUnitsThisMonth)}</div>
+          <div class="rcv-kpi-lbl">Units Received (This Month)</div>
+        </div>
+      </div>
+      <div class="rcv-kpi-card">
+        <div class="rcv-kpi-icon blue">🏢</div>
+        <div class="rcv-kpi-info">
+          <div class="rcv-kpi-val">${uniqueSuppliersCount || suppliers.length}</div>
+          <div class="rcv-kpi-lbl">Active Suppliers</div>
+        </div>
+      </div>
+    </div>
+
+    ${draft && draft.lines && draft.lines.length ? `
+      <div class="card" style="border:1.5px solid var(--warn); background:var(--warn-bg); margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div>
+          <b style="color:var(--warn); font-size:1.02rem;">⚠️ Unsaved Goods Inward Draft in Progress</b>
+          <div class="subtle" style="margin-top:2px;">
+            ${draft.lines.length} item line${draft.lines.length===1?'':'s'}${draft.supplierName?' · '+esc(draft.supplierName):''}${draft.invoiceNo?' · Doc #'+esc(draft.invoiceNo):''}
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <a href="#/receiving/new" class="btn btn-signal btn-sm">Resume Intake</a>
+          <button class="btn btn-ghost btn-sm" id="rcDropDraft">Discard Draft</button>
+        </div>
+      </div>` : ''}
+
+    <!-- Filtering & Search Tools -->
+    <div class="rcv-filter-bar">
+      <div class="search-box">
+        <input type="text" id="rcSearch" placeholder="🔍 Search supplier, invoice #, batch #, or product…">
+      </div>
+      <select id="rcSupFilter">
+        <option value="">All Suppliers</option>
+        ${supOptions}
+      </select>
+      <select id="rcDateFilter">
+        <option value="all">All Dates</option>
+        <option value="month" selected>This Month (${nowMonth})</option>
+        <option value="recent">Last 7 Days</option>
+      </select>
+    </div>
+
+    <!-- Structured Delivery Register -->
+    <div class="rcv-table-card">
+      <div id="rcList"></div>
+    </div>`;
+
+  const dd = $('#rcDropDraft');
+  if(dd) dd.onclick = ()=>{ clearDraft(); deliveryListScreen(); };
+
+  const prodByInv = {};
+  const batchByInv = {};
+  receipts.forEach(r=>{
+    if(r.invoiceId){
+      (prodByInv[r.invoiceId] = prodByInv[r.invoiceId] || []).push(normalize(r.productName));
+      if(r.batchNo) (batchByInv[r.invoiceId] = batchByInv[r.invoiceId] || []).push(normalize(r.batchNo));
+    }
+  });
+
+  function draw(){
+    const q = ($('#rcSearch') ? $('#rcSearch').value : '').trim();
+    const supId = $('#rcSupFilter') ? $('#rcSupFilter').value : '';
+    const dateRange = $('#rcDateFilter') ? $('#rcDateFilter').value : 'all';
     const nq = normalize(q);
+
+    const sevenDaysAgo = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+
     const rows = entries.filter(e=>{
+      // Date filter
+      if(dateRange === 'month' && !e.date.startsWith(nowMonth)) return false;
+      if(dateRange === 'recent' && e.date < sevenDaysAgo) return false;
+
+      // Supplier filter
+      if(supId){
+        if(e.kind==='inv' && e.i.supplierId !== supId) return false;
+        if(e.kind==='old' && e.r.supplierId !== supId) return false;
+      }
+
+      // Text query
       if(!nq) return true;
-      if(e.kind==='inv') return normalize((e.i.supplierName||'')+' '+(e.i.invoiceNo||'')).includes(nq) || (prodByInv[e.i.id]||[]).some(n=>n.includes(nq));
-      return normalize((e.r.productName||'')+' '+(e.r.supplierName||'')).includes(nq);
+      if(e.kind==='inv'){
+        const matchHead = normalize((e.i.supplierName||'')+' '+(e.i.invoiceNo||'')).includes(nq);
+        const matchProd = (prodByInv[e.i.id]||[]).some(n=>n.includes(nq));
+        const matchBatch = (batchByInv[e.i.id]||[]).some(b=>b.includes(nq));
+        return matchHead || matchProd || matchBatch;
+      }
+      return normalize((e.r.productName||'')+' '+(e.r.supplierName||'')+' '+(e.r.batchNo||'')).includes(nq);
     });
-    $('#rcList').innerHTML = rows.map(e=> e.kind==='inv' ? `
-      <a class="bt-row" href="#/receiving/${e.i.id}" style="margin-bottom:8px;">
-        <div style="flex:1;"><b>${esc(e.i.supplierName||'Supplier')}</b>
-          <div class="subtle">${fmtDate(e.i.receivedAt)}${e.i.invoiceNo?' · No. '+esc(e.i.invoiceNo):''}</div></div>
-        <span class="badge">${e.n} item${e.n===1?'':'s'}</span></a>` : `
-      <div class="bt-row" style="margin-bottom:8px;"><div style="flex:1;"><b>${esc(e.r.productName)}</b>
-        <div class="subtle">${fmtDate(e.r.receivedAt)} · ${esc(e.r.supplierName||'')} · earlier single entry</div></div>
-        <span class="badge">${esc(e.r.qty)} ${esc(e.r.unit||'')}</span>
-        <button class="iconbtn" data-old="${e.r.id}" title="Delete">✕</button></div>`).join('')
-      || `<p class="subtle">${entries.length?'Nothing matches.':'No deliveries yet. Tap “+ New delivery” when a supplier delivers.'}</p>`;
-    $('#rcList').querySelectorAll('[data-old]').forEach(b=>b.onclick = ()=>{
+
+    if(!rows.length){
+      $('#rcList').innerHTML = `
+        <div style="text-align:center; padding:44px 20px; color:var(--ink-soft);">
+          <div style="font-size:2.4rem; margin-bottom:8px;">📦</div>
+          <b>${entries.length ? 'No deliveries match your search/filter.' : 'No goods received yet.'}</b>
+          <div style="font-size:.85rem; margin-top:4px;">Tap “+ Receive Delivery” to log your first inbound shipment.</div>
+        </div>`;
+      return;
+    }
+
+    $('#rcList').innerHTML = rows.map(e=>{
+      if(e.kind === 'inv'){
+        return `
+          <a class="rcv-row" href="#/receiving/${e.i.id}">
+            <div style="width:140px; flex-shrink:0;">
+              <span class="rcv-inv-badge">${e.i.invoiceNo ? esc(e.i.invoiceNo) : 'NO-DOC'}</span>
+            </div>
+            <div style="flex:1; min-width:200px;">
+              <div class="rcv-supplier-name">${esc(e.i.supplierName || 'Unknown Supplier')}</div>
+              <div class="rcv-meta">
+                <span>📅 Received: <b>${fmtDate(e.i.receivedAt)}</b></span>
+                ${e.i.note ? `<span>· <i>${esc(e.i.note)}</i></span>` : ''}
+              </div>
+            </div>
+            <div style="text-align:right; flex-shrink:0;">
+              <span class="rcv-line-count">${e.n} item line${e.n===1?'':'s'}</span>
+              <div class="subtle" style="font-size:.8rem; margin-top:4px;"><b>${round2(e.totalQty)}</b> total qty</div>
+            </div>
+            <div style="color:var(--ink-soft); font-size:1.2rem; padding-left:8px;">›</div>
+          </a>`;
+      } else {
+        return `
+          <div class="rcv-row">
+            <div style="width:140px; flex-shrink:0;">
+              <span class="rcv-inv-badge" style="border-style:dashed;">LEGACY</span>
+            </div>
+            <div style="flex:1; min-width:200px;">
+              <div class="rcv-supplier-name">${esc(e.r.productName)}</div>
+              <div class="rcv-meta">
+                <span>📅 ${fmtDate(e.r.receivedAt)}</span>
+                <span>· Supplier: ${esc(e.r.supplierName||'—')}</span>
+                <span>· <i>Single manual receipt</i></span>
+              </div>
+            </div>
+            <div style="text-align:right; flex-shrink:0;">
+              <span class="badge b-from_supplier">${esc(e.r.qty)} ${esc(e.r.unit||'')}</span>
+            </div>
+            <button class="iconbtn" data-old="${e.r.id}" title="Delete entry" style="margin-left:6px; color:var(--danger);">✕</button>
+          </div>`;
+      }
+    }).join('');
+
+    $('#rcList').querySelectorAll('[data-old]').forEach(b=>b.onclick = (ev)=>{
+      ev.stopPropagation();
       const r = legacy.find(x=>x.id===b.dataset.old);
-      showConfirm(`Delete this entry? “${r.productName}” ${r.qty} ${r.unit||''} will be taken back off stock if it was tracked.`, async ()=>{
+      showConfirm(`Delete this entry? “${r.productName}” ${r.qty} ${r.unit||''} will be taken back off stock if tracked.`, async ()=>{
         const p = await getOne('products', r.productId);
         const d = parseFloat(r.stockDelta!=null ? r.stockDelta : r.qty);
         if(p && isStockTracked(p) && d){ p.stockQty = round2(parseFloat(p.stockQty)-d); await put('products', p); }
@@ -168,32 +328,137 @@ async function deliveryListScreen(){
       });
     });
   }
-  draw('');
-  let t; $('#rcSearch').addEventListener('input', e=>{ clearTimeout(t); const v=e.target.value; t=setTimeout(()=>draw(v),400); });
+
+  draw();
+
+  let t;
+  $('#rcSearch').addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(draw, 250); });
+  $('#rcSupFilter').addEventListener('change', draw);
+  $('#rcDateFilter').addEventListener('change', draw);
 }
 
 async function deliveryDetailScreen(id){
-  const [inv, receipts] = await Promise.all([getOne('receivingInvoices', id), getAll('productReceipts')]);
+  const [inv, receipts, products] = await Promise.all([
+    getOne('receivingInvoices', id),
+    getAll('productReceipts'),
+    slimProducts()
+  ]);
   if(!inv){ location.hash='#/receiving'; return; }
+  const prodMap = new Map(products.map(p=>[p.id,p]));
   const lines = receipts.filter(r=>r.invoiceId===id).sort((a,b)=>(a.lineNo||0)-(b.lineNo||0));
+  const totalReceivedQty = lines.reduce((acc,l)=> acc + (parseFloat(l.qty)||0), 0);
+
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Delivery</h1></div>
-    <div class="dv-card">
-      <b style="font-size:1.25rem; font-family:var(--font-d);">${esc(inv.supplierName||'')}</b>
-      <div class="subtle">Received ${fmtDate(inv.receivedAt)}${inv.invoiceNo?' · Invoice / note no. '+esc(inv.invoiceNo):''}</div>
-      ${inv.note?`<div style="margin-top:6px;">${esc(inv.note)}</div>`:''}
+    <div class="topbar">
+      <div>
+        <div class="subtle" style="font-weight:600; text-transform:uppercase; letter-spacing:.05em; font-size:.76rem; color:var(--sea);">
+          Goods Inward Voucher
+        </div>
+        <h1>Receipt Note: ${inv.invoiceNo ? esc(inv.invoiceNo) : id.slice(0,8).toUpperCase()}</h1>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-ghost" onclick="window.print()">🖨️ Print Note</button>
+        <a href="#/receiving" class="btn btn-ghost">Back to Register</a>
+        <button class="btn btn-danger" id="dvDel">Delete Inward</button>
+      </div>
     </div>
-    <div class="dv-card" style="overflow-x:auto; padding:6px 10px;">
-      <table class="dv-table">
-        <thead><tr><th>No.</th><th>Description</th><th>Qty</th><th>Unit</th><th>Prod.</th><th>Expiry</th><th>Batch</th></tr></thead>
-        <tbody>${lines.map((l,i)=>`<tr><td>${l.lineNo||i+1}</td><td>${esc(l.productName)}</td><td>${esc(l.qty)}</td><td>${esc(l.unit||'')}</td><td>${l.productionDate?fmtDate(l.productionDate):'—'}</td><td>${l.expiryDate?fmtDate(l.expiryDate):'—'}</td><td>${esc(l.batchNo||'—')}</td></tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="subtle">Quantities were added to stock for products that have stock tracking on.</p>
-    <div style="display:flex; gap:10px;"><a href="#/receiving" class="btn btn-ghost">Back</a><button class="btn btn-danger" id="dvDel">Delete delivery</button></div>`;
-  $('#dvDel').onclick = ()=>showConfirm('Delete this whole delivery? The quantities will be taken back off stock.', async ()=>{
-    try{ await deleteDelivery(id); }catch(e){ showAlert('Could not delete: '+e.message); return; }
-    location.hash='#/receiving'; render();
+
+    <!-- Official Goods Received Note Document -->
+    <div class="grn-card">
+      <div class="grn-header">
+        <div>
+          <div class="grn-title">${esc(inv.supplierName || 'General Supplier')}</div>
+          <div class="subtle" style="font-size:.9rem;">
+            Document Ref: <b>${inv.invoiceNo ? esc(inv.invoiceNo) : 'N/A'}</b>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <span class="badge b-completed" style="font-size:.85rem; padding:5px 12px;">✔ Posted to Inventory</span>
+          <div class="subtle" style="font-size:.78rem; margin-top:4px;">Recorded ${fmtDate(inv.createdAt || inv.receivedAt)}</div>
+        </div>
+      </div>
+
+      <div class="grn-meta-grid">
+        <div class="grn-meta-item">
+          <small>Date Received</small>
+          <b>${fmtDate(inv.receivedAt)}</b>
+        </div>
+        <div class="grn-meta-item">
+          <small>Total Product Lines</small>
+          <b>${lines.length} Line${lines.length===1?'':'s'}</b>
+        </div>
+        <div class="grn-meta-item">
+          <small>Total Quantity In</small>
+          <b>${round2(totalReceivedQty)} Units</b>
+        </div>
+        <div class="grn-meta-item">
+          <small>Dock / Internal Notes</small>
+          <b>${inv.note ? esc(inv.note) : '—'}</b>
+        </div>
+      </div>
+
+      <!-- Itemized Table -->
+      <div style="overflow-x:auto;">
+        <table class="dv-table">
+          <thead>
+            <tr>
+              <th style="width:40px;">#</th>
+              <th>Product / Description</th>
+              <th style="text-align:right;">Qty In</th>
+              <th>Unit</th>
+              <th>Stock Impact</th>
+              <th>Production</th>
+              <th>Expiry Date</th>
+              <th>Batch / Lot #</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lines.map((l, i)=>{
+              const p = prodMap.get(l.productId);
+              const tracked = p ? isStockTracked(p) : true;
+              const delta = l.stockDelta != null ? l.stockDelta : l.qty;
+              return `
+                <tr>
+                  <td><b>${l.lineNo || i+1}</b></td>
+                  <td>
+                    <b>${esc(l.productName)}</b>
+                    ${p && p.sku ? `<div class="subtle" style="font-size:.78rem;">SKU: ${esc(p.sku)}</div>` : ''}
+                  </td>
+                  <td style="text-align:right; font-weight:700; font-size:1rem;">${esc(l.qty)}</td>
+                  <td>${esc(l.unit || 'units')}</td>
+                  <td>
+                    ${tracked
+                      ? `<span class="badge b-completed">+${round2(delta)} to stock</span>`
+                      : `<span class="subtle" style="font-size:.8rem;">Non-tracked</span>`}
+                  </td>
+                  <td>${l.productionDate ? fmtDate(l.productionDate) : '—'}</td>
+                  <td>${l.expiryDate ? fmtDate(l.expiryDate) : '—'}</td>
+                  <td>${l.batchNo ? `<code style="font-weight:700; background:var(--paper-dim); padding:2px 6px; border-radius:4px;">${esc(l.batchNo)}</code>` : '—'}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:28px; padding-top:16px; border-top:1px dashed var(--line); display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; font-size:.85rem; color:var(--ink-soft);">
+        <div>
+          Dockline Warehouse Management System · Goods Inward Post
+        </div>
+        <div>
+          Received & Verified By: __________________________
+        </div>
+      </div>
+    </div>`;
+
+  $('#dvDel').onclick = ()=>showConfirm('Are you sure you want to delete this delivery? All inventory increases will be reversed immediately.', async ()=>{
+    try{
+      await deleteDelivery(id);
+    } catch(e){
+      showAlert('Could not delete: ' + e.message);
+      return;
+    }
+    location.hash = '#/receiving';
+    render();
   });
 }
 
@@ -207,114 +472,299 @@ async function newDeliveryScreen(){
   S.lines.forEach(l=>{ if(!l.key) l.key = uid(); });
   const NEW = '__newsup__';
 
-  function persist(){ const s = suppliers.find(x=>x.id===S.supplierId); S.supplierName = s?s.name:''; saveDraft(S); }
+  function persist(){
+    const s = suppliers.find(x=>x.id===S.supplierId);
+    S.supplierName = s ? s.name : '';
+    saveDraft(S);
+    updateSummary();
+  }
+
   function stockHint(l){
-    const p = prodMap.get(l.productId); if(!p) return `<span style="color:var(--danger,#c00);">Product no longer exists</span>`;
-    if(!isStockTracked(p)) return `<span class="subtle">Stock not tracked — history only</span>`;
-    const q = parseFloat(l.qty); if(isNaN(q)||q<=0) return `<span class="subtle">Stock now ${esc(p.stockQty)} ${esc(p.unit||'')}</span>`;
+    const p = prodMap.get(l.productId);
+    if(!p) return `<span style="color:var(--danger,#c00);">⚠ Product no longer exists</span>`;
+    if(!isStockTracked(p)) return `<span class="subtle">ℹ Stock tracking is disabled for this product</span>`;
+    const q = parseFloat(l.qty);
+    if(isNaN(q) || q<=0) return `<span class="subtle">Current inventory: <b>${esc(p.stockQty)} ${esc(p.unit||'')}</b></span>`;
     const d = stockDeltaFor(p, q, l.unit);
     if(d.error) return `<span style="color:var(--danger,#c00);">⚠ ${esc(d.error)}</span>`;
-    return `<span class="subtle">Stock ${esc(p.stockQty)} → <b>${round2(parseFloat(p.stockQty)+d.delta)}</b> ${esc(p.unit||'')}</span>`;
+    return `<span style="color:var(--success); font-weight:600;">Current: ${esc(p.stockQty)} → New Stock: ${round2(parseFloat(p.stockQty)+d.delta)} ${esc(p.unit||'')} (+${d.delta})</span>`;
   }
+
   function autoExpiry(l){
     const p = prodMap.get(l.productId);
     if(!l.expiryTouched && p && p.expiryMode==='shelf' && l.productionDate && p.expiryShelfAmount)
       l.expiryDate = addDuration(l.productionDate, parseFloat(p.expiryShelfAmount), p.expiryShelfUnit||'months');
   }
-  function lineHtml(l,i){ return `<div class="dv-card" data-k="${l.key}">
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <span class="dv-no">${i+1}</span><b style="flex:1;">${esc(l.productName)}</b>
-        <button class="iconbtn" data-act="change" title="Change product">✎</button>
-        <button class="iconbtn" data-act="rm" title="Remove">✕</button></div>
-      <div class="row2">
-        <div class="field"><label>Quantity</label><input type="number" step="any" inputmode="decimal" data-f="qty" value="${esc(l.qty)}"></div>
-        <div class="field"><label>Unit</label><input type="text" data-f="unit" value="${esc(l.unit)}"></div>
-      </div>
-      <div class="row2">
-        <div class="field"><label>Production date</label><input type="date" data-f="productionDate" value="${esc(l.productionDate||'')}"></div>
-        <div class="field"><label>Expiry date</label><input type="date" data-f="expiryDate" value="${esc(l.expiryDate||'')}"></div>
-      </div>
-      <div class="field"><label>Batch / lot no.</label><input type="text" data-f="batchNo" value="${esc(l.batchNo||'')}"></div>
-      <div data-hint>${stockHint(l)}</div></div>`; }
+
+  function lineHtml(l, i){
+    const p = prodMap.get(l.productId);
+    const loc = p && (p.sectionId || p.warehouseId) ? `📍 ${whMap[p.warehouseId]?.name || ''}${secMap[p.sectionId] ? ' / '+secMap[p.sectionId].name : ''}` : '';
+    const hasBatchTracking = p && p.trackBatches;
+
+    return `
+      <div class="rcv-item-card" data-k="${l.key}">
+        <div class="rcv-item-top">
+          <div style="display:flex; align-items:center; gap:10px; min-width:0; flex:1;">
+            <span class="rcv-item-index">${i+1}</span>
+            <div style="min-width:0;">
+              <b style="font-size:1.05rem; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(l.productName)}</b>
+              <div class="subtle" style="font-size:.8rem;">${p && p.sku ? 'SKU: '+esc(p.sku)+' · ' : ''}${loc}</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-ghost btn-sm" data-act="change" title="Change product">Change</button>
+            <button class="btn btn-ghost btn-sm" data-act="rm" title="Remove line" style="color:var(--danger);">✕</button>
+          </div>
+        </div>
+
+        <div class="rcv-item-grid">
+          <div class="field" style="margin-bottom:0;">
+            <label>Quantity Received *</label>
+            <input type="number" step="any" inputmode="decimal" data-f="qty" placeholder="e.g. 100" value="${esc(l.qty)}">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Unit of Measure</label>
+            <input type="text" data-f="unit" placeholder="e.g. pcs, cartons" value="${esc(l.unit)}">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Batch / Lot # ${hasBatchTracking ? '<span style="color:var(--sea);">●</span>' : ''}</label>
+            <input type="text" data-f="batchNo" placeholder="e.g. B-2026-001" value="${esc(l.batchNo||'')}">
+          </div>
+        </div>
+
+        <div class="rcv-batch-grid">
+          <div class="field" style="margin-bottom:0;">
+            <label>Production Date</label>
+            <input type="date" data-f="productionDate" value="${esc(l.productionDate||'')}">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Expiry Date</label>
+            <input type="date" data-f="expiryDate" value="${esc(l.expiryDate||'')}">
+          </div>
+          <div style="display:flex; align-items:flex-end; padding-bottom:6px;">
+            <div data-hint style="font-size:.85rem;">${stockHint(l)}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function updateSummary(){
+    const totalLines = S.lines.length;
+    const totalQty = S.lines.reduce((acc, l)=> acc + (parseFloat(l.qty)||0), 0);
+    const summaryLines = $('#rcvSummaryLines');
+    const summaryUnits = $('#rcvSummaryUnits');
+    if(summaryLines) summaryLines.textContent = totalLines;
+    if(summaryUnits) summaryUnits.textContent = round2(totalQty);
+  }
+
   function drawLines(){
-    $('#dvLines').innerHTML = S.lines.map(lineHtml).join('') || `<p class="subtle">No items yet — tap “+ Add item”.</p>`;
+    $('#dvLines').innerHTML = S.lines.map(lineHtml).join('') || `
+      <div style="background:var(--card); border:1.5px dashed var(--line); border-radius:14px; text-align:center; padding:36px 18px; margin-bottom:16px;">
+        <div style="font-size:2rem; margin-bottom:8px;">📥</div>
+        <b>No items added to this delivery yet</b>
+        <div class="subtle" style="font-size:.85rem; margin-top:4px;">Tap “+ Add Product Line” below to search and add received items.</div>
+      </div>`;
+
     $('#dvLines').querySelectorAll('[data-k]').forEach(card=>{
       const l = S.lines.find(x=>x.key===card.dataset.k);
       card.querySelectorAll('[data-f]').forEach(inp=>inp.addEventListener('input', ()=>{
-        const f = inp.dataset.f; l[f] = inp.value;
+        const f = inp.dataset.f;
+        l[f] = inp.value;
         if(f==='expiryDate') l.expiryTouched = true;
-        if(f==='productionDate'){ autoExpiry(l); const e = card.querySelector('[data-f=expiryDate]'); if(e && !l.expiryTouched) e.value = l.expiryDate||''; }
+        if(f==='productionDate'){
+          autoExpiry(l);
+          const e = card.querySelector('[data-f=expiryDate]');
+          if(e && !l.expiryTouched) e.value = l.expiryDate||'';
+        }
         card.querySelector('[data-hint]').innerHTML = stockHint(l);
         persist();
       }));
-      card.querySelector('[data-act=rm]').onclick = ()=>{ S.lines = S.lines.filter(x=>x!==l); persist(); drawLines(); };
-      card.querySelector('[data-act=change]').onclick = ()=>pick(p=>{ applyProduct(l,p); persist(); drawLines(); });
+      card.querySelector('[data-act=rm]').onclick = ()=>{
+        S.lines = S.lines.filter(x=>x!==l);
+        persist();
+        drawLines();
+      };
+      card.querySelector('[data-act=change]').onclick = ()=>pick(p=>{
+        applyProduct(l,p);
+        persist();
+        drawLines();
+      });
     });
+    updateSummary();
   }
-  function applyProduct(l,p){ l.productId=p.id; l.productName=p.name; l.unit=p.unit||''; autoExpiry(l); }
+
+  function applyProduct(l,p){
+    l.productId = p.id;
+    l.productName = p.name;
+    l.unit = p.unit || '';
+    autoExpiry(l);
+  }
+
   function pick(cb){ openProductPicker(null, products, whMap, secMap, cb); }
-  function supOpts(){ return `<option value="">Select supplier…</option>`+suppliers.map(s=>`<option value="${s.id}" ${s.id===S.supplierId?'selected':''}>${esc(s.name)}</option>`).join('')+`<option value="${NEW}">+ New supplier…</option>`; }
+
+  function supOpts(){
+    return `<option value="">Select supplier…</option>` +
+      suppliers.map(s=>`<option value="${s.id}" ${s.id===S.supplierId?'selected':''}>${esc(s.name)}</option>`).join('') +
+      `<option value="${NEW}">+ New supplier…</option>`;
+  }
 
   $('#main').innerHTML = `
-    <div class="topbar"><h1>New delivery</h1></div>
-    <div class="dv-card">
-      <div class="field"><label>Supplier</label><select id="dvSup">${supOpts()}</select></div>
-      <div class="row2">
-        <div class="field"><label>Date received</label><input type="date" id="dvDate" value="${esc(S.receivedAt)}"></div>
-        <div class="field"><label>Invoice / delivery note no.</label><input type="text" id="dvNo" value="${esc(S.invoiceNo)}"></div>
+    <div class="topbar">
+      <div>
+        <h1>Goods Inward Receipt</h1>
+        <div class="subtle">Record inbound supplier delivery note and post received items into inventory</div>
       </div>
-      <div class="field"><label>Note (optional)</label><input type="text" id="dvNote" value="${esc(S.note)}"></div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-ghost" id="dvCancel">Discard / Cancel</button>
+      </div>
     </div>
-    <div class="section-title">Items</div>
+
+    <!-- Inbound Shipment Header -->
+    <div class="rcv-header-card">
+      <div class="section-title" style="margin-bottom:14px; display:flex; align-items:center; gap:8px;">
+        <span>📋</span> Shipment & Supplier Details
+      </div>
+      <div class="rcv-header-grid">
+        <div class="field" style="margin-bottom:0;">
+          <label>Supplier *</label>
+          <select id="dvSup">${supOpts()}</select>
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Date Received *</label>
+          <input type="date" id="dvDate" value="${esc(S.receivedAt)}">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Invoice / Waybill / Delivery Note #</label>
+          <input type="text" id="dvNo" placeholder="e.g. INV-88492" value="${esc(S.invoiceNo)}">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Internal Note / Bay Reference</label>
+          <input type="text" id="dvNote" placeholder="e.g. Dock 2, checked by Alex" value="${esc(S.note)}">
+        </div>
+      </div>
+    </div>
+
+    <!-- Intake Line Items -->
+    <div class="rcv-section-heading">
+      <div style="font-family:var(--font-d); font-size:1.15rem; font-weight:700;">
+        Received Product Lines
+      </div>
+      <button class="btn btn-signal btn-sm" id="dvAdd">+ Add Product Line</button>
+    </div>
+
     <div id="dvLines"></div>
-    <button class="btn btn-ghost" id="dvAdd" style="margin-bottom:16px;">+ Add item</button>
-    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-      <button class="btn btn-signal" id="dvSave" style="flex:1;">Save delivery</button>
-      <button class="btn btn-ghost" id="dvCancel">Cancel</button>
+
+    <!-- Sticky Live Action / Summary Bar -->
+    <div class="rcv-summary-bar">
+      <div class="rcv-summary-metrics">
+        <div>
+          <div class="rcv-metric-val" id="rcvSummaryLines">${S.lines.length}</div>
+          <div class="rcv-metric-lbl">Total Lines</div>
+        </div>
+        <div style="border-left:1px solid rgba(255,255,255,.2); padding-left:16px;">
+          <div class="rcv-metric-val" id="rcvSummaryUnits">0</div>
+          <div class="rcv-metric-lbl">Total Units</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <button class="btn btn-signal" id="dvSave" style="padding:12px 24px; font-size:1rem;">✔ Post & Update Stock</button>
+      </div>
     </div>`;
+
   drawLines();
+
   $('#dvSup').onchange = e=>{
     if(e.target.value===NEW){
       e.target.value = S.supplierId;
-      openNewSupplierModal(sup=>{ suppliers.push(sup); suppliers.sort((a,b)=>a.name.localeCompare(b.name)); S.supplierId = sup.id; persist(); $('#dvSup').innerHTML = supOpts(); });
+      openNewSupplierModal(sup=>{
+        suppliers.push(sup);
+        suppliers.sort((a,b)=>a.name.localeCompare(b.name));
+        S.supplierId = sup.id;
+        persist();
+        $('#dvSup').innerHTML = supOpts();
+      });
       return;
     }
-    S.supplierId = e.target.value; persist();
+    S.supplierId = e.target.value;
+    persist();
   };
+
   $('#dvDate').oninput = e=>{ S.receivedAt = e.target.value; persist(); };
   $('#dvNo').oninput = e=>{ S.invoiceNo = e.target.value; persist(); };
   $('#dvNote').oninput = e=>{ S.note = e.target.value; persist(); };
+
   $('#dvAdd').onclick = ()=>pick(p=>{
     const l = {key:uid(), qty:'', unit:'', productionDate:'', expiryDate:'', batchNo:''};
-    applyProduct(l,p); S.lines.push(l); persist(); drawLines();
-    const last = $('#dvLines').lastElementChild; const q = last && last.querySelector('[data-f=qty]'); if(q) q.focus();
+    applyProduct(l,p);
+    S.lines.push(l);
+    persist();
+    drawLines();
+    const last = $('#dvLines').lastElementChild;
+    const q = last && last.querySelector('[data-f=qty]');
+    if(q) q.focus();
   });
+
   $('#dvCancel').onclick = ()=>{
     if(!S.lines.length){ clearDraft(); location.hash='#/receiving'; return; }
-    showConfirm('Leave without saving? Your entries are kept as an unfinished delivery.', ()=>{ location.hash='#/receiving'; });
+    showConfirm('Leave without saving? Your entries will be kept as a draft.', ()=>{
+      location.hash='#/receiving';
+    });
   };
+
   let saving = false;
   $('#dvSave').onclick = async ()=>{
     if(saving) return;
-    if(!S.supplierId) return showAlert('Select a supplier.');
-    if(!S.lines.length) return showAlert('Add at least one item.');
-    for(let i=0;i<S.lines.length;i++){
+    if(!S.supplierId) return showAlert('Please select a supplier.');
+    if(!S.lines.length) return showAlert('Please add at least one product line.');
+
+    for(let i=0; i<S.lines.length; i++){
       const l = S.lines[i], n = i+1, q = parseFloat(l.qty);
-      if(isNaN(q)||q<=0) return showAlert(`Item ${n} (${l.productName}): enter the quantity received.`);
-      if(l.productionDate && l.expiryDate && l.expiryDate<l.productionDate) return showAlert(`Item ${n} (${l.productName}): expiry date is before the production date.`);
+      if(isNaN(q)||q<=0) return showAlert(`Line ${n} (${l.productName}): Please enter a valid quantity received.`);
+      if(l.productionDate && l.expiryDate && l.expiryDate < l.productionDate)
+        return showAlert(`Line ${n} (${l.productName}): Expiry date cannot be earlier than the production date.`);
       const d = stockDeltaFor(prodMap.get(l.productId), q, l.unit);
-      if(d.error) return showAlert(`Item ${n}: ${d.error}`);
+      if(d.error) return showAlert(`Line ${n}: ${d.error}`);
     }
-    saving = true; $('#dvSave').disabled = true;
+
+    saving = true;
+    $('#dvSave').disabled = true;
     const sup = suppliers.find(s=>s.id===S.supplierId);
     const invId = uid();
-    const header = {id:invId, supplierId:S.supplierId, supplierName:sup?sup.name:'', receivedAt:S.receivedAt||todayISO(), invoiceNo:S.invoiceNo.trim(), note:S.note.trim(), createdAt:new Date().toISOString(), lineCount:S.lines.length};
-    const lines = S.lines.map((l,i)=>({id:uid(), invoiceId:invId, lineNo:i+1, productId:l.productId, productName:l.productName,
-      supplierId:header.supplierId, supplierName:header.supplierName, qty:round2(parseFloat(l.qty)), unit:(l.unit||'').trim(),
-      receivedAt:header.receivedAt, note:'', productionDate:l.productionDate||'', expiryDate:l.expiryDate||'', batchNo:(l.batchNo||'').trim()}));
-    try{ await saveDelivery(header, lines); }
-    catch(e){ saving=false; $('#dvSave').disabled=false; return showAlert('Not saved — nothing was changed. '+e.message); }
+    const header = {
+      id: invId,
+      supplierId: S.supplierId,
+      supplierName: sup ? sup.name : '',
+      receivedAt: S.receivedAt || todayISO(),
+      invoiceNo: S.invoiceNo.trim(),
+      note: S.note.trim(),
+      createdAt: new Date().toISOString(),
+      lineCount: S.lines.length
+    };
+    const lines = S.lines.map((l,i)=>({
+      id: uid(),
+      invoiceId: invId,
+      lineNo: i+1,
+      productId: l.productId,
+      productName: l.productName,
+      supplierId: header.supplierId,
+      supplierName: header.supplierName,
+      qty: round2(parseFloat(l.qty)),
+      unit: (l.unit||'').trim(),
+      receivedAt: header.receivedAt,
+      note: '',
+      productionDate: l.productionDate||'',
+      expiryDate: l.expiryDate||'',
+      batchNo: (l.batchNo||'').trim()
+    }));
+
+    try{
+      await saveDelivery(header, lines);
+    } catch(e){
+      saving = false;
+      $('#dvSave').disabled = false;
+      return showAlert('Not saved — inventory remained unchanged: ' + e.message);
+    }
     clearDraft();
-    location.hash = '#/receiving/'+invId;
+    location.hash = '#/receiving/' + invId;
   };
 }
