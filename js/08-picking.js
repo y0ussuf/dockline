@@ -43,6 +43,7 @@ function findPreviousItem(scopeItems, current, orderObj){
 /* the order's own wording is what should be shown while picking — the matched
    database product name is only supporting context, not the headline */
 function matchNote(it){
+  if(it.qtyAdjusted) return `Vessel asked for ${it.excelQty} ${it.excelUnit||''} — rounded to whole packs`.replace(/ +/g,' ') + (it.productId && it.productName && normalize(it.productName) !== normalize(it.excelDesc) ? ` · Matched to: ${it.productName}` : '');
   if(it.productId && it.productName && normalize(it.productName) !== normalize(it.excelDesc)) return `Matched to: ${it.productName}`;
   return '';
 }
