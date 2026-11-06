@@ -87,10 +87,10 @@ route('warehouse', async ()=>{
       <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
         <div style="flex:1; min-width:220px;">
           <div class="section-title" style="margin-bottom:4px;">Product receiving</div>
-          <p class="subtle" style="margin:0;">Log quantities of products received from suppliers — e.g. 1000 pcs of tuna shredded — and keep a running history of it. Not invoices or prices, just how much came in, from who, and when.</p>
+          <p class="subtle" style="margin:0;">Pick a supplier, add every product on the delivery with its quantity, unit, dates and batch — like an invoice. Quantities go onto stock. Not prices, just how much came in, from who, and when.</p>
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-signal" id="hubLogReceipt">+ Log received stock</button>
+          <button class="btn btn-signal" id="hubLogReceipt">+ New delivery</button>
           <a href="#/receiving" class="btn btn-ghost">View history</a>
         </div>
       </div>
@@ -109,11 +109,7 @@ route('warehouse', async ()=>{
   $('#hubLogDelivery').onclick = ()=>{
     openOrderPicker((order)=>{ location.hash = `#/order/${order.id}/boxes`; render(); });
   };
-  $('#hubLogReceipt').onclick = ()=>{
-    openProductPicker(null, products, whMap, secMap, (picked)=>{
-      openLogReceiptDetailsModal(picked, sortedSuppliers, ()=>{ location.hash = '#/receiving'; render(); });
-    });
-  };
+  $('#hubLogReceipt').onclick = ()=>{ location.hash = '#/receiving/new'; };
 });
 
 route('stock', async (parts)=>{
