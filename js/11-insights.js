@@ -288,7 +288,7 @@ async function _computeInsightsData(){
     const its = (itemsByOrder.get(o.id)||[]).filter(it=>String(it.excelDesc||'').trim());
     const lines = [];
     for(const it of its){
-      const qty = parseFloat(it.requestedQty!=null && it.requestedQty!=='' ? it.requestedQty : it.excelQty);
+      const qty = parseFloat(it.qtyAdjusted ? it.excelQty : (it.requestedQty!=null && it.requestedQty!=='' ? it.requestedQty : it.excelQty));  // what the vessel asked for, not the pack-rounded quantity
       if(!(qty>0)) continue;
       const unit = String(it.requestedUnit || it.excelUnit || '').trim();
       const product = (it.productId && matcher.byId.get(it.productId)) || matcher.match(it.excelDesc);

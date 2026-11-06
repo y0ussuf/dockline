@@ -10,6 +10,7 @@ route('order', async (parts)=>{
     if(order.status==='completed') return orderSummary(order.id);
   }
   if(step==='match') return matchScreen(order.id);
+  if(step==='quantities') return orderQuantityCheck(order.id);
   if(step==='pick'){
     if(!sub) return storeHubScreen(order.id);
     const pickWarehouseId = sub==='all' ? null : sub;
@@ -354,15 +355,8 @@ async function matchScreen(orderId){
     const fresh = (await getAll('orderItems')).filter(it=>it.orderId===order.id);
     if(!fresh.length){ showAlert('This order has no items saved. Please import the Excel file again.', 'Nothing to pick'); return; }
     if(fresh.some(it=>it.status==='unmatched')){ showAlert('Some items are still unmatched. Refreshing the list.', 'Not ready yet'); items = fresh; draw(); return; }
-    const sorted = fresh.filter(it=>it.status==='pending').sort((a,b)=>{
-      for(let i=0;i<3;i++){ if(a.sortKey[i]!==b.sortKey[i]) return a.sortKey[i]-b.sortKey[i]; }
-      return 0;
-    });
-    order.status='picking';
-    order.queue = sorted.map(it=>it.id);
-    order.postponed = [];
-    await put('orders', order);
-    location.hash = `#/order/${order.id}/pick`;
+    if(await needsQuantityCheck(order, fresh)){ location.hash = `#/order/${order.id}/quantities`; return; }
+    await beginPicking(order.id);
   }
 
   function maybeSaveMapping(it){
