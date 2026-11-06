@@ -356,6 +356,66 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .rcv-metric-val{font-family:var(--font-d); font-size:1.3rem; font-weight:700; color:var(--ink);}
 .rcv-metric-lbl{font-size:.78rem; color:var(--ink-soft); font-weight:600;}
 
+/* Supplier Box Deliveries & Cross-Dock Hub */
+.sdel-kpi-grid{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin-bottom:20px;
+}
+.sdel-kpi-card{
+  background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
+  display:flex; flex-direction:column; gap:4px; box-shadow:0 1px 3px rgba(18,32,43,.04);
+}
+.sdel-kpi-val{font-family:var(--font-d); font-size:1.6rem; font-weight:700; color:var(--ink); line-height:1.1;}
+.sdel-kpi-lbl{font-size:.78rem; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.03em;}
+
+.sdel-filter-bar{
+  background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 18px;
+  display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:20px;
+}
+.sdel-filter-bar input, .sdel-filter-bar select{
+  padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--paper-dim); color:var(--ink);
+}
+
+.sdel-tab-group{display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:18px;}
+.sdel-tab-btn{
+  background:none; border:none; padding:10px 16px; font-weight:600; font-size:.9rem; color:var(--ink-soft);
+  border-bottom:2px solid transparent; cursor:pointer; display:flex; align-items:center; gap:8px;
+}
+.sdel-tab-btn.active{color:var(--ink); border-bottom-color:var(--signal);}
+.sdel-tab-count{
+  background:var(--paper-dim); color:var(--ink); padding:2px 8px; border-radius:10px; font-size:.75rem;
+}
+.sdel-tab-btn.active .sdel-tab-count{background:var(--signal); color:var(--signal-text);}
+
+.sdel-order-hero{
+  background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px 22px;
+  display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:20px;
+}
+.sdel-receipt-card{
+  background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px 20px;
+  box-shadow:0 1px 3px rgba(18,32,43,.04); margin-bottom:16px;
+}
+.sdel-line-row{
+  display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px 0;
+  border-bottom:1px solid var(--line); flex-wrap:wrap;
+}
+.sdel-line-row:last-child{border-bottom:none;}
+.sdel-badge-short{
+  background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger);
+  padding:4px 8px; border-radius:6px; font-weight:700; font-size:.8rem; display:inline-flex; align-items:center; gap:4px;
+}
+.sdel-badge-ok{
+  background:var(--success-bg); color:var(--success); border:1px solid var(--success);
+  padding:4px 8px; border-radius:6px; font-weight:700; font-size:.8rem; display:inline-flex; align-items:center; gap:4px;
+}
+.sdel-badge-resolved{
+  background:var(--paper-dim); color:var(--ink-soft); border:1px solid var(--line);
+  padding:4px 8px; border-radius:6px; font-weight:600; font-size:.8rem;
+}
+.sdel-badge-pending{
+  background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn);
+  padding:4px 8px; border-radius:6px; font-weight:700; font-size:.8rem;
+}
+
 /* Goods Receipt Note (GRN) View */
 .grn-card{
   background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px;
