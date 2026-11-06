@@ -54,6 +54,7 @@ route('products', async ()=>{
   $('#main').innerHTML = `
     <div class="topbar"><h1>Products</h1>
       <div style="display:flex; gap:10px;">
+        <a class="btn btn-ghost" href="#/productsetup">⚙ Stock &amp; pack setup</a>
         <button class="btn btn-ghost" id="bulkImport">⇧ Bulk import (CSV)</button>
         <button class="btn btn-signal" id="addProd">+ Add product</button>
       </div>
