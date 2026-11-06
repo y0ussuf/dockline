@@ -366,6 +366,7 @@ function openBulkImport(){
 
 /* ==================================== WAREHOUSES ==================================== */
 route('warehouses', async ()=>{
+  window.__collapsedWarehouses = window.__collapsedWarehouses || new Set();
   const [warehouses, sections, products] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('products')]);
   warehouses.sort((a,b)=>a.priority-b.priority);
 
@@ -400,14 +401,20 @@ route('warehouses', async ()=>{
       // exists (e.g. the warehouse has 0 sections) — these used to be invisible because
       // the list below only ever rendered products nested under a real section
       const unsec = products.filter(p=>p.warehouseId===w.id && !secs.some(s=>s.id===p.sectionId));
+      const isCollapsed = window.__collapsedWarehouses.has(w.id);
       return `<div class="card" style="margin-bottom:14px;" data-whid="${w.id}">
         <div class="list-row" style="border:none; padding:0 0 10px;">
           <span class="drag-handle wh-handle">⠿</span>
-          <div style="flex:1;"><b style="font-family:var(--font-d); font-size:1.05rem;">${esc(w.name)}</b>
-            <div class="subtle">${secs.length} section${secs.length===1?'':'s'} · ${products.filter(p=>p.warehouseId===w.id).length} products</div>
+          <div style="flex:1; cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px;" data-togglewh="${w.id}">
+            <span style="font-size:0.8rem; color:var(--ink-soft); width:14px; display:inline-block; text-align:center;">${isCollapsed ? '▶' : '▼'}</span>
+            <div>
+              <b style="font-family:var(--font-d); font-size:1.05rem;">${esc(w.name)}</b>
+              <div class="subtle">${secs.length} section${secs.length===1?'':'s'} · ${products.filter(p=>p.warehouseId===w.id).length} products</div>
+            </div>
           </div>
           ${admin ? `<button class="iconbtn" data-editwh="${w.id}">✎</button><button class="iconbtn" data-delwh="${w.id}">✕</button>` : ''}
         </div>
+        ${isCollapsed ? '' : `
         <div data-sec-sortable="${w.id}" style="padding-left:8px; border-left:2px solid var(--line);">
         ${secs.map(s=>{
           const secProducts = products.filter(p=>p.sectionId===s.id).sort((a,b)=>a.priority-b.priority);
@@ -447,6 +454,7 @@ route('warehouses', async ()=>{
         })() : ''}
         </div>
         ${admin ? `<button class="btn btn-ghost btn-sm" data-addsec="${w.id}" style="margin-top:10px;">+ Add section</button>` : ''}
+        `}
       </div>`;
     }).join('');
 
@@ -486,6 +494,12 @@ route('warehouses', async ()=>{
       const has = products.some(p=>p.sectionId===b.dataset.delsec);
       if(has){ showAlert('Move or remove products from this section first.'); return; }
       showConfirm('Delete this section?', async ()=>{ await del('sections', b.dataset.delsec); routes['warehouses']([]); }, {danger:true, yesLabel:'Delete'});
+    });
+    list.querySelectorAll('[data-togglewh]').forEach(b=>b.onclick=()=>{
+      const id = b.dataset.togglewh;
+      if(window.__collapsedWarehouses.has(id)) window.__collapsedWarehouses.delete(id);
+      else window.__collapsedWarehouses.add(id);
+      render();
     });
     list.querySelectorAll('[data-togglesec]').forEach(b=>b.onclick=()=>{
       const id = b.dataset.togglesec;
