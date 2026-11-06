@@ -122,6 +122,7 @@ async function relinkOrderItem(itemId, newProduct){
   const counts = (it.status==='completed' || it.status==='modified') && typeof it.actualQty==='number' && !isNaN(it.actualQty);
   if(order && order.stockApplied && counts){
     if(oldProduct && isStockTracked(oldProduct)){
+      await restoreAllocs(it);
       oldProduct.stockQty = round2(parseFloat(oldProduct.stockQty) + it.actualQty);
       await put('products', oldProduct); moved = true;
     }
@@ -129,7 +130,10 @@ async function relinkOrderItem(itemId, newProduct){
       newProduct.stockQty = round2(parseFloat(newProduct.stockQty) - it.actualQty);
       await put('products', newProduct); moved = true;
     }
+    await reconcileBatches([oldProduct && oldProduct.id, newProduct.id]);
+    it.batchAllocs = null;
   }
+  it.batchChoice = '';
   it.productId = newProduct.id;
   it.matchType = 'confirmed';
   await resyncItemSnapshot(it, newProduct);
@@ -200,9 +204,11 @@ async function storeHubScreen(orderId){
   const totalAll = items.filter(it=>it.status!=='not_available').length;
   const doneAll = totalAll - pendingIds.length - (order.postponed||[]).length;
 
+  const slw = await shelfLifeWarnings(items);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Pick by store</h1></div>
     <p class="subtle" style="margin-top:-10px;">${esc(order.vessel)} · ${esc(order.orderNumber)} — ${doneAll} of ${totalAll} items picked overall.</p>
+    ${shelfLifeBannerHtml(slw)}
     <div class="card" style="margin-bottom:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
       <span class="subtle" style="font-weight:700;">Heading to:</span>
       ${order.destination ? destinationBadge(order.destination, 'lg') : '<span class="subtle">No destination set</span>'}
@@ -404,6 +410,7 @@ async function pickingItemScreen(orderId, warehouseId){
   const expiryToShow = it.actualExpiryDate ? fmtDate(it.actualExpiryDate) + ' (set for this order)' : (product && product.expiryDate ? fmtDate(product.expiryDate) : '—');
   const storeLabel = warehouseId ? (it.warehouseName || 'Unassigned') : 'All stores';
   const prevItem = findPreviousItem(scopeItems, it, order);
+  const batchInfo = product ? await pickBatchCardHtml(it, product) : {html:'', sug:null};
 
   $('#main').innerHTML = `
     <div class="pick-wrap">
@@ -429,6 +436,7 @@ async function pickingItemScreen(orderId, warehouseId){
         ` : `
           <div class="pick-qty">${it.requestedQty} × ${esc(it.requestedUnit||'')}</div>
         `}
+        ${batchInfo.html}
         <div class="pick-meta">
           <div><b>Warehouse</b>${esc(it.warehouseName)||'—'}</div>
           <div><b>Section</b>${esc(it.sectionName)||'—'}</div>
@@ -456,6 +464,7 @@ async function pickingItemScreen(orderId, warehouseId){
   $('#pk_search').onclick = ()=> openSearchPick(orderId, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
   $('#pk_batchmode').onclick = async ()=>{ await setPickingMode('batch'); location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); };
   if($('#pk_prev')) $('#pk_prev').onclick = ()=> openItemActionModal(orderId, prevItem.id, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
+  if(product) bindPickBatch(it, product, batchInfo, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
   $('#pk_dates').onclick = ()=> openDateModal(it, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
   if($('#pk_complete')) $('#pk_complete').onclick = async ()=>{
     const [warehouses, sections, suppliers] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
