@@ -378,3 +378,9 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
   #main{padding:0 !important;}
   .grn-card{border:none !important; box-shadow:none !important; padding:0 !important;}
 }
+.qc-row{padding:12px 0; border-top:1px solid var(--line);}
+.qc-custom{width:96px; padding:8px 10px; border-radius:999px; border:1.5px solid var(--line); background:var(--card); color:var(--ink); font-size:.9rem;}
+.qc-custom.on{border-color:var(--sea);}
+.qc-link{background:none; border:0; padding:6px 0 0; color:var(--sea); font-weight:600; font-size:.85rem; text-decoration:underline; display:block; text-align:left;}
+.subtle .qc-link{display:inline; padding:0;}
+.tag-row input.qc-custom{width:110px; flex:0 0 auto;}

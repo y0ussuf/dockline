@@ -11,28 +11,30 @@ function exportSplitterExcel(groups, sourceLabel, sourceCode){
   wb.creator = 'Dockline';
   wb.created = new Date();
   const ws = wb.addWorksheet('Order by warehouse');
-  ws.columns = [{width:8},{width:52},{width:12},{width:14}];
+  const showOrdered = groups.some(g=>g.items.some(i=>i.ordered!=null));
+  const NC = showOrdered ? 5 : 4;
+  ws.columns = [{width:8},{width:52},{width:12},{width:14}].concat(showOrdered?[{width:16}]:[]);
   // Sr./Qty/Unit read as short numbers-and-labels, so centering them makes the sheet scannable;
   // Description stays left-aligned since it's the one column people actually read line by line.
-  const CENTER_COLS = [1,3,4];
+  const CENTER_COLS = [1,3,4,5];
 
   if(sourceLabel){
     const r = ws.addRow([sourceLabel]);
     r.getCell(1).font = {bold:true, size:14, color:{argb:'FF12202B'}};
-    ws.mergeCells(r.number,1,r.number,4);
+    ws.mergeCells(r.number,1,r.number,NC);
     ws.addRow([]);
   }
 
   for(const g of groups){
     const hRow = ws.addRow([g.name]);
     hRow.height = 24;
-    ws.mergeCells(hRow.number,1,hRow.number,4);
+    ws.mergeCells(hRow.number,1,hRow.number,NC);
     const hc = hRow.getCell(1);
     hc.font = {bold:true, size:12, color:{argb:'FFFFFFFF'}};
     hc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF1B6B93'}};
     hc.alignment = {vertical:'middle', horizontal:'left', indent:1};
 
-    const colRow = ws.addRow(['Sr.','Description','Qty','Unit']);
+    const colRow = ws.addRow(['Sr.','Description','Qty','Unit'].concat(showOrdered?['Ordered']:[]));
     colRow.eachCell((cc,colNum)=>{
       cc.font = {bold:true, color:{argb:'FF12202B'}};
       cc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFEDEAE1'}};
@@ -43,7 +45,7 @@ function exportSplitterExcel(groups, sourceLabel, sourceCode){
     g.items.forEach(item=>{
       // the sheet's own Sr. number (e.g. 75), not a per-warehouse recount — so it still matches
       // the original uploaded order when someone's cross-checking the two side by side
-      const row = ws.addRow([item.sr || '', item.desc, item.qty, item.unit]);
+      const row = ws.addRow([item.sr || '', item.desc, item.qty, item.unit].concat(showOrdered?[item.ordered!=null ? item.ordered : '']:[]));
       row.eachCell({includeEmpty:true}, (cc,colNum)=>{
         cc.border = {bottom:{style:'hair', color:{argb:'FFEDEAE1'}}};
         cc.alignment = {vertical:'middle', horizontal: CENTER_COLS.includes(colNum) ? 'center' : 'left'};
@@ -60,7 +62,9 @@ function exportSplitterExcel(groups, sourceLabel, sourceCode){
 }
 
 route('splitter', async ()=>{
-  const [products, warehouses] = await Promise.all([getAll('products'), getAll('warehouses')]);
+  const [products, warehouses, batches, packSt] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('batches'), getPackSettings()]);
+  const prodById = new Map(products.map(p=>[p.id,p]));
+  let vesselName = '', vKey = '';
   const whById = Object.fromEntries(warehouses.map(w=>[w.id,w]));
 
   let fileRows = null;           // null until a file's been processed; else array of {id, sr, desc, qty, unit, productId, warehouseId}
@@ -81,6 +85,66 @@ route('splitter', async ()=>{
     return arr;
   }
 
+  const looseSet = ()=> new Set(packSt.loose[vKey] || []);
+  /* decides which lines are not whole packs and sets each line's final quantity */
+  function recheck(resetChoices){
+    const loose = looseSet();
+    for(const r of fileRows){
+      const prod = r.productId ? prodById.get(r.productId) : null;
+      r.isLoose = !!(prod && loose.has(prod.id));
+      r.check = (prod && !r.isLoose) ? packCheck({qty:r.origQty, unit:r.unit}, prod, batches, packSt.mode) : null;
+      if(resetChoices) { r.choice = 'suggest'; r.custom = ''; }
+      if(!r.check) r.qty = r.origQty;
+      else if(r.choice==='keep') r.qty = r.origQty;
+      else if(r.choice==='custom' && parseFloat(r.custom)>0) r.qty = parseFloat(r.custom);
+      else r.qty = r.check.suggested;
+    }
+  }
+  async function setLoose(productId, on){
+    const set = looseSet(); if(on) set.add(productId); else set.delete(productId);
+    packSt.loose[vKey] = [...set]; await savePackSettings(packSt); recheck(false); draw();
+  }
+  function qtyCheckHtml(){
+    const flagged = fileRows.filter(r=>r.check);
+    const looseRows = fileRows.filter(r=>r.isLoose);
+    const unitOf = r=> r.unit ? ' '+esc(r.unit) : '';
+    if(!flagged.length && !looseRows.length) return '';
+    return `<div class="bt-card" style="margin-bottom:16px;">
+      <div class="bt-h">Quantity check</div>
+      <p class="subtle" style="margin:0 0 10px;">${flagged.length ? `${flagged.length} line${flagged.length===1?' isn’t':'s aren’t'} a whole number of packs.` : 'All lines are whole packs.'} Change anything you like before exporting.</p>
+      <div class="subtle" style="font-weight:700; margin-bottom:6px;">Rounding rule — applies to every vessel</div>
+      <div class="tag-row" id="qc_mode" style="margin-bottom:12px;">
+        ${[['up','Round up'],['nearest','Nearest'],['down','Round down']].map(([m,l])=>`<button class="chip ${packSt.mode===m?'active':''}" data-m="${m}">${l}</button>`).join('')}
+      </div>
+      ${flagged.length>1?`<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;"><button class="btn btn-ghost btn-sm" id="qc_all">Accept all suggestions</button><button class="btn btn-ghost btn-sm" id="qc_none">Keep all as ordered</button></div>`:''}
+      ${flagged.map(r=>`<div class="qc-row" data-r="${r.id}">
+        <div style="min-width:0;"><b>${esc(r.desc)}</b>
+          <div class="subtle">Ordered ${r.origQty}${unitOf(r)} · pack ${r.check.pack.size} (${esc(r.check.pack.name)})${r.check.pack.fromBatch?' · from batch':''}</div></div>
+        <div class="tag-row" style="margin:8px 0 0;">
+          <button class="chip ${r.choice==='suggest'?'active':''}" data-c="suggest">${r.check.suggested}${unitOf(r)} · ${r.check.packs} ${esc(packPlural(r.check.pack.name, r.check.packs))}</button>
+          <button class="chip ${r.choice==='keep'?'active':''}" data-c="keep">Keep ${r.origQty}</button>
+          <input type="number" step="any" inputmode="decimal" class="qc-custom ${r.choice==='custom'?'on':''}" placeholder="Other" value="${r.choice==='custom'?esc(r.custom):''}">
+        </div>
+        ${vKey && r.productId ? `<button class="qc-link" data-loose="${r.productId}">Sold loose to ${esc(vesselName)} — don’t check this item</button>`:''}
+      </div>`).join('')}
+      ${looseRows.length?`<div class="subtle" style="margin-top:12px;"><b>Loose for ${esc(vesselName)}:</b> ${looseRows.map(r=>`${esc(r.desc)} <button class="qc-link" data-unloose="${r.productId}">undo</button>`).join(' · ')}</div>`:''}
+    </div>`;
+  }
+  function bindQtyCheck(){
+    const root = $('#sp_qc'); if(!root) return;
+    root.querySelectorAll('#qc_mode [data-m]').forEach(b=>b.onclick = async ()=>{ packSt.mode = b.dataset.m; await savePackSettings(packSt); recheck(true); draw(); });
+    const all = $('#qc_all'); if(all) all.onclick = ()=>{ fileRows.forEach(r=>{ if(r.check){ r.choice='suggest'; } }); recheck(false); draw(); };
+    const none = $('#qc_none'); if(none) none.onclick = ()=>{ fileRows.forEach(r=>{ if(r.check){ r.choice='keep'; } }); recheck(false); draw(); };
+    root.querySelectorAll('[data-r]').forEach(card=>{
+      const r = fileRows.find(x=>x.id===card.dataset.r);
+      card.querySelectorAll('[data-c]').forEach(b=>b.onclick = ()=>{ r.choice = b.dataset.c; recheck(false); draw(); });
+      const inp = card.querySelector('.qc-custom');
+      inp.onchange = ()=>{ if(parseFloat(inp.value)>0){ r.choice='custom'; r.custom=inp.value; } else { r.choice='suggest'; r.custom=''; } recheck(false); draw(); };
+    });
+    root.querySelectorAll('[data-loose]').forEach(b=>b.onclick = ()=>setLoose(b.dataset.loose, true));
+    root.querySelectorAll('[data-unloose]').forEach(b=>b.onclick = ()=>setLoose(b.dataset.unloose, false));
+  }
+
   async function processFile(file){
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array'});
@@ -92,6 +156,7 @@ route('splitter', async ()=>{
     const fromSheet = extractVesselAndCodeFromSheet(aoa, headerInfo.rowIndex);
     sourceLabel = fromSheet ? [fromSheet.vessel, fromSheet.code].filter(Boolean).join(' · ') : '';
     sourceCode = fromSheet ? (fromSheet.code || '') : '';
+    vesselName = fromSheet ? (fromSheet.vessel || '') : ''; vKey = vesselName ? vesselKeyOf(vesselName) : '';
     const { kSr, kDesc, kQty, kUnit } = headerInfo;
     const dataRows = aoa.slice(headerInfo.rowIndex+1);
 
@@ -106,13 +171,14 @@ route('splitter', async ()=>{
       const match = await matchExcelRow(desc);
       const product = (match.status==='mapped' || match.status==='auto') ? match.product : null;
       rows.push({
-        id: uid(), sr: srVal, desc, qty: isNaN(qty) ? '' : qty, unit: unitVal,
+        id: uid(), sr: srVal, desc, qty: isNaN(qty) ? '' : qty, origQty: isNaN(qty) ? '' : qty, unit: unitVal, choice:'suggest', custom:'',
         productId: product ? product.id : '',
         warehouseId: product ? (product.warehouseId || '') : ''
       });
     }
     if(!rows.length){ showAlert('No usable rows found in the file.'); return false; }
     fileRows = rows;
+    recheck(true);
     includedWarehouses = new Set(groupRows().map(g=>g.id)); // everything checked by default
     return true;
   }
@@ -153,10 +219,12 @@ route('splitter', async ()=>{
         <p class="subtle" style="margin:4px 0 10px;">Pick the right product for each so it lands in the correct warehouse — items left as-is will export under "Unassigned".</p>
         <div id="sp_unassigned"></div>
       </div>` : ''}
+      <div id="sp_qc">${qtyCheckHtml()}</div>
       <div class="section-title">Choose which warehouses to export</div>
       <div class="card" id="sp_groups" style="margin-bottom:18px;"></div>
       <button class="btn btn-signal btn-lg" id="sp_export">⬇ Export selected to Excel</button>`;
 
+    bindQtyCheck();
     if(unassignedCount){
       $('#sp_unassigned').innerHTML = unassignedGroup.items.map(r=>`
         <div class="list-row">
@@ -169,6 +237,7 @@ route('splitter', async ()=>{
           const row = fileRows.find(x=>x.id===b.dataset.assign);
           row.productId = picked.id;
           row.warehouseId = picked.warehouseId || '';
+          prodById.set(picked.id, picked); recheck(false);
           const gid = row.warehouseId || 'unassigned';
           includedWarehouses.add(gid);
           if(!picked.warehouseId) showAlert(`"${picked.name}" doesn't have a warehouse set on its own product record yet, so it'll stay in "Unassigned" — set its warehouse from Products first if you want it grouped properly.`);
@@ -187,13 +256,14 @@ route('splitter', async ()=>{
       if(cb.checked) includedWarehouses.add(cb.dataset.gid); else includedWarehouses.delete(cb.dataset.gid);
     });
 
-    $('#sp_reset').onclick = ()=>{ fileRows=null; sourceLabel=''; sourceCode=''; includedWarehouses=new Set(); draw(); };
+    $('#sp_reset').onclick = ()=>{ vesselName=''; vKey=''; fileRows=null; sourceLabel=''; sourceCode=''; includedWarehouses=new Set(); draw(); };
     $('#sp_export').onclick = async ()=>{
       const chosen = groups.filter(g=>includedWarehouses.has(g.id));
       if(!chosen.length){ showAlert('Choose at least one warehouse to export.'); return; }
       const btn = $('#sp_export');
       btn.disabled = true; btn.textContent = 'Exporting…';
-      await exportSplitterExcel(chosen, sourceLabel, sourceCode);
+      const withOrdered = chosen.map(g=>({id:g.id, name:g.name, items:g.items.map(r=>Object.assign({}, r, {ordered: (parseFloat(r.qty)!==parseFloat(r.origQty)) ? r.origQty : null}))}));
+      await exportSplitterExcel(withOrdered, sourceLabel, sourceCode);
       btn.disabled = false; btn.textContent = '⬇ Export selected to Excel';
     };
   }
