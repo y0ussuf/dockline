@@ -276,8 +276,8 @@ async function applyStockDeductions(items){
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
 // APP_VERSION now lives inline in index.html (so the update check can read it from the page itself)
-const DB_NAME='dockline_db', DB_VER=8;
-const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts','historyOrders','historyLines'];
+const DB_NAME='dockline_db', DB_VER=9;
+const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts','receivingInvoices','historyOrders','historyLines'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
 const SYNC_STORES=['syncQueue','syncMeta'];
 let dbp = new Promise((resolve,reject)=>{
@@ -287,8 +287,14 @@ let dbp = new Promise((resolve,reject)=>{
     STORES.forEach(s=>{ if(!db.objectStoreNames.contains(s)) db.createObjectStore(s,{keyPath:'id'}); });
     SYNC_STORES.forEach(s=>{ if(!db.objectStoreNames.contains(s)) db.createObjectStore(s,{keyPath:'key'}); });
   };
-  req.onsuccess = ()=>resolve(req.result);
+  req.onsuccess = ()=>{
+    const db = req.result;
+    // another tab/window of the app opened a NEWER version of the database: step aside instead of blocking it
+    db.onversionchange = ()=>{ db.close(); };
+    resolve(db);
+  };
   req.onerror = ()=>reject(req.error);
+  req.onblocked = ()=>{ console.warn('Dockline: close the other open Dockline tabs/windows so the database can update'); };
 });
 /* Read cache for the heavy screens (Insights). Every write bumps its store's version — at the start AND at
    the end of the write, so nothing read mid-write is ever trusted — and a cached read is only reused while
