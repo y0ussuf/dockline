@@ -347,13 +347,14 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 @media (max-width:720px){.rcv-batch-grid{grid-template-columns:1fr;}}
 
 .rcv-summary-bar{
-  position:sticky; bottom:14px; z-index:30; background:var(--ink); color:var(--paper); border-radius:14px;
+  position:sticky; bottom:14px; z-index:30; background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:14px;
   padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px;
   box-shadow:0 10px 30px rgba(0,0,0,.28); flex-wrap:wrap; margin-top:24px;
 }
 .rcv-summary-metrics{display:flex; align-items:center; gap:20px;}
-.rcv-metric-val{font-family:var(--font-d); font-size:1.3rem; font-weight:700;}
-.rcv-metric-lbl{font-size:.78rem; opacity:.75;}
+.rcv-summary-divider{border-left:1px solid var(--line); padding-left:16px;}
+.rcv-metric-val{font-family:var(--font-d); font-size:1.3rem; font-weight:700; color:var(--ink);}
+.rcv-metric-lbl{font-size:.78rem; color:var(--ink-soft); font-weight:600;}
 
 /* Goods Receipt Note (GRN) View */
 .grn-card{

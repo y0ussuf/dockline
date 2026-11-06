@@ -661,7 +661,7 @@ async function newDeliveryScreen(){
           <div class="rcv-metric-val" id="rcvSummaryLines">${S.lines.length}</div>
           <div class="rcv-metric-lbl">Total Lines</div>
         </div>
-        <div style="border-left:1px solid rgba(255,255,255,.2); padding-left:16px;">
+        <div class="rcv-summary-divider">
           <div class="rcv-metric-val" id="rcvSummaryUnits">0</div>
           <div class="rcv-metric-lbl">Total Units</div>
         </div>
