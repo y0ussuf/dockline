@@ -27,6 +27,7 @@ function openStockEditModal(product, onSaved){
     product.stockQty = $('#stk_qty').value.trim()==='' ? '' : parseFloat($('#stk_qty').value);
     product.lowStockLimit = $('#stk_limit').value.trim()==='' ? '' : parseFloat($('#stk_limit').value);
     await put('products', product);
+    await reconcileBatches([product.id]);
     closeModal();
     onSaved();
   };
@@ -93,6 +94,15 @@ route('warehouse', async ()=>{
           <button class="btn btn-signal" id="hubLogReceipt">+ New delivery</button>
           <a href="#/receiving" class="btn btn-ghost">View history</a>
         </div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:220px;">
+          <div class="section-title" style="margin-bottom:4px;">Batches &amp; expiry</div>
+          <p class="subtle" style="margin:0;">See what's expired or about to expire, every batch of each product, and set the shelf-life reminder for vessels.</p>
+        </div>
+        <a href="#/batches" class="btn btn-ghost">Open batches</a>
       </div>
     </div>
     <div class="card">

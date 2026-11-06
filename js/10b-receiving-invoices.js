@@ -19,9 +19,9 @@ function stockDeltaFor(product, qty, unit){
 
 async function saveDelivery(header, lines){
   const db = await dbp;
-  const changed = new Map();
+  const changed = new Map(); const newBatches = [];
   await new Promise((resolve,reject)=>{
-    const stores = ['products','productReceipts','receivingInvoices'];
+    const stores = ['products','productReceipts','receivingInvoices','batches'];
     stores.forEach(markDirty);
     const t = db.transaction(stores,'readwrite');
     const prodOs = t.objectStore('products');
@@ -45,7 +45,15 @@ async function saveDelivery(header, lines){
         const d = stockDeltaFor(p, l.qty, l.unit);
         if(d.error) return fail(d.error);
         l.stockDelta = d.delta;
-        if(d.delta){ p.stockQty = round2(parseFloat(p.stockQty)+d.delta); pending.set(p.id,p); }
+        if(d.delta){
+          p.stockQty = round2(parseFloat(p.stockQty)+d.delta); pending.set(p.id,p);
+          if(p.trackBatches){
+            const b = {id:uid(), productId:p.id, productName:p.name, batchNo:l.batchNo||'', productionDate:l.productionDate||'', expiryDate:l.expiryDate||'',
+              qtyReceived:d.delta, qtyRemaining:d.delta, supplierId:header.supplierId, supplierName:header.supplierName, invoiceId:header.id,
+              receivedAt:header.receivedAt, kind:'delivery', createdAt:header.createdAt};
+            t.objectStore('batches').put(b); newBatches.push(b); l.batchId = b.id;
+          }
+        }
         next();
       };
     }
@@ -54,40 +62,48 @@ async function saveDelivery(header, lines){
   queueSync('receivingInvoices', header.id, 'put');
   lines.forEach(l=>queueSync('productReceipts', l.id, 'put'));
   changed.forEach((p,id)=>queueSync('products', id, 'put'));
+  newBatches.forEach(b=>queueSync('batches', b.id, 'put'));
 }
 
 async function deleteDelivery(invoiceId){
   const db = await dbp;
-  const done = {lines:[], products:[]};
+  const done = {lines:[], products:[], batches:[]};
   await new Promise((resolve,reject)=>{
-    const stores = ['products','productReceipts','receivingInvoices'];
+    const stores = ['products','productReceipts','receivingInvoices','batches'];
     stores.forEach(markDirty);
     const t = db.transaction(stores,'readwrite');
     t.oncomplete = ()=>{ stores.forEach(markDirty); resolve(); };
     t.onerror = ()=>reject(t.error);
     t.onabort = ()=>reject(t.error||new Error('Not deleted'));
-    const rOs = t.objectStore('productReceipts'), pOs = t.objectStore('products');
+    const rOs = t.objectStore('productReceipts'), pOs = t.objectStore('products'), bOs = t.objectStore('batches');
     rOs.getAll().onsuccess = (e)=>{
       const lines = e.target.result.filter(r=>r.invoiceId===invoiceId);
       done.lines = lines.map(l=>l.id);
-      const prods = new Map(); let left = 0;
-      const finish = ()=>{
-        for(const l of lines){
-          const p = prods.get(l.productId);
-          const d = parseFloat(l.stockDelta!=null ? l.stockDelta : l.qty);
-          if(p && isStockTracked(p) && d){ p.stockQty = round2(parseFloat(p.stockQty)-d); }
-        }
-        prods.forEach(p=>{ if(p){ pOs.put(p); done.products.push(p.id); } });
-        lines.forEach(l=>rOs.delete(l.id));
-        t.objectStore('receivingInvoices').delete(invoiceId);
+      bOs.getAll().onsuccess = (be)=>{
+        const batches = be.target.result.filter(b=>b.invoiceId===invoiceId);
+        const used = batches.find(b=>b.qtyRemaining < b.qtyReceived - 0.005);
+        if(used){ try{ t.abort(); }catch(_){} reject(new Error('Part of this delivery has already been picked, so it can no longer be deleted.')); return; }
+        batches.forEach(b=>{ bOs.delete(b.id); done.batches.push(b.id); });
+        const prods = new Map();
+        const finish = ()=>{
+          for(const l of lines){
+            const p = prods.get(l.productId);
+            const d = parseFloat(l.stockDelta!=null ? l.stockDelta : l.qty);
+            if(p && isStockTracked(p) && d){ p.stockQty = round2(parseFloat(p.stockQty)-d); }
+          }
+          prods.forEach(p=>{ if(p){ pOs.put(p); done.products.push(p.id); } });
+          lines.forEach(l=>rOs.delete(l.id));
+          t.objectStore('receivingInvoices').delete(invoiceId);
+        };
+        const ids = [...new Set(lines.map(l=>l.productId))];
+        if(!ids.length) return finish();
+        let left = ids.length;
+        ids.forEach(id=>{ pOs.get(id).onsuccess = (ev)=>{ prods.set(id, ev.target.result); if(--left===0) finish(); }; });
       };
-      const ids = [...new Set(lines.map(l=>l.productId))];
-      if(!ids.length) return finish();
-      left = ids.length;
-      ids.forEach(id=>{ pOs.get(id).onsuccess = (ev)=>{ prods.set(id, ev.target.result); if(--left===0) finish(); }; });
     };
   });
   done.lines.forEach(id=>queueSync('productReceipts', id, 'del'));
+  done.batches.forEach(id=>queueSync('batches', id, 'del'));
   queueSync('receivingInvoices', invoiceId, 'del');
   done.products.forEach(id=>queueSync('products', id, 'put'));
 }
@@ -132,11 +148,11 @@ async function deliveryListScreen(){
       return normalize((e.r.productName||'')+' '+(e.r.supplierName||'')).includes(nq);
     });
     $('#rcList').innerHTML = rows.map(e=> e.kind==='inv' ? `
-      <a class="list-row" href="#/receiving/${e.i.id}" style="text-decoration:none; color:inherit;">
+      <a class="bt-row" href="#/receiving/${e.i.id}" style="margin-bottom:8px;">
         <div style="flex:1;"><b>${esc(e.i.supplierName||'Supplier')}</b>
           <div class="subtle">${fmtDate(e.i.receivedAt)}${e.i.invoiceNo?' · No. '+esc(e.i.invoiceNo):''}</div></div>
         <span class="badge">${e.n} item${e.n===1?'':'s'}</span></a>` : `
-      <div class="list-row"><div style="flex:1;"><b>${esc(e.r.productName)}</b>
+      <div class="bt-row" style="margin-bottom:8px;"><div style="flex:1;"><b>${esc(e.r.productName)}</b>
         <div class="subtle">${fmtDate(e.r.receivedAt)} · ${esc(e.r.supplierName||'')} · earlier single entry</div></div>
         <span class="badge">${esc(e.r.qty)} ${esc(e.r.unit||'')}</span>
         <button class="iconbtn" data-old="${e.r.id}" title="Delete">✕</button></div>`).join('')
@@ -162,15 +178,15 @@ async function deliveryDetailScreen(id){
   const lines = receipts.filter(r=>r.invoiceId===id).sort((a,b)=>(a.lineNo||0)-(b.lineNo||0));
   $('#main').innerHTML = `
     <div class="topbar"><h1>Delivery</h1></div>
-    <div class="card" style="margin-bottom:14px;">
-      <b style="font-size:1.1rem;">${esc(inv.supplierName||'')}</b>
+    <div class="dv-card">
+      <b style="font-size:1.25rem; font-family:var(--font-d);">${esc(inv.supplierName||'')}</b>
       <div class="subtle">Received ${fmtDate(inv.receivedAt)}${inv.invoiceNo?' · Invoice / note no. '+esc(inv.invoiceNo):''}</div>
       ${inv.note?`<div style="margin-top:6px;">${esc(inv.note)}</div>`:''}
     </div>
-    <div class="card" style="overflow-x:auto; margin-bottom:14px;">
-      <table style="width:100%; border-collapse:collapse; font-size:.92rem;">
-        <thead><tr style="text-align:left;"><th>No.</th><th>Description</th><th>Qty</th><th>Unit</th><th>Prod.</th><th>Expiry</th><th>Batch</th></tr></thead>
-        <tbody>${lines.map((l,i)=>`<tr style="border-top:1px solid var(--line,#ddd);"><td>${l.lineNo||i+1}</td><td>${esc(l.productName)}</td><td>${esc(l.qty)}</td><td>${esc(l.unit||'')}</td><td>${l.productionDate?fmtDate(l.productionDate):'—'}</td><td>${l.expiryDate?fmtDate(l.expiryDate):'—'}</td><td>${esc(l.batchNo||'—')}</td></tr>`).join('')}</tbody>
+    <div class="dv-card" style="overflow-x:auto; padding:6px 10px;">
+      <table class="dv-table">
+        <thead><tr><th>No.</th><th>Description</th><th>Qty</th><th>Unit</th><th>Prod.</th><th>Expiry</th><th>Batch</th></tr></thead>
+        <tbody>${lines.map((l,i)=>`<tr><td>${l.lineNo||i+1}</td><td>${esc(l.productName)}</td><td>${esc(l.qty)}</td><td>${esc(l.unit||'')}</td><td>${l.productionDate?fmtDate(l.productionDate):'—'}</td><td>${l.expiryDate?fmtDate(l.expiryDate):'—'}</td><td>${esc(l.batchNo||'—')}</td></tr>`).join('')}</tbody>
       </table>
     </div>
     <p class="subtle">Quantities were added to stock for products that have stock tracking on.</p>
@@ -205,9 +221,9 @@ async function newDeliveryScreen(){
     if(!l.expiryTouched && p && p.expiryMode==='shelf' && l.productionDate && p.expiryShelfAmount)
       l.expiryDate = addDuration(l.productionDate, parseFloat(p.expiryShelfAmount), p.expiryShelfUnit||'months');
   }
-  function lineHtml(l,i){ return `<div class="card" data-k="${l.key}" style="margin-bottom:12px;">
+  function lineHtml(l,i){ return `<div class="dv-card" data-k="${l.key}">
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <span class="badge">No. ${i+1}</span><b style="flex:1;">${esc(l.productName)}</b>
+        <span class="dv-no">${i+1}</span><b style="flex:1;">${esc(l.productName)}</b>
         <button class="iconbtn" data-act="change" title="Change product">✎</button>
         <button class="iconbtn" data-act="rm" title="Remove">✕</button></div>
       <div class="row2">
@@ -241,7 +257,7 @@ async function newDeliveryScreen(){
 
   $('#main').innerHTML = `
     <div class="topbar"><h1>New delivery</h1></div>
-    <div class="card" style="margin-bottom:14px;">
+    <div class="dv-card">
       <div class="field"><label>Supplier</label><select id="dvSup">${supOpts()}</select></div>
       <div class="row2">
         <div class="field"><label>Date received</label><input type="date" id="dvDate" value="${esc(S.receivedAt)}"></div>
