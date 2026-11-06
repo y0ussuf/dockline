@@ -50,7 +50,7 @@ async function saveDelivery(header, lines){
           if(p.trackBatches){
             const b = {id:uid(), productId:p.id, productName:p.name, batchNo:l.batchNo||'', productionDate:l.productionDate||'', expiryDate:l.expiryDate||'',
               qtyReceived:d.delta, qtyRemaining:d.delta, supplierId:header.supplierId, supplierName:header.supplierName, invoiceId:header.id,
-              receivedAt:header.receivedAt, kind:'delivery', createdAt:header.createdAt};
+              receivedAt:header.receivedAt, kind:'delivery', createdAt:header.createdAt, packSize:l.packSize===''||l.packSize==null?'':parseFloat(l.packSize)};
             t.objectStore('batches').put(b); newBatches.push(b); l.batchId = b.id;
           }
         }
@@ -530,6 +530,10 @@ async function newDeliveryScreen(){
             <label>Batch / Lot # ${hasBatchTracking ? '<span style="color:var(--sea);">●</span>' : ''}</label>
             <input type="text" data-f="batchNo" placeholder="e.g. B-2026-001" value="${esc(l.batchNo||'')}">
           </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Pack size <span class="subtle" style="font-weight:500;">(optional)</span></label>
+            <input type="number" step="any" inputmode="decimal" data-f="packSize" placeholder="${esc((prodMap.get(l.productId)||{}).packSize||'e.g. 360')}" value="${esc(l.packSize||'')}">
+          </div>
         </div>
 
         <div class="rcv-batch-grid">
@@ -694,7 +698,7 @@ async function newDeliveryScreen(){
   $('#dvNote').oninput = e=>{ S.note = e.target.value; persist(); };
 
   $('#dvAdd').onclick = ()=>pick(p=>{
-    const l = {key:uid(), qty:'', unit:'', productionDate:'', expiryDate:'', batchNo:''};
+    const l = {key:uid(), qty:'', unit:'', productionDate:'', expiryDate:'', batchNo:'', packSize:''};
     applyProduct(l,p);
     S.lines.push(l);
     persist();
@@ -754,7 +758,8 @@ async function newDeliveryScreen(){
       note: '',
       productionDate: l.productionDate||'',
       expiryDate: l.expiryDate||'',
-      batchNo: (l.batchNo||'').trim()
+      batchNo: (l.batchNo||'').trim(),
+      packSize: l.packSize===''||l.packSize==null ? '' : parseFloat(l.packSize)
     }));
 
     try{

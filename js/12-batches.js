@@ -147,10 +147,10 @@ async function restoreAllocs(it){
 
 /* ------------------------------ settings & status ------------------------------ */
 async function getBatchSettings(){
-  const s = await getOne('settings','batchSettings');
+  const s = (await getOne('sharedSettings','batch')) || (await getOne('settings','batchSettings'));
   return {minMonths: s && s.minMonths!=null && !isNaN(parseFloat(s.minMonths)) ? parseFloat(s.minMonths) : 2};
 }
-async function setBatchMinMonths(n){ await rawPut('settings', {id:'batchSettings', minMonths:n}); }
+async function setBatchMinMonths(n){ await put('sharedSettings', {id:'batch', minMonths:n}); }
 function daysUntil(iso){
   if(!iso) return null;
   const d = new Date(iso+'T00:00:00'), t = new Date(todayISO()+'T00:00:00');
@@ -303,7 +303,7 @@ async function productBatchesScreen(productId){
           <b style="flex:1; min-width:0;">${batchTitle(b)}</b>${i===0?'<span class="bt-first">picked first</span>':''}${expBadge(b.expiryDate, st.minMonths)}</div>
         <div class="bt-bar"><i style="width:${pct}%"></i></div>
         <div class="bt-meta"><span><b>${round2(b.qtyRemaining)}</b>${b.kind==='opening'?'':' of '+round2(b.qtyReceived)} ${unit} left</span>
-          <span>${b.productionDate?'Prod '+fmtDate(b.productionDate):''}${b.expiryDate?' · Exp '+fmtDate(b.expiryDate):''}</span></div>
+          <span>${b.productionDate?'Prod '+fmtDate(b.productionDate):''}${b.expiryDate?' · Exp '+fmtDate(b.expiryDate):''}${b.packSize?' · Pack '+esc(b.packSize):''}</span></div>
         <div class="subtle">${b.kind==='opening'?'Stock you already had before batch tracking':esc(b.supplierName||'')+(b.receivedAt?' · received '+fmtDate(b.receivedAt):'')}</div>
         <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
           <button class="btn btn-ghost btn-sm" data-edit="${b.id}">✎ Edit details</button>
@@ -320,11 +320,13 @@ function openBatchEdit(b, done){
     <div class="field"><label>Batch / lot no.</label><input type="text" id="be_no" value="${esc(b.batchNo||'')}" autofocus></div>
     <div class="row2"><div class="field"><label>Production date</label><input type="date" id="be_p" value="${esc(b.productionDate||'')}"></div>
     <div class="field"><label>Expiry date</label><input type="date" id="be_e" value="${esc(b.expiryDate||'')}"></div></div>
+    <div class="field"><label>Pack size of this batch (optional)</label><input type="number" step="any" id="be_pack" placeholder="same as the product" value="${b.packSize==null||b.packSize===''?'':esc(b.packSize)}"></div>
     <div style="display:flex; gap:10px; margin-top:10px;"><button class="btn btn-signal" id="be_save" style="flex:1;">Save</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
   $('#be_save').onclick = async ()=>{
     const pd = $('#be_p').value, ed = $('#be_e').value;
     if(pd && ed && ed<pd) return showAlert('The expiry date is before the production date.');
     b.batchNo = $('#be_no').value.trim(); b.productionDate = pd; b.expiryDate = ed;
+    b.packSize = $('#be_pack').value.trim()==='' ? '' : parseFloat($('#be_pack').value);
     await put('batches', b); closeModal(); done();
   };
 }
