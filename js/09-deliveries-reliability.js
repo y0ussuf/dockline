@@ -190,8 +190,11 @@ async function boxReceiptsScreen(orderId, forceConfirm){
   const confirmed = receipts.filter(r=>r.dispatchedQty!=null);
   let boxTypes = (await getAll('boxTypes')).sort((a,b)=>a.name.localeCompare(b.name));
   let suppliers = (await getAll('suppliers')).sort((a,b)=>a.name.localeCompare(b.name));
-  // one blank line to start; "+ Add another type" grows this, matching how a
-  // delivery actually arrives — several box types counted in one go
+
+  const totalBoxesReceived = receipts.reduce((acc,r)=> acc + (r.receivedQty||0), 0);
+  const totalBoxesDispatched = confirmed.reduce((acc,r)=> acc + (r.dispatchedQty||0), 0);
+  const totalShort = confirmed.reduce((acc,r)=> acc + Math.max(0, (r.receivedQty||0) - (r.dispatchedQty||0)), 0);
+
   let lines = [{key:uid(), boxTypeId: boxTypes[0]?.id||'', qty:''}];
   let selectedSupplierId = '';
 
@@ -203,32 +206,89 @@ async function boxReceiptsScreen(orderId, forceConfirm){
   }
 
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Supplier deliveries</h1></div>
-    <p class="subtle" style="margin-top:-10px;">${esc(order.vessel)} · ${esc(order.orderNumber)}</p>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+      <a href="#/deliveries" class="subtle" style="text-decoration:none;">‹ Back to Supplier Deliveries Hub</a>
+      <a href="#/order/${orderId}/open" class="btn btn-ghost btn-sm">‹ Back to Order View</a>
+    </div>
+
+    <!-- Order Summary Hero -->
+    <div class="sdel-order-hero">
+      <div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <h1 style="margin:0; font-size:1.6rem;">${esc(order.vessel)}</h1>
+          <span class="badge b-picking" style="font-size:.85rem;">${esc(order.orderNumber)}</span>
+        </div>
+        <div class="subtle" style="margin-top:4px;">Cross-Dock Box Intake & Dispatch Reconciliation</div>
+      </div>
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <div style="text-align:right;">
+          <div style="font-size:1.4rem; font-weight:700; color:var(--ink);">${round2(totalBoxesReceived)}</div>
+          <div style="font-size:.74rem; color:var(--ink-soft); text-transform:uppercase;">Boxes Received</div>
+        </div>
+        <div style="border-left:1px solid var(--line); height:32px;"></div>
+        <div style="text-align:right;">
+          <div style="font-size:1.4rem; font-weight:700; color:var(--ink);">${round2(totalBoxesDispatched)}</div>
+          <div style="font-size:.74rem; color:var(--ink-soft); text-transform:uppercase;">Boxes Dispatched</div>
+        </div>
+        ${totalShort>0 ? `
+          <div style="border-left:1px solid var(--line); height:32px;"></div>
+          <div style="text-align:right;">
+            <div style="font-size:1.4rem; font-weight:700; color:var(--danger);">${round2(totalShort)}</div>
+            <div style="font-size:.74rem; color:var(--danger); text-transform:uppercase; font-weight:700;">Missing Boxes</div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+
     ${forceConfirm && unconfirmed.length ? `
-      <div class="card" style="border:1.5px solid var(--warn); background:var(--warn-bg); margin-bottom:18px;">
-        <b>Confirm what was actually loaded before this order can be finished.</b>
-        <p class="subtle" style="margin:6px 0 0;">Enter how many were sent out for each delivery below — anything short of what was received gets flagged for you to track down.</p>
+      <div class="card" style="border:1.5px solid var(--warn); background:var(--warn-bg); margin-bottom:20px; border-radius:12px;">
+        <b style="color:var(--ink); display:block; margin-bottom:4px;">⚠ Dispatch Confirmation Mandatory Before Finalizing Order</b>
+        <div class="subtle" style="font-size:.9rem;">Verify how many cartons actually loaded onto the transport vehicle. Any deficit between goods inward and outbound dispatch will be recorded for supplier reconciliation.</div>
       </div>` : ''}
-    ${unconfirmed.length ? `
-      <div class="section-title">Awaiting confirmation</div>
-      <div id="rcUnconfirmed" style="margin-bottom:6px;"></div>` : ''}
-    <div class="topbar" style="margin-bottom:10px;">
-      <div class="section-title" style="margin:0;">Log a received delivery</div>
-      <a href="#/boxtypes" class="subtle" style="text-decoration:underline;">Manage box types</a>
-    </div>
-    <div class="card" style="margin-bottom:20px;">
-      <div class="field"><label>Received from</label><select id="rc_supplier">${supplierOptionsHtml()}</select></div>
-      <p class="subtle" style="margin-top:0;">Add one line per box type in this delivery.</p>
+
+    <!-- Intake Form -->
+    <div class="sdel-receipt-card" style="margin-bottom:24px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid var(--line); padding-bottom:10px;">
+        <div style="font-family:var(--font-d); font-size:1.15rem; font-weight:700;">
+          📥 Log Supplier Box Inward
+        </div>
+        <a href="#/boxtypes" class="subtle" style="font-size:.85rem; text-decoration:underline;">Manage Box Types</a>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; margin-bottom:16px;">
+        <div class="field" style="margin-bottom:0;">
+          <label>Received From (Supplier) *</label>
+          <select id="rc_supplier">${supplierOptionsHtml()}</select>
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Dock Delivery Note / Reference (Optional)</label>
+          <input type="text" id="rc_note" placeholder="e.g. Inward Waybill #4092, driver Alex">
+        </div>
+      </div>
+
+      <div class="subtle" style="font-size:.85rem; margin-bottom:8px; font-weight:600;">Carton Breakdown by Type:</div>
       <div id="rcLines"></div>
-      <button class="btn btn-ghost btn-sm" id="rcAddLine" style="margin:6px 0 14px;">+ Add another type</button>
-      <div class="field"><label>Note (optional)</label><input type="text" id="rc_note" placeholder="reference, anything else useful"></div>
-      <button class="btn btn-signal" id="rc_save" style="width:100%;">Log this delivery</button>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:12px;">
+        <button class="btn btn-ghost btn-sm" id="rcAddLine">+ Add Another Box Type</button>
+        <button class="btn btn-signal" id="rc_save" style="padding:10px 22px;">✔ Record Inbound Cartons</button>
+      </div>
     </div>
+
+    <!-- Unconfirmed Intake Section -->
+    ${unconfirmed.length ? `
+      <div class="section-title" style="display:flex; align-items:center; gap:8px;">
+        <span>⏳</span> Awaiting Outbound Dispatch Confirmation (${unconfirmed.length})
+      </div>
+      <div id="rcUnconfirmed" style="margin-bottom:24px;"></div>` : ''}
+
+    <!-- Confirmed Dispatched Section -->
     ${confirmed.length ? `
-      <div class="section-title">Already confirmed</div>
-      <div id="rcConfirmed" style="margin-bottom:6px;"></div>` : ''}
-    <a href="#/order/${orderId}/open" class="btn btn-ghost btn-sm">‹ Back to order</a>`;
+      <div class="section-title" style="display:flex; align-items:center; gap:8px;">
+        <span>✅</span> Reconciled & Dispatched Boxes (${confirmed.length})
+      </div>
+      <div id="rcConfirmed" style="margin-bottom:24px;"></div>` : ''}
+  `;
 
   $('#rc_supplier').onchange = e=>{
     if(e.target.value===NEW_SUP_VALUE){
@@ -238,7 +298,7 @@ async function boxReceiptsScreen(orderId, forceConfirm){
         selectedSupplierId = newSup.id;
         $('#rc_supplier').innerHTML = supplierOptionsHtml();
       });
-      e.target.value = selectedSupplierId; // revert until the modal resolves (or is cancelled)
+      e.target.value = selectedSupplierId;
     } else {
       selectedSupplierId = e.target.value;
     }
@@ -249,17 +309,23 @@ async function boxReceiptsScreen(orderId, forceConfirm){
     return boxTypes.map(t=>`<option value="${t.id}" ${t.id===selectedId?'selected':''}>${esc(t.name)}</option>`).join('')
       + `<option value="${NEW_TYPE_VALUE}">+ New type…</option>`;
   }
+
   function drawLines(){
     $('#rcLines').innerHTML = lines.map(l=>`
-      <div class="row2" data-line="${l.key}" style="align-items:end; margin-bottom:8px;">
-        <div class="field" style="margin-bottom:0;"><label>Box type</label>
+      <div class="row2" data-line="${l.key}" style="align-items:end; margin-bottom:10px; background:var(--paper-dim); padding:10px 14px; border-radius:10px;">
+        <div class="field" style="margin-bottom:0;">
+          <label style="font-size:.78rem;">Box Type</label>
           <select class="rcl-type" data-line="${l.key}">${boxTypes.length?typeOptionsHtml(l.boxTypeId):`<option value="${NEW_TYPE_VALUE}">+ New type…</option>`}</select>
         </div>
         <div class="field" style="margin-bottom:0; display:flex; gap:8px; align-items:end;">
-          <div style="flex:1;"><label>Quantity</label><input type="number" class="rcl-qty" data-line="${l.key}" step="any" min="0" placeholder="e.g. 5" value="${l.qty}"></div>
-          ${lines.length>1 ? `<button type="button" class="iconbtn" data-removeline="${l.key}" title="Remove this line">✕</button>` : ''}
+          <div style="flex:1;">
+            <label style="font-size:.78rem;">Quantity Received (Boxes)</label>
+            <input type="number" class="rcl-qty" data-line="${l.key}" step="any" min="0" placeholder="e.g. 10" value="${l.qty}">
+          </div>
+          ${lines.length>1 ? `<button type="button" class="btn btn-ghost btn-sm" data-removeline="${l.key}" title="Remove line" style="color:var(--danger);">✕</button>` : ''}
         </div>
       </div>`).join('');
+
     $('#rcLines').querySelectorAll('.rcl-type').forEach(sel=>sel.onchange = ()=>{
       const line = lines.find(l=>l.key===sel.dataset.line);
       if(sel.value===NEW_TYPE_VALUE){
@@ -269,7 +335,7 @@ async function boxReceiptsScreen(orderId, forceConfirm){
           line.boxTypeId = newType.id;
           drawLines();
         });
-        sel.value = line.boxTypeId; // revert the dropdown until the modal resolves (or is cancelled)
+        sel.value = line.boxTypeId;
       } else {
         line.boxTypeId = sel.value;
       }
@@ -284,14 +350,16 @@ async function boxReceiptsScreen(orderId, forceConfirm){
     });
   }
   drawLines();
+
   $('#rcAddLine').onclick = ()=>{
     lines.push({key:uid(), boxTypeId: boxTypes[0]?.id||'', qty:''});
     drawLines();
   };
+
   $('#rc_save').onclick = async ()=>{
-    if(!selectedSupplierId){ showAlert('Select who this delivery was received from.'); return; }
+    if(!selectedSupplierId){ showAlert('Please select who this delivery was received from.'); return; }
     const valid = lines.filter(l=>l.boxTypeId && parseFloat(l.qty)>0);
-    if(!valid.length){ showAlert('Enter at least one box type and quantity.'); return; }
+    if(!valid.length){ showAlert('Please enter at least one box type and quantity.'); return; }
     const supplier = suppliers.find(s=>s.id===selectedSupplierId);
     const note = $('#rc_note').value.trim();
     const receivedAt = new Date().toISOString();
@@ -309,8 +377,6 @@ async function boxReceiptsScreen(orderId, forceConfirm){
     boxReceiptsScreen(orderId, forceConfirm);
   };
 
-  // one card per supplier — each delivery is checked against that supplier's
-  // own paperwork, so grouping this way matches how it's actually verified
   function groupBySupplier(list){
     const groups = new Map();
     for(const r of list){
@@ -324,24 +390,32 @@ async function boxReceiptsScreen(orderId, forceConfirm){
   if(unconfirmed.length){
     const groups = groupBySupplier(unconfirmed);
     $('#rcUnconfirmed').innerHTML = groups.map(g=>`
-      <div class="card" style="margin-bottom:14px;">
-        <div class="section-title" style="margin-bottom:8px;">${esc(g.supplierName)}</div>
+      <div class="sdel-receipt-card">
+        <div style="font-family:var(--font-d); font-size:1.05rem; font-weight:700; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+          <span>🏢 ${esc(g.supplierName)}</span>
+          <span class="sdel-badge-pending">Pending Dispatch Count</span>
+        </div>
         ${g.items.map(r=>`
-          <div class="list-row">
-            <div class="thumb">📦</div>
-            <div style="flex:1; min-width:0;">
-              <b>${esc(r.boxTypeName)}</b>
-              <div class="subtle">Received: ${r.receivedQty}${r.note?' · '+esc(r.note):''}</div>
+          <div class="sdel-line-row">
+            <div style="flex:1; min-width:200px;">
+              <b style="font-size:1rem; color:var(--ink);">${esc(r.boxTypeName)}</b>
+              <div class="subtle" style="font-size:.82rem;">Received: <b>${r.receivedQty} boxes</b> · Inward: ${fmtDate(r.receivedAt)}${r.note?' · '+esc(r.note):''}</div>
             </div>
-            <input type="number" class="rc-dispatch-input" data-rid="${r.id}" placeholder="sent" style="width:84px;" step="any" min="0">
-            <button class="btn btn-signal btn-sm" data-confirm="${r.id}">Confirm</button>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <label style="font-size:.8rem; color:var(--ink-soft); font-weight:600; margin:0;">Sent Out:</label>
+                <input type="number" class="rc-dispatch-input" data-rid="${r.id}" placeholder="sent" style="width:90px; padding:6px 8px; border-radius:6px; border:1px solid var(--line); font-weight:700;" step="any" min="0">
+              </div>
+              <button class="btn btn-signal btn-sm" data-confirm="${r.id}" style="padding:7px 14px;">Confirm Dispatch</button>
+            </div>
           </div>`).join('')}
       </div>`).join('');
+
     $('#rcUnconfirmed').querySelectorAll('[data-confirm]').forEach(btn=>btn.onclick = async ()=>{
       const rid = btn.dataset.confirm;
       const input = $('#rcUnconfirmed').querySelector(`input[data-rid="${rid}"]`);
       const dispatched = parseFloat(input.value);
-      if(isNaN(dispatched) || dispatched<0){ showAlert('Enter how many were actually sent out with the order.'); return; }
+      if(isNaN(dispatched) || dispatched<0){ showAlert('Enter how many boxes were actually sent out with the transport.'); return; }
       const rec = receipts.find(r=>r.id===rid);
       rec.dispatchedQty = dispatched;
       rec.dispatchedAt = new Date().toISOString();
@@ -351,27 +425,36 @@ async function boxReceiptsScreen(orderId, forceConfirm){
       else boxReceiptsScreen(orderId, forceConfirm);
     });
   }
+
   if(confirmed.length){
     const groups = groupBySupplier(confirmed);
     $('#rcConfirmed').innerHTML = groups.map(g=>`
-      <div class="card" style="margin-bottom:14px;">
-        <div class="section-title" style="margin-bottom:8px;">${esc(g.supplierName)}</div>
+      <div class="sdel-receipt-card">
+        <div style="font-family:var(--font-d); font-size:1.05rem; font-weight:700; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+          <span>🏢 ${esc(g.supplierName)}</span>
+          <span class="subtle" style="font-size:.82rem;">Confirmed deliveries</span>
+        </div>
         ${g.items.map(r=>{
           const short = round2(r.receivedQty - r.dispatchedQty);
-          return `<div class="list-row">
-            <div class="thumb">📦</div>
-            <div style="flex:1; min-width:0;">
-              <b>${esc(r.boxTypeName)}</b>
-              <div class="subtle">Received ${r.receivedQty} · Sent ${r.dispatchedQty}${r.note?' · '+esc(r.note):''}</div>
+          return `<div class="sdel-line-row">
+            <div style="flex:1; min-width:200px;">
+              <b style="font-size:1rem; color:var(--ink);">${esc(r.boxTypeName)}</b>
+              <div class="subtle" style="font-size:.82rem;">Received: ${r.receivedQty} boxes · Dispatched: ${r.dispatchedQty} boxes${r.note?' · '+esc(r.note):''}</div>
             </div>
-            ${short>0
-              ? (r.resolved ? `<span class="badge b-picking">${short} resolved</span>` : `<button class="btn btn-danger btn-sm" data-resolve="${r.id}">⚠ ${short} missing — resolve</button>`)
-              : `<span class="badge b-completed">OK</span>`}
+            <div style="display:flex; align-items:center; gap:10px;">
+              ${short>0
+                ? (r.resolved
+                    ? `<span class="sdel-badge-resolved">✔ ${short} shortfall resolved</span>`
+                    : `<span class="sdel-badge-short">⚠ ${short} Missing</span>
+                       <button class="btn btn-danger btn-sm" data-resolve="${r.id}">Resolve Gap</button>`)
+                : `<span class="sdel-badge-ok">✔ 100% Reconciled</span>`}
+            </div>
           </div>`;
         }).join('')}
       </div>`).join('');
+
     $('#rcConfirmed').querySelectorAll('[data-resolve]').forEach(btn=>btn.onclick = ()=>{
-      showConfirm('Mark this shortfall as resolved (found, or written off)?', async ()=>{
+      showConfirm('Mark this box shortfall as resolved (found later, credited, or written off)?', async ()=>{
         const rec = receipts.find(r=>r.id===btn.dataset.resolve);
         rec.resolved = true;
         await put('boxReceipts', rec);
@@ -387,40 +470,224 @@ async function openShortfalls(){
   const all = await getAll('boxReceipts');
   return all.filter(r=>r.dispatchedQty!=null && !r.resolved && (r.receivedQty - r.dispatchedQty) > 0);
 }
+
 route('deliveries', async ()=>{
-  const shortfalls = (await openShortfalls()).sort((a,b)=>(b.dispatchedAt||'').localeCompare(a.dispatchedAt||''));
-  $('#main').innerHTML = `
-    <a href="#/warehouse" class="subtle" style="display:inline-block; margin-bottom:10px; text-decoration:none;">‹ Warehouse management</a>
-    <div class="topbar"><h1>Supplier deliveries</h1>
-      <button class="btn btn-signal" id="delLogBtn">+ Log a delivery</button>
-    </div>
-    <p class="subtle" style="margin-top:-10px;">Boxes received from suppliers vs. what actually went out with each order.</p>
-    <div class="section-title">Unresolved shortfalls (${shortfalls.length})</div>
-    <div class="card" id="shortList">
-      ${shortfalls.length ? shortfalls.map(r=>{
-        const short = round2(r.receivedQty - r.dispatchedQty);
-        return `<div class="list-row">
-          <div class="thumb">⚠</div>
-          <div style="flex:1; min-width:0;">
-            <b>${esc(r.boxTypeName)} — ${short} missing</b>
-            <div class="subtle">${esc(r.orderLabel||'')} · received ${r.receivedQty}, sent ${r.dispatchedQty}${r.supplierName?' · from '+esc(r.supplierName):''}${r.note?' · '+esc(r.note):''}</div>
+  const allReceipts = await getAll('boxReceipts');
+  const shortfalls = allReceipts.filter(r=>r.dispatchedQty!=null && !r.resolved && (r.receivedQty - r.dispatchedQty) > 0)
+    .sort((a,b)=>(b.dispatchedAt||'').localeCompare(a.dispatchedAt||''));
+  const pendingConfirmation = allReceipts.filter(r=>r.dispatchedQty==null)
+    .sort((a,b)=>(b.receivedAt||'').localeCompare(a.receivedAt||''));
+  const allHistory = allReceipts.filter(r=>r.dispatchedQty!=null)
+    .sort((a,b)=>(b.dispatchedAt||b.receivedAt||'').localeCompare(a.dispatchedAt||a.receivedAt||''));
+
+  const totalBoxesReceived = allReceipts.reduce((acc, r)=> acc + (r.receivedQty||0), 0);
+  const totalBoxesDispatched = allReceipts.reduce((acc, r)=> acc + (r.dispatchedQty||0), 0);
+  const totalMissingUnits = shortfalls.reduce((acc, r)=> acc + Math.max(0, (r.receivedQty||0) - (r.dispatchedQty||0)), 0);
+
+  // active sub-tab: 'shortfalls' | 'all' | 'pending'
+  window.__sdelTab = window.__sdelTab || 'shortfalls';
+  window.__sdelFilter = window.__sdelFilter || '';
+
+  function renderView(){
+    const q = (window.__sdelFilter || '').trim().toLowerCase();
+    const filterFn = r => !q ||
+      (r.boxTypeName||'').toLowerCase().includes(q) ||
+      (r.supplierName||'').toLowerCase().includes(q) ||
+      (r.orderLabel||'').toLowerCase().includes(q) ||
+      (r.note||'').toLowerCase().includes(q);
+
+    const filteredShort = shortfalls.filter(filterFn);
+    const filteredPending = pendingConfirmation.filter(filterFn);
+    const filteredAll = allHistory.filter(filterFn);
+
+    $('#main').innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+        <a href="#/warehouse" class="subtle" style="text-decoration:none;">‹ Warehouse Management Hub</a>
+        <div style="display:flex; gap:10px;">
+          <a href="#/reliability" class="btn btn-ghost btn-sm">📊 Supplier Reliability Rankings</a>
+          <button class="btn btn-signal btn-sm" id="delLogBtn">+ Log Delivery for Order</button>
+        </div>
+      </div>
+
+      <div class="topbar" style="margin-bottom:6px;">
+        <div>
+          <h1 style="margin:0;">Supplier Deliveries &amp; Cross-Dock</h1>
+          <div class="subtle">Physical carton intake for orders with outbound dispatch reconciliation</div>
+        </div>
+      </div>
+
+      <!-- Operational KPI Grid -->
+      <div class="sdel-kpi-grid">
+        <div class="sdel-kpi-card">
+          <div class="sdel-kpi-lbl">Unresolved Shortfalls</div>
+          <div class="sdel-kpi-val" style="color:${shortfalls.length?'var(--danger)':'var(--success)'};">${shortfalls.length}</div>
+          <div class="subtle" style="font-size:.78rem;">${round2(totalMissingUnits)} missing boxes pending</div>
+        </div>
+        <div class="sdel-kpi-card">
+          <div class="sdel-kpi-lbl">Awaiting Confirmation</div>
+          <div class="sdel-kpi-val" style="color:${pendingConfirmation.length?'var(--warn)':'var(--ink)'};">${pendingConfirmation.length}</div>
+          <div class="subtle" style="font-size:.78rem;">Cross-dock intake waiting for dispatch</div>
+        </div>
+        <div class="sdel-kpi-card">
+          <div class="sdel-kpi-lbl">Total Boxes Inward</div>
+          <div class="sdel-kpi-val">${round2(totalBoxesReceived)}</div>
+          <div class="subtle" style="font-size:.78rem;">Logged across all orders</div>
+        </div>
+        <div class="sdel-kpi-card">
+          <div class="sdel-kpi-lbl">Reconciled Dispatched</div>
+          <div class="sdel-kpi-val">${round2(totalBoxesDispatched)}</div>
+          <div class="subtle" style="font-size:.78rem;">Successfully dispatched to orders</div>
+        </div>
+      </div>
+
+      <!-- Search & Tab Filter Bar -->
+      <div class="sdel-tab-group">
+        <button class="sdel-tab-btn ${window.__sdelTab==='shortfalls'?'active':''}" data-tab="shortfalls">
+          ⚠ Unresolved Shortfalls <span class="sdel-tab-count">${shortfalls.length}</span>
+        </button>
+        <button class="sdel-tab-btn ${window.__sdelTab==='pending'?'active':''}" data-tab="pending">
+          ⏳ Awaiting Dispatch <span class="sdel-tab-count">${pendingConfirmation.length}</span>
+        </button>
+        <button class="sdel-tab-btn ${window.__sdelTab==='all'?'active':''}" data-tab="all">
+          📑 All Reconciled Deliveries <span class="sdel-tab-count">${allHistory.length}</span>
+        </button>
+      </div>
+
+      <div class="sdel-filter-bar">
+        <input type="text" id="sdelSearch" placeholder="Search by vessel, supplier, box type, or note…" value="${esc(window.__sdelFilter)}" style="flex:1; min-width:240px;">
+        ${window.__sdelFilter ? `<button class="btn btn-ghost btn-sm" id="sdelClearSearch">Clear</button>` : ''}
+      </div>
+
+      <!-- Content Container -->
+      <div id="sdelContent"></div>
+    `;
+
+    const content = $('#sdelContent');
+
+    if(window.__sdelTab === 'shortfalls'){
+      if(!filteredShort.length){
+        content.innerHTML = `<div class="empty card"><div class="ic">🎉</div><b>No unresolved shortfalls</b><div class="subtle">All received supplier boxes match their dispatch records!</div></div>`;
+      } else {
+        content.innerHTML = filteredShort.map(r=>{
+          const short = round2(r.receivedQty - r.dispatchedQty);
+          return `
+            <div class="sdel-receipt-card">
+              <div class="sdel-line-row">
+                <div style="flex:1; min-width:220px;">
+                  <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                    <b style="font-size:1.05rem; color:var(--ink);">${esc(r.boxTypeName)}</b>
+                    <span class="sdel-badge-short">⚠ ${short} Missing Cartons</span>
+                  </div>
+                  <div class="subtle" style="font-size:.85rem;">
+                    <b>${esc(r.orderLabel||'Unknown Order')}</b> · Received: <b>${r.receivedQty}</b> · Dispatched: <b>${r.dispatchedQty}</b>
+                  </div>
+                  <div class="subtle" style="font-size:.8rem; margin-top:2px;">
+                    Supplier: <b>${esc(r.supplierName||'Unspecified')}</b> · Dispatched at: ${fmtDate(r.dispatchedAt)}${r.note?' · '+esc(r.note):''}
+                  </div>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                  <a href="#/order/${r.orderId}/boxes" class="btn btn-ghost btn-sm">Open Order Boxes</a>
+                  <button class="btn btn-signal btn-sm" data-resolve="${r.id}">Mark Resolved</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    } else if(window.__sdelTab === 'pending'){
+      if(!filteredPending.length){
+        content.innerHTML = `<div class="empty card"><div class="ic">📦</div><b>No receipts awaiting dispatch count</b><div class="subtle">All logged deliveries have been verified against order loadings.</div></div>`;
+      } else {
+        content.innerHTML = filteredPending.map(r=>`
+          <div class="sdel-receipt-card">
+            <div class="sdel-line-row">
+              <div style="flex:1; min-width:220px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                  <b style="font-size:1.05rem; color:var(--ink);">${esc(r.boxTypeName)}</b>
+                  <span class="sdel-badge-pending">Pending Outbound Count</span>
+                </div>
+                <div class="subtle" style="font-size:.85rem;">
+                  <b>${esc(r.orderLabel||'Unknown Order')}</b> · Received: <b>${r.receivedQty} boxes</b>
+                </div>
+                <div class="subtle" style="font-size:.8rem; margin-top:2px;">
+                  Supplier: <b>${esc(r.supplierName||'Unspecified')}</b> · Received at: ${fmtDate(r.receivedAt)}${r.note?' · '+esc(r.note):''}
+                </div>
+              </div>
+              <div style="display:flex; gap:10px; align-items:center;">
+                <a href="#/order/${r.orderId}/boxes" class="btn btn-signal btn-sm">Confirm at Order</a>
+              </div>
+            </div>
           </div>
-          <a href="#/order/${r.orderId}/boxes" class="btn btn-ghost btn-sm">Open order</a>
-          <button class="btn btn-ghost btn-sm" data-resolve="${r.id}">Mark resolved</button>
-        </div>`;
-      }).join('') : `<div class="empty"><div class="ic">📦</div>Nothing unresolved right now.</div>`}
-    </div>`;
-  $('#shortList').querySelectorAll('[data-resolve]').forEach(btn=>btn.onclick=()=>{
-    showConfirm('Mark this shortfall as resolved (found, or written off)?', async ()=>{
-      const rec = await getOne('boxReceipts', btn.dataset.resolve);
-      rec.resolved = true;
-      await put('boxReceipts', rec);
-      routes['deliveries']([]);
+        `).join('');
+      }
+    } else {
+      if(!filteredAll.length){
+        content.innerHTML = `<div class="empty card"><div class="ic">📑</div><b>No delivery records found</b><div class="subtle">Try clearing search filters or log a new delivery.</div></div>`;
+      } else {
+        content.innerHTML = filteredAll.map(r=>{
+          const short = round2(r.receivedQty - r.dispatchedQty);
+          return `
+            <div class="sdel-receipt-card">
+              <div class="sdel-line-row">
+                <div style="flex:1; min-width:220px;">
+                  <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                    <b style="font-size:1.05rem; color:var(--ink);">${esc(r.boxTypeName)}</b>
+                    ${short>0
+                      ? (r.resolved
+                          ? `<span class="sdel-badge-resolved">✔ ${short} Shortfall Resolved</span>`
+                          : `<span class="sdel-badge-short">⚠ ${short} Missing</span>`)
+                      : `<span class="sdel-badge-ok">✔ 100% Reconciled</span>`}
+                  </div>
+                  <div class="subtle" style="font-size:.85rem;">
+                    <b>${esc(r.orderLabel||'Unknown Order')}</b> · Inward: <b>${r.receivedQty}</b> · Outward: <b>${r.dispatchedQty}</b>
+                  </div>
+                  <div class="subtle" style="font-size:.8rem; margin-top:2px;">
+                    Supplier: <b>${esc(r.supplierName||'Unspecified')}</b> · ${fmtDate(r.dispatchedAt||r.receivedAt)}${r.note?' · '+esc(r.note):''}
+                  </div>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center;">
+                  <a href="#/order/${r.orderId}/boxes" class="btn btn-ghost btn-sm">View Order</a>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    // Attach event listeners
+    $('#sdelSearch').oninput = e=>{
+      window.__sdelFilter = e.target.value;
+      renderView();
+    };
+    const clr = $('#sdelClearSearch');
+    if(clr) clr.onclick = ()=>{
+      window.__sdelFilter = '';
+      renderView();
+    };
+
+    $$('.sdel-tab-btn').forEach(btn=>{
+      btn.onclick = ()=>{
+        window.__sdelTab = btn.dataset.tab;
+        renderView();
+      };
     });
-  });
-  $('#delLogBtn').onclick = ()=>{
-    openOrderPicker((order)=>{ location.hash = `#/order/${order.id}/boxes`; render(); });
-  };
+
+    content.querySelectorAll('[data-resolve]').forEach(btn=>btn.onclick = ()=>{
+      showConfirm('Mark this box shortfall as resolved (found, credited, or written off)?', async ()=>{
+        const rec = await getOne('boxReceipts', btn.dataset.resolve);
+        rec.resolved = true;
+        await put('boxReceipts', rec);
+        routes['deliveries']([]);
+      });
+    });
+
+    $('#delLogBtn').onclick = ()=>{
+      openOrderPicker((order)=>{ location.hash = `#/order/${order.id}/boxes`; render(); });
+    };
+  }
+
+  renderView();
 });
 
 /* ============================ SUPPLIER RELIABILITY REPORT ============================
