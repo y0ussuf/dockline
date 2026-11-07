@@ -62,7 +62,8 @@ function exportSplitterExcel(groups, sourceLabel, sourceCode){
 }
 
 route('splitter', async ()=>{
-  const [products, warehouses, batches, packSt] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('batches'), getPackSettings()]);
+  const [products, warehouses, batches, packSt, sectionList] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('batches'), getPackSettings(), getAll('sections')]);
+  const secById = Object.fromEntries(sectionList.map(s=>[s.id,s]));
   const prodById = new Map(products.map(p=>[p.id,p]));
   let vesselName = '', vKey = '';
   const whById = Object.fromEntries(warehouses.map(w=>[w.id,w]));
@@ -70,7 +71,9 @@ route('splitter', async ()=>{
   let fileRows = null;           // null until a file's been processed; else array of {id, sr, desc, qty, unit, productId, warehouseId}
   let sourceLabel = '';          // vessel + order code pulled from the sheet, shown as the title inside the export
   let sourceCode = '';           // just the order code (e.g. "AMR-ALL-6") — used for the exported file's name
-  let includedWarehouses = new Set(); // group ids (warehouse id, or 'unassigned') currently checked for export
+  let spQuery = '';              // search box text; narrows the list of items shown below
+  const openGroups = new Set();  // warehouses whose item list is expanded
+  const secOf = r=>{ const pr = r.productId ? prodById.get(r.productId) : null; const s = pr && pr.sectionId && secById[pr.sectionId]; return s ? {id:s.id, name:s.name} : {id:'none', name:'No section'}; };
 
   function groupRows(){
     const groups = new Map(); // key -> {name, items:[]}
@@ -182,7 +185,8 @@ route('splitter', async ()=>{
     if(!rows.length){ showAlert('No usable rows found in the file.'); return false; }
     fileRows = rows;
     recheck(true);
-    includedWarehouses = new Set(groupRows().map(g=>g.id)); // everything checked by default
+    rows.forEach(r=>r.on = true);   // every item is ticked for export by default
+    spQuery = ''; openGroups.clear();
     return true;
   }
 
@@ -223,8 +227,13 @@ route('splitter', async ()=>{
         <div id="sp_unassigned"></div>
       </div>` : ''}
       <div id="sp_qc">${qtyCheckHtml()}</div>
-      <div class="section-title">Choose which warehouses to export</div>
-      <div class="card" id="sp_groups" style="margin-bottom:18px;"></div>
+      <div class="section-title">Choose what to export</div>
+      <div class="sp-tools">
+        <input type="search" id="sp_search" class="sp-search" placeholder="Search items…" value="${esc(spQuery)}" autocomplete="off">
+        <div class="sp-btns"><button class="btn btn-ghost btn-sm" id="sp_all">${spQuery?'Tick shown':'Tick all'}</button><button class="btn btn-ghost btn-sm" id="sp_none">${spQuery?'Untick shown':'Untick all'}</button></div>
+      </div>
+      <div id="sp_groups" style="margin-bottom:12px;"></div>
+      <div class="sp-count" id="sp_count"></div>
       <button class="btn btn-signal btn-lg" id="sp_export">⬇ Export selected to Excel</button>`;
 
     bindQtyCheck();
@@ -241,28 +250,56 @@ route('splitter', async ()=>{
           row.productId = picked.id;
           row.warehouseId = picked.warehouseId || '';
           prodById.set(picked.id, picked); recheck(false);
-          const gid = row.warehouseId || 'unassigned';
-          includedWarehouses.add(gid);
+          row.on = true;
           if(!picked.warehouseId) showAlert(`"${picked.name}" doesn't have a warehouse set on its own product record yet, so it'll stay in "Unassigned" — set its warehouse from Products first if you want it grouped properly.`);
           draw();
         });
       });
     }
 
-    $('#sp_groups').innerHTML = groups.map(g=>`
-      <label class="list-row" style="cursor:pointer;">
-        <input type="checkbox" class="sp-group-cb" data-gid="${g.id}" ${includedWarehouses.has(g.id)?'checked':''} style="width:auto; margin-right:10px;">
-        <div style="flex:1; min-width:0;"><b>${esc(g.name)}</b></div>
-        <span class="badge b-pending">${g.items.length} item${g.items.length===1?'':'s'}</span>
-      </label>`).join('');
-    $('#sp_groups').querySelectorAll('.sp-group-cb').forEach(cb=>cb.onchange=()=>{
-      if(cb.checked) includedWarehouses.add(cb.dataset.gid); else includedWarehouses.delete(cb.dataset.gid);
-    });
+    const q = normalize(spQuery);
+    const shown = r=> !q || normalize(r.desc).includes(q) || (r.productId && prodById.get(r.productId) && normalize(prodById.get(r.productId).name).includes(q));
+    const tri = (rows)=>{ const n = rows.filter(r=>r.on).length; return n===0 ? 0 : n===rows.length ? 2 : 1; };
+    const box = (st, attrs)=>`<input type="checkbox" class="sp-cb" ${attrs} ${st===2?'checked':''} data-ind="${st===1?1:0}">`;
+    const itemRow = r=>`<label class="sp-item"><input type="checkbox" class="sp-cb" data-row="${r.id}" ${r.on?'checked':''}><span class="sp-name">${esc(r.desc)}</span><span class="subtle sp-q">${r.qty}${r.unit?' '+esc(r.unit):''}</span></label>`;
+    let html = '';
+    for(const g of groups){
+      const vis = g.items.filter(shown);
+      if(q && !vis.length) continue;
+      const st = tri(g.items), open = q ? true : openGroups.has(g.id);
+      const secs = new Map();
+      for(const r of vis){ const s = secOf(r); if(!secs.has(s.id)) secs.set(s.id, {name:s.name, items:[]}); secs.get(s.id).items.push(r); }
+      const secList = [...secs.entries()].sort((a,b)=> a[0]==='none' ? 1 : b[0]==='none' ? -1 : a[1].name.localeCompare(b[1].name));
+      const onN = g.items.filter(r=>r.on).length;
+      html += `<div class="sp-wh ${open?'open':''}" data-g="${g.id}">
+        <div class="sp-wh-h"><label class="sp-wh-l">${box(st, `data-wh="${g.id}"`)}<b>${esc(g.name)}</b></label>
+          <span class="badge ${onN===g.items.length?'b-pending':''}">${onN}/${g.items.length}</span>
+          <button class="sp-tog" data-tog="${g.id}" aria-label="Show items">${open?'▾':'▸'}</button></div>
+        ${open ? `<div class="sp-wh-b">${secList.map(([sid,s])=>{
+          const all = g.items.filter(r=>secOf(r).id===sid);
+          return `<div class="sp-sec"><label class="sp-sec-h">${box(tri(all), `data-sec="${g.id}|${sid}"`)}<span>${esc(s.name)}</span><span class="subtle">${all.filter(r=>r.on).length}/${all.length}</span></label>${s.items.map(itemRow).join('')}</div>`;}).join('')}</div>` : ''}
+      </div>`;
+    }
+    $('#sp_groups').innerHTML = html || '<p class="subtle">No items match your search.</p>';
+    const total = fileRows.filter(r=>r.on).length;
+    const updateCount = ()=>{ const n = fileRows.filter(r=>r.on).length; $('#sp_count').textContent = `${n} of ${fileRows.length} item${fileRows.length===1?'':'s'} will be exported`; $('#sp_export').disabled = !n; };
+    updateCount();
+    const root = $('#sp_groups');
+    root.querySelectorAll('input[data-ind="1"]').forEach(cb=>cb.indeterminate = true);
+    const rowsOf = (gid, sid)=> groups.find(g=>g.id===gid).items.filter(r=>!sid || secOf(r).id===sid);
+    root.querySelectorAll('[data-wh]').forEach(cb=>cb.onchange=()=>{ rowsOf(cb.dataset.wh).filter(shown).forEach(r=>r.on = cb.checked); draw(); });
+    root.querySelectorAll('[data-sec]').forEach(cb=>cb.onchange=()=>{ const [gid,sid] = cb.dataset.sec.split('|'); rowsOf(gid,sid).filter(shown).forEach(r=>r.on = cb.checked); draw(); });
+    root.querySelectorAll('[data-row]').forEach(cb=>cb.onchange=()=>{ fileRows.find(x=>x.id===cb.dataset.row).on = cb.checked; draw(); });
+    root.querySelectorAll('[data-tog]').forEach(b=>b.onclick=()=>{ const id = b.dataset.tog; openGroups.has(id) ? openGroups.delete(id) : openGroups.add(id); draw(); });
+    $('#sp_all').onclick = ()=>{ fileRows.filter(shown).forEach(r=>r.on = true); draw(); };
+    $('#sp_none').onclick = ()=>{ fileRows.filter(shown).forEach(r=>r.on = false); draw(); };
+    const si = $('#sp_search');
+    si.oninput = ()=>{ spQuery = si.value; const pos = si.selectionStart; draw(); const n = $('#sp_search'); n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} };
 
-    $('#sp_reset').onclick = ()=>{ vesselName=''; vKey=''; fileRows=null; sourceLabel=''; sourceCode=''; includedWarehouses=new Set(); draw(); };
+    $('#sp_reset').onclick = ()=>{ vesselName=''; vKey=''; fileRows=null; sourceLabel=''; sourceCode=''; spQuery=''; openGroups.clear(); draw(); };
     $('#sp_export').onclick = async ()=>{
-      const chosen = groups.filter(g=>includedWarehouses.has(g.id));
-      if(!chosen.length){ showAlert('Choose at least one warehouse to export.'); return; }
+      const chosen = groups.map(g=>({...g, items:g.items.filter(r=>r.on)})).filter(g=>g.items.length);
+      if(!chosen.length){ showAlert('Tick at least one item to export.'); return; }
       const btn = $('#sp_export');
       btn.disabled = true; btn.textContent = 'Exporting…';
       const withOrdered = chosen.map(g=>({id:g.id, name:g.name, items:g.items.map(r=>Object.assign({}, r, {ordered: (parseFloat(r.qty)!==parseFloat(r.origQty)) ? r.origQty : null}))}));

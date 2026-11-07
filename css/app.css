@@ -466,3 +466,21 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .bt-chg{border:0; background:none; color:var(--sea); font-weight:700; text-decoration:underline; padding:4px; font-size:.85rem; cursor:pointer;}
 .qc-rule{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; font-size:.82rem; font-weight:600; color:var(--ink-soft);}
 .qc-rule select{width:auto; max-width:100%; padding:6px 8px; font-size:.85rem;}
+
+/* order splitter: choose what to export */
+.sp-tools{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px;}
+.sp-search{flex:1 1 220px; min-width:0; padding:11px 14px; border-radius:12px; border:1px solid var(--line); background:var(--card, #fff); font-size:15px;}
+.sp-btns{display:flex; gap:8px;}
+.sp-wh{border:1px solid var(--line); border-radius:14px; background:var(--card, #fff); margin-bottom:10px; overflow:hidden;}
+.sp-wh-h{display:flex; align-items:center; gap:10px; padding:12px 14px;}
+.sp-wh-l{display:flex; align-items:center; gap:10px; flex:1; min-width:0; cursor:pointer;}
+.sp-cb{width:20px; height:20px; flex:none; accent-color:var(--signal, #e8590c); margin:0;}
+.sp-tog{border:0; background:transparent; font-size:18px; padding:4px 8px; cursor:pointer; color:inherit;}
+.sp-wh-b{border-top:1px solid var(--line); padding:4px 14px 10px;}
+.sp-sec{margin-top:8px;}
+.sp-sec-h{display:flex; align-items:center; gap:10px; padding:8px 0; font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.04em; cursor:pointer;}
+.sp-sec-h .subtle{margin-left:auto; text-transform:none; letter-spacing:0; font-weight:400;}
+.sp-item{display:flex; align-items:center; gap:10px; padding:8px 0 8px 12px; border-top:1px solid var(--line); cursor:pointer;}
+.sp-name{flex:1; min-width:0;}
+.sp-q{white-space:nowrap;}
+.sp-count{font-size:13px; color:var(--muted, #6b7280); margin:0 0 12px;}
