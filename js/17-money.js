@@ -92,7 +92,7 @@ function parseSize(text){
   return found;
 }
 /* a unit that is itself a measure — "KG", "LTR", "GM" — means size 1 of it */
-function parseUnitSize(unitText){
+function parseMeasure(unitText){
   const s = parseSize(unitText); if(s) return s;
   const w = String(unitText||'').trim().toLowerCase().replace(/\.$/,''); const u = SIZE_UNITS[w]; if(!u) return null;
   return {qty:'1', unit:w, family:u[0], base:Dec.parse(String(u[1])), text:w, index:0};
