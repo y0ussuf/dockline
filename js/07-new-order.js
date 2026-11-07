@@ -75,7 +75,7 @@ const ORDER_CODE_RE = /([A-Za-z]+)-?ALL-?(\d+)/i;
    header matches the LETTERS-ALL-NUMBERS pattern is the code, and the other
    non-empty row right next to it is taken as the vessel name. */
 /* Order sheets carry "CUSTOMER : <company>" next to (or under) the vessel name, e.g.
-   "Briolette CUSTOMER : Gold Star Marine". The company is not part of the vessel name:
+   "<vessel> CUSTOMER : <company>". The company is not part of the vessel name:
    cut it off the end of a line, and treat a line that is only the customer as not-a-vessel. */
 const CUSTOMER_TAIL_RE = /\s*\bcustomer\b\s*[:：\-–—].*$/i;
 const CUSTOMER_LINE_RE = /^\s*customer\b\s*[:：\-–—]/i;
@@ -123,7 +123,7 @@ async function newOrderStep1(existing){
       <div class="field"><label>Order date</label><input type="date" id="o_date" value="${o.orderDate}"></div>
       <div class="field">
         <label>Destination (where this order is heading)</label>
-        <input type="text" id="o_dest" list="o_destList" value="${esc(o.destination||'')}" placeholder="e.g. Suez Port, Alexandria Port…">
+        <input type="text" id="o_dest" list="o_destList" value="${esc(o.destination||'')}" placeholder="Destination">
         <datalist id="o_destList">${destOptions.map(d=>`<option value="${esc(d)}">`).join('')}</datalist>
         <div id="o_destPreview" style="margin-top:8px;">${destinationBadge(o.destination||'')}</div>
       </div>

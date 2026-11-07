@@ -148,8 +148,8 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
         <div class="field"><label>Low stock limit</label><input type="number" id="f_stocklimit" step="any" placeholder="0" value="${p.lowStockLimit===''||p.lowStockLimit==null?'':esc(p.lowStockLimit)}"></div>
       </div>
       <div class="row2" style="margin-top:12px;">
-        <div class="field"><label>Pack size</label><input type="number" id="f_packsize" step="any" placeholder="e.g. 3 or 360" value="${p.packSize===''||p.packSize==null?'':esc(p.packSize)}"></div>
-        <div class="field"><label>Pack name</label><input type="text" id="f_packname" placeholder="box, tray, carton" value="${esc(p.packName||'')}"></div>
+        <div class="field"><label>Pack size</label><input type="number" id="f_packsize" step="any" placeholder="Quantity per pack" value="${p.packSize===''||p.packSize==null?'':esc(p.packSize)}"></div>
+        <div class="field"><label>Pack name</label><input type="text" id="f_packname" placeholder="Pack name" value="${esc(p.packName||'')}"></div>
       </div>
       <div class="field"><label>Rounding for this item</label><select id="f_packround">
         ${[['','Use the general rule'],['up','Always round up'],['nearest','Round to nearest'],['down','Always round down']].map(([v,l])=>`<option value="${v}" ${(p.packRound||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -245,7 +245,7 @@ async function openAliasManager(product){
       </div>
       <div class="field"><label>Add a name used in ship orders</label>
         <div style="display:flex; gap:8px;">
-          <input type="text" id="alias_new" placeholder="e.g. Chicken Cubes">
+          <input type="text" id="alias_new" placeholder="Another name for this product">
           <button class="btn btn-signal btn-sm" id="alias_add">Add</button>
         </div>
       </div>

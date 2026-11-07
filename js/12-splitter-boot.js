@@ -365,10 +365,9 @@ function reloadToLatest(){
 
 /* ------------------------------- boot ------------------------------- */
 (async function boot(){
-  await seedSyncConfigIfEmpty(); // pre-fills the crew's shared connection so there's something to log in against
+  await seedSyncConfigIfEmpty(); // pre-fills the connection from js/config.js (public client settings) when this device has none
   async function startApp(){
-    await seedIfEmpty();
-    await seedBoxTypesIfEmpty();
+    if(DEMO_MODE){ await loadDemoData(); await seedDemoData(); }   // sample data exists only in demo mode
     await migrateSuppliers();
     await loadAndApplyTheme();
     if(!location.hash) location.hash = '#/';

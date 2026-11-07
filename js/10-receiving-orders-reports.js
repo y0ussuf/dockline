@@ -108,9 +108,9 @@ async function postponedScreen(orderId){
 async function openAddItemModal(orderId, onDone){
   showModal(`<h3>Add item to order</h3>
     <p class="subtle">For something the client added after this order was already imported.</p>
-    <div class="field"><label>Description</label><input type="text" id="ai_desc" placeholder="e.g. Anise Star" autofocus></div>
+    <div class="field"><label>Description</label><input type="text" id="ai_desc" placeholder="Item description" autofocus></div>
     <div class="row2">
-      <div class="field"><label>Quantity</label><input type="number" id="ai_qty" step="any" placeholder="e.g. 10"></div>
+      <div class="field"><label>Quantity</label><input type="number" id="ai_qty" step="any" placeholder="Quantity"></div>
       <div class="field"><label>Unit</label><input type="text" id="ai_unit" placeholder="Kg, LTR, Tin 400 gm…"></div>
     </div>
     <div class="field"><label>Sr. (optional)</label><input type="text" id="ai_sr" placeholder="leave blank if unknown"></div>
@@ -271,8 +271,8 @@ async function allItemsScreen(orderId){
 function openDeliveryInfoModal(order, onDone){
   showModal(`<h3>Delivery details</h3>
     <p class="subtle">Who's taking this order out, and in which vehicle? Leave either blank if you don't know it yet — you can fill it in later and re-export.</p>
-    <div class="field"><label>Driver name</label><input type="text" id="dv_driver" value="${esc(order.driverName||'')}" placeholder="e.g. Ahmed Hassan"></div>
-    <div class="field"><label>Car license plate</label><input type="text" id="dv_car" value="${esc(order.carLicense||'')}" placeholder="e.g. ABC 1234"></div>
+    <div class="field"><label>Driver name</label><input type="text" id="dv_driver" value="${esc(order.driverName||'')}" placeholder="Driver name"></div>
+    <div class="field"><label>Car license plate</label><input type="text" id="dv_car" value="${esc(order.carLicense||'')}" placeholder="Plate number"></div>
     <div style="display:flex; gap:10px; margin-top:10px;">
       <button class="btn btn-signal" id="dv_save" style="flex:1;">Save &amp; continue</button>
       <button class="btn btn-ghost" id="dv_skip">Skip for now</button>
@@ -296,7 +296,7 @@ async function openDestinationModal(order, onDone){
   showModal(`<h3>Destination</h3>
     <p class="subtle">Where this order is actually heading — shown as a badge everywhere this order appears, so it's hard to miss.</p>
     <div class="field">
-      <input type="text" id="dest_val" list="dest_list" value="${esc(order.destination||'')}" placeholder="e.g. Suez Port, Alexandria Port…">
+      <input type="text" id="dest_val" list="dest_list" value="${esc(order.destination||'')}" placeholder="Destination">
       <datalist id="dest_list">${destOptions.map(d=>`<option value="${esc(d)}">`).join('')}</datalist>
       <div id="dest_preview" style="margin-top:8px;">${destinationBadge(order.destination||'')}</div>
     </div>
