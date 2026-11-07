@@ -52,6 +52,22 @@ function locateOrderHeaderRow(aoa){
   return null;
 }
 
+/* One sheet can hold several kinds of order one after another — Provision first (no heading), then a row
+   that is only a word such as BOND or CASH, then that kind's own lines. A heading row is never a product:
+   it has text but no quantity, no unit and no price. Returns the heading's text, or null for an ordinary row. */
+function sheetRowHeading(row, h){
+  const txt = v=> String(v==null?'':v).trim();
+  const desc = txt(h.kDesc!==-1 ? row[h.kDesc] : '');
+  if(!desc || desc.length>40) return null;
+  if(h.kQty!==-1 && txt(row[h.kQty])!=='') return null;
+  if(h.kUnit!==-1 && txt(row[h.kUnit])!=='') return null;
+  // any other filled cell (price, total, notes) means it is a real line that just lacks a quantity
+  const other = row.some((v,i)=> i!==h.kDesc && i!==h.kSr && txt(v)!=='' && !/^[=]?[A-Z]\d+\+1$/i.test(txt(v)));
+  if(other) return null;
+  return desc.replace(/\s+/g,' ').replace(/[:\-–—\s]+$/,'');
+}
+function orderTypeLabel(s){ const t = String(s||'').trim(); return t ? t.charAt(0).toUpperCase()+t.slice(1).toLowerCase() : 'Provision'; }
+
 /* The order reference code (what's typed into "IMO number" here) is also usually
    baked into the uploaded filename, always as LETTERS-ALL-NUMBERS (sometimes
    without the second dash, e.g. "FRA-ALL03") — used as a fallback below if the
@@ -191,13 +207,16 @@ async function newOrderStep1(existing){
 
       // build every item first, so nothing is written unless the whole file was readable
       const newItems = [];
+      let curType = 'Provision';   // the first block of a sheet is always the provision order
       for(const row of dataRows){
         const desc = String((kDesc!==-1 ? row[kDesc] : '') ?? '').trim();
         if(!desc) continue;
+        const heading = sheetRowHeading(row, headerInfo);
+        if(heading){ curType = orderTypeLabel(heading); continue; }
         const qty = parseFloat(kQty!==-1 ? row[kQty] : '');
         const unitVal = kUnit!==-1 ? String(row[kUnit] ?? '').trim() : '';
         newItems.push({
-          id: uid(), orderId: o.id, sr: kSr!==-1 ? String(row[kSr] ?? '').trim() : '', importIndex: newItems.length, excelDesc: desc,
+          id: uid(), orderId: o.id, orderType: curType, sr: kSr!==-1 ? String(row[kSr] ?? '').trim() : '', importIndex: newItems.length, excelDesc: desc,
           excelQty: isNaN(qty) ? 0 : qty, qtyFlag: (kQty!==-1 && isNaN(qty)) ? 'invalid quantity' : '',
           excelUnit: unitVal,
           productId: null, warehouseName:'', sectionName:'', productName:'', sortKey:[9999,9999,9999],
