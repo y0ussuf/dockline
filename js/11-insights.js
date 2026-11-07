@@ -49,6 +49,20 @@ async function clearStore(store){
   });
 }
 const _pad2 = n=>String(n).padStart(2,'0');
+/* A date on a past order must be a real calendar day that is not in the future (and not absurdly old).
+   Anything else is kept out of every number until someone corrects it. Returns '' when fine. */
+function dateProblem(iso){
+  const s = String(iso||'');
+  if(!s) return 'No date';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if(!m) return 'Not a real date';
+  const dt = new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+  if(dt.getUTCMonth()!==+m[2]-1 || dt.getUTCDate()!==+m[3]) return 'Not a real date';
+  const t = new Date(); const tomorrow = new Date(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()+1)).toISOString().slice(0,10);
+  if(s>tomorrow) return 'In the future';
+  if(+m[1]<2015) return 'Very old';
+  return '';
+}
 function _isoFromParts(y,m,d){
   y=+y; m=+m; d=+d;
   if(y<100) y += 2000;
@@ -303,7 +317,11 @@ async function _computeInsightsData(){
     liveOrders.push({id:'live:'+o.id, fileName:'', vesselName, vesselKey, imo:o.imo||'', orderDate:date, fingerprint, lineCount:lines.length, live:true});
     liveLines.push(...lines);
   }
-  return {hOrders: hOrders.concat(liveOrders), hLines: hLines.concat(liveLines), liveOrders: liveOrders.length, ignoredLive, importedOrders: hOrders.length};
+  const allOrders = hOrders.concat(liveOrders), allLines = hLines.concat(liveLines);
+  const badOrders = allOrders.filter(o=>dateProblem(o.orderDate)).map(o=>Object.assign({}, o, {problem:dateProblem(o.orderDate)}));
+  if(!badOrders.length) return {hOrders: allOrders, hLines: allLines, liveOrders: liveOrders.length, ignoredLive, importedOrders: hOrders.length, badOrders};
+  const badIds = new Set(badOrders.map(o=>o.id));      // their lines stay out of every figure until the date is fixed
+  return {hOrders: allOrders.filter(o=>!badIds.has(o.id)), hLines: allLines.filter(l=>!badIds.has(l.historyOrderId)), liveOrders: liveOrders.length - badOrders.filter(o=>o.live).length, ignoredLive, importedOrders: hOrders.length - badOrders.filter(o=>!o.live).length, badOrders};
 }
 
 /* ============================ WHICH SITE ORDERS COUNT ============================
@@ -413,13 +431,34 @@ async function applyVesselTidy(plan){
   return {renamed: outOrders.length, dropped: delOrders.length};
 }
 
+/* shows what went wrong instead of leaving "Loading…" on the screen forever */
+function showLoadError(title, err, retry){
+  console.error(err);
+  $('#main').innerHTML = `<div class="topbar"><h1>${esc(title)}</h1></div>
+    <div class="card" style="max-width:560px;"><div class="section-title" style="margin-top:0;">Something went wrong while reading your past orders</div>
+    <p class="subtle">Nothing was changed or lost. Try again; if it keeps happening, send the line below.</p>
+    <pre class="subtle" style="white-space:pre-wrap; user-select:all; background:var(--card); padding:10px; border-radius:10px; border:1px solid var(--line);">${esc((err&&err.message)||String(err))}</pre>
+    <button class="btn btn-signal" id="le_retry">Try again</button></div>`;
+  $('#le_retry').onclick = retry;
+}
+/* "Loading…" with a watchdog: if reading takes long, say so and offer a retry */
+function loadingWithWatchdog(title, what, retry){
+  $('#main').innerHTML = `<div class="topbar"><h1>${esc(title)}</h1></div><p class="subtle" id="ld_msg">${esc(what)}</p>`;
+  const tm = setTimeout(()=>{ const el = $('#ld_msg'); if(el) el.innerHTML = `${esc(what)} <br><span class="subtle">Taking longer than usual… <a href="#" id="ld_retry">Try again</a></span>`; const a = $('#ld_retry'); if(a) a.onclick = e=>{ e.preventDefault(); _insightsMemo = null; retry(); }; }, 8000);
+  return ()=>clearTimeout(tm);
+}
 async function insightsHome(){
-  $('#main').innerHTML = '<div class="topbar"><h1>Insights</h1></div><p class="subtle">Loading your past orders…</p>';   // shown only while the data is being read
-  const [{hOrders, hLines, liveOrders, ignoredLive, importedOrders}, products] = await Promise.all([insightsData(), slimProducts()]);
+  const stopWatch = loadingWithWatchdog('Insights', 'Loading your past orders…', insightsHome);
+  let data, products;
+  try{ [data, products] = await Promise.all([insightsData(), slimProducts()]); }
+  catch(err){ stopWatch(); _insightsMemo = null; return showLoadError('Insights', err, insightsHome); }
+  stopWatch();
+  const {hOrders, hLines, liveOrders, ignoredLive, importedOrders, badOrders} = data;
   const byId = new Map(products.map(p=>[p.id,p]));
   if(!hOrders.length){
     $('#main').innerHTML = `
       <div class="topbar"><h1>Insights</h1></div>
+      ${badDatesCardHtml(badOrders)}
       <div class="card" style="max-width:640px;">
         <div class="section-title">Learn from past orders</div>
         <p class="subtle">Import your old order sheets (the same Excel files you use to start an order) and Dockline will show how demand for each product and each vessel has been changing — the first step toward knowing what to buy and what not to.</p>
@@ -431,6 +470,7 @@ async function insightsHome(){
   }
   const dates = hOrders.map(o=>o.orderDate).filter(Boolean).sort();
   const anchor = dates[dates.length-1];
+  const badCard = badDatesCardHtml(badOrders);
   const unmatchedKeys = new Set(hLines.filter(l=>!l.live && !l.productId && !l.skipped).map(l=>l.descKey));
   const reviewLines = hLines.filter(l=>!l.live && l.productId && !l.baseOk).length;
   const tidy = planVesselTidy(hOrders);
@@ -491,6 +531,7 @@ async function insightsHome(){
       <div class="stat"><b style="font-size:1.1rem;">${fmtDate(dates[0])} → ${fmtDate(anchor)}</b><div class="lbl">Period covered</div></div>
     </div>
     <p class="subtle" style="margin-top:-6px;">${importedOrders} imported from Excel${liveOrders?` · <b>${liveOrders}</b> finished on the site (added automatically, always up to date)`:' · orders you finish on the site are added here automatically'}${ignoredLive?` · ${ignoredLive} hidden`:''}. <a href="#/insights/live">Choose which site orders to include</a></p>
+    ${badCard}
     ${tidy ? `<div class="card" style="border-color:var(--warn); margin-bottom:18px;">
       <div class="section-title" style="margin-top:0;">Tidy vessel names</div>
       <p class="subtle">${tidy.changes.length} imported order${tidy.changes.length===1?' still has':'s still have'} a customer name in the vessel name (for example “${esc(tidy.merges[0].from)}” → “${esc(tidy.merges[0].to)}”), so ${tidy.mergedVessels?`${tidy.mergedVessels} vessel${tidy.mergedVessels===1?'':'s'} show${tidy.mergedVessels===1?'s':''} up twice`:'those vessels may show up twice'}. Cleaning them joins each vessel's orders into one profile.</p>
@@ -617,14 +658,14 @@ async function historyImportScreen(){
     $('#hi_preview').innerHTML = `
       <div class="card" style="margin-top:18px;">
         <div class="section-title">${good.length} sheet${good.length===1?'':'s'} ready${bad.length?` · ${bad.length} could not be read`:''}</div>
-        <p class="subtle" style="margin-top:-6px;">${good.filter(p=>!p.date||p.ambiguous).length ? `<b>${good.filter(p=>!p.date||p.ambiguous).length}</b> need a look and are listed first. ` : 'Everything has a vessel and a date. '}Fix any vessel name or date that looks wrong. Sheets already imported before are skipped automatically.</p>
+        <p class="subtle" style="margin-top:-6px;">${good.filter(p=>!p.date||dateProblem(p.date)||p.ambiguous).length ? `<b>${good.filter(p=>!p.date||dateProblem(p.date)||p.ambiguous).length}</b> need a look and are listed first. ` : 'Everything has a vessel and a date. '}Fix any vessel name or date that looks wrong. Sheets already imported before are skipped automatically.</p>
         <div class="tbl-wrap"><table class="tbl">
           <thead><tr><th></th><th>File</th><th>Vessel</th><th>Date</th><th class="num">Lines</th></tr></thead>
           <tbody>${parsed.map((p,i)=>`<tr>
             <td>${p.ok?`<input type="checkbox" data-inc="${i}" checked style="width:auto;">`:''}</td>
             <td class="subtle" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.fileName)}">${esc(p.fileName)}</td>
             ${p.ok ? `<td><input type="text" data-vessel="${i}" value="${esc(p.vessel)}" placeholder="vessel name" style="min-width:150px;"></td>
-            <td><input type="date" data-date="${i}" value="${esc(p.date)}">${!p.date?' <span class="badge b-unmatched">no date</span>':p.ambiguous?' <span class="badge b-modified" title="Day and month could be swapped — please check">check</span>':''}</td>
+            <td><input type="date" data-date="${i}" value="${esc(p.date)}" max="${todayISO()}">${!p.date?' <span class="badge b-unmatched">no date</span>':dateProblem(p.date)?` <span class="badge b-unmatched">${esc(dateProblem(p.date))}</span>`:p.ambiguous?' <span class="badge b-modified" title="Day and month could be swapped — please check">check</span>':''}</td>
             <td class="num">${p.lines.length}${p.skippedLines?` <span class="subtle">(+${p.skippedLines} w/o qty)</span>`:''}</td>`
             : `<td colspan="3"><span class="badge b-not_available">${esc(p.error)}</span></td>`}
           </tr>`).join('')}</tbody>
@@ -637,8 +678,8 @@ async function historyImportScreen(){
   }
   async function runImport(){
     const chosen = [...$('#hi_preview').querySelectorAll('[data-inc]')].filter(c=>c.checked).map(c=>parsed[+c.dataset.inc]);
-    const missing = chosen.filter(p=>!p.vessel.trim() || !p.date);
-    if(missing.length){ showAlert(`${missing.length} selected sheet${missing.length===1?' is':'s are'} missing a vessel name or a date. Fill them in (or untick them) first.`); return; }
+    const missing = chosen.filter(p=>!p.vessel.trim() || !p.date || dateProblem(p.date));
+    if(missing.length){ showAlert(`${missing.length} selected sheet${missing.length===1?' is':'s are'} missing a vessel name, or have a date that is missing or in the future. Fix them (or untick them) first.`); return; }
     $('#hi_go').disabled = true;
     const matcher = await buildHistoryMatcher();
     const existing = await getAll('historyOrders');
@@ -720,9 +761,12 @@ function newProductFromName(name, unit){
 let _hm = null;
 async function historyMatchScreen(keep){
   if(!keep || !_hm){
-    $('#main').innerHTML = '<div class="topbar"><h1>Match product names</h1></div><p class="subtle">Loading your past orders…</p>';
-    const [lines, products, warehouses, sections, mappings] = await Promise.all([cachedAll('historyLines'), cachedAll('products'), getAll('warehouses'), getAll('sections'), cachedAll('mappings')]);
-    _hm = {lines, products, warehouses, sections, mappings};
+    const stopWatch = loadingWithWatchdog('Match product names', 'Loading your past orders…', ()=>historyMatchScreen());
+    try{
+      const [lines, products, warehouses, sections, mappings] = await Promise.all([cachedAll('historyLines'), cachedAll('products'), getAll('warehouses'), getAll('sections'), cachedAll('mappings')]);
+      _hm = {lines, products, warehouses, sections, mappings};
+    }catch(err){ stopWatch(); return showLoadError('Match product names', err, ()=>historyMatchScreen()); }
+    stopWatch();
   }
   if(!_hm.index || _hm.indexFor!==_hm.products || _hm.indexMap!==_hm.mappings){ _hm.index = buildSuggestIndex(_hm.products, _hm.mappings); _hm.indexFor = _hm.products; _hm.indexMap = _hm.mappings; }
   const {lines:hLines, products, warehouses, sections} = _hm;
@@ -1118,3 +1162,36 @@ async function productInsightScreen(productId){
       rows.map(([label,rate])=>`<tr><td>${label} <span class="subtle">(${fq(rate)} / month)</span></td><td class="num"><b>${fmtMonths(monthsToSell(total, rate))}</b></td></tr>`).join('')}</tbody></table></div>`;
   };
 }
+
+
+/* ============================ ORDERS WITH A WRONG DATE ============================
+   A date that is missing, impossible or in the future (a typo like 2027) would distort every trend, so
+   such orders are left out of all Insights figures and listed here until the date is corrected. */
+function badDatesCardHtml(bad){
+  if(!bad || !bad.length) return '';
+  return `<div class="card" style="border-color:var(--warn); margin-bottom:18px;" id="badDates">
+    <div class="section-title" style="margin-top:0;">${bad.length} order${bad.length===1?' has':'s have'} a date that can't be right</div>
+    <p class="subtle">They are left out of every figure until you fix the date. Pick the real date and press Save — only the date changes.</p>
+    ${bad.slice(0,50).map(o=>`<div class="bd-row" data-id="${esc(o.id)}">
+      <div style="flex:1; min-width:0;"><b>${esc(o.vesselName)}</b><div class="subtle">${esc(o.fileName||'Finished on the site')} · ${o.orderDate?esc(String(o.orderDate).slice(0,10)):'no date'} <span class="badge b-unmatched">${esc(o.problem)}</span></div></div>
+      <input type="date" data-bd="${esc(o.id)}" max="${todayISO()}"><button class="btn btn-signal btn-sm" data-bdsave="${esc(o.id)}">Save</button></div>`).join('')}
+    ${bad.length>50?`<p class="subtle">…and ${bad.length-50} more. Fix these first.</p>`:''}</div>`;
+}
+async function saveOrderDate(orderId, iso){
+  if(dateProblem(iso)) throw new Error(dateProblem(iso)==='In the future' ? 'That date is still in the future.' : 'Pick a real date.');
+  if(orderId.startsWith('live:')){
+    const o = await getOne('orders', orderId.slice(5)); if(!o) throw new Error('Order not found.');
+    o.orderDate = iso; await put('orders', o); return;
+  }
+  const [ho, hl] = await Promise.all([getOne('historyOrders', orderId), getAll('historyLines')]);
+  if(!ho) throw new Error('Order not found.');
+  const f = String(ho.fingerprint||'').split('|'); if(f.length>1) f[1] = iso;
+  await bulkPut('historyOrders', [Object.assign({}, ho, {orderDate:iso, fingerprint:f.join('|'), synced:false})]);
+  await bulkPut('historyLines', hl.filter(l=>l.historyOrderId===orderId).map(l=>Object.assign({}, l, {orderDate:iso, synced:false})));
+}
+document.addEventListener('click', async e=>{
+  const b = e.target.closest && e.target.closest('[data-bdsave]'); if(!b) return;
+  const id = b.dataset.bdsave, inp = document.querySelector(`[data-bd="${CSS.escape(id)}"]`);
+  try{ b.disabled = true; await saveOrderDate(id, inp.value); if(typeof syncNow==='function') syncNow(); _insightsMemo = null; (location.hash.startsWith('#/insights') ? insightsHome() : null); }
+  catch(err){ b.disabled = false; showAlert(err.message||String(err)); }
+});

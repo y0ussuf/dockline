@@ -190,6 +190,8 @@ async function newOrderStep1(existing){
     const btn = $('#o_next'); btn.disabled = true; btn.textContent = 'Reading the file…';
     const fail = msg=>{ importing = false; btn.disabled = false; btn.innerHTML = 'Import &amp; continue'; showAlert(msg); };
     try{
+      const dv = $('#o_date').value, far = new Date(Date.now()+60*86400000).toISOString().slice(0,10);
+      if(dv && dv>far && !window.__dateOk){ importing = false; btn.disabled = false; btn.innerHTML = 'Import &amp; continue'; showConfirm(`The order date is ${fmtDate(dv)} — more than two months from now. Is that really right?`, ()=>{ window.__dateOk = true; $('#o_next').click(); window.__dateOk = false; }, {yesLabel:'Yes, use it', noLabel:'Let me fix it'}); return; }
       o.vessel=vessel; o.imo=imo; o.orderNumber=num; o.orderDate=$('#o_date').value; o.destination=$('#o_dest').value.trim();
 
       const buf = await file.arrayBuffer();
