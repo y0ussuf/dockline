@@ -93,6 +93,7 @@ route('splitter', async ()=>{
       const prod = r.productId ? prodById.get(r.productId) : null;
       r.isLoose = !!(prod && loose.has(prod.id));
       r.check = (prod && !r.isLoose) ? packCheck({qty:r.origQty, unit:r.unit}, prod, batches, packSt.mode) : null;
+      r.unjudged = !!(prod && !r.isLoose && !r.check && packUnjudgeable({qty:r.origQty, unit:r.unit}, prod, batches));
       if(resetChoices) { r.choice = 'suggest'; r.custom = ''; }
       if(!r.check) r.qty = r.origQty;
       else if(r.choice==='keep') r.qty = r.origQty;
@@ -108,7 +109,8 @@ route('splitter', async ()=>{
     const flagged = fileRows.filter(r=>r.check);
     const looseRows = fileRows.filter(r=>r.isLoose);
     const unitOf = r=> r.unit ? ' '+esc(r.unit) : '';
-    if(!flagged.length && !looseRows.length) return '';
+    const unjudged = fileRows.filter(r=>r.unjudged);
+    if(!flagged.length && !looseRows.length && !unjudged.length) return '';
     return `<div class="bt-card" style="margin-bottom:16px;">
       <div class="bt-h">Quantity check</div>
       <p class="subtle" style="margin:0 0 10px;">${flagged.length ? `${flagged.length} line${flagged.length===1?' isn’t':'s aren’t'} a whole number of packs.` : 'All lines are whole packs.'} Change anything you like before exporting.</p>
@@ -127,6 +129,7 @@ route('splitter', async ()=>{
         </div>
         ${vKey && r.productId ? `<button class="qc-link" data-loose="${r.productId}">Sold loose to ${esc(vesselName)} — don’t check this item</button>`:''}
       </div>`).join('')}
+      ${unjudged.length?`<div class="bt-warn" style="margin-top:12px;"><b>⚠ ${unjudged.length} item${unjudged.length===1?'':'s'} couldn’t be checked</b><div class="subtle">The ordered unit doesn’t match the product’s unit. Fix the unit on the product (Products page) to include them.</div>${unjudged.map(r=>`<div class="bt-warn-row"><span>${esc(r.desc)}</span><span class="subtle">${r.origQty}${unitOf(r)}</span></div>`).join('')}</div>`:''}
       ${looseRows.length?`<div class="subtle" style="margin-top:12px;"><b>Loose for ${esc(vesselName)}:</b> ${looseRows.map(r=>`${esc(r.desc)} <button class="qc-link" data-unloose="${r.productId}">undo</button>`).join(' · ')}</div>`:''}
     </div>`;
   }

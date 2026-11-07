@@ -27,6 +27,16 @@ function roundToPacks(qtyInProductUnit, size, mode){
   const n = Math.max(1, mode==='down' ? Math.floor(packs+1e-9) : mode==='nearest' ? Math.round(packs) : Math.ceil(packs-1e-9));
   return {ok:false, packs:n, qty:round2(n*size)};
 }
+/* a line that has a pack size but whose unit can't be compared with the product's unit (so it can't be checked) */
+function packUnjudgeable(row, product, batches){
+  const pack = packOf(product, batches), q = parseFloat(row.qty);
+  if(!pack || !(q>0)) return null;
+  if(row.unit && product.unit && normalize(row.unit)!==normalize(product.unit)){
+    const c = computeUnitConversion(row.unit, product.unit, q);
+    if(!c || !(c.convertedQty>0)) return {pack};
+  }
+  return null;
+}
 /* Works out whether an ordered line is a whole number of packs; returns null when it needs no change or can't be judged.
    Quantity is checked in the product's unit, and the suggestion is converted back to the unit the vessel used. */
 function packCheck(row, product, batches, mode){
