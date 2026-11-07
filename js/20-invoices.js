@@ -36,11 +36,11 @@ function lineCalc(l, priceText, roundMode){
   const out = {unit:null, gross:Dec.ZERO, note:'', issue:'', rounded:false, exactText:''};
   if(!price || !qty) return out;
   if(l.unitOverride && Dec.parse(l.unitOverride)){ out.unit = Dec.parse(l.unitOverride); out.gross = Dec.mul(qty, out.unit); out.note = 'unit price typed by you'; return out; }
-  const refSz = l.ref ? parseUnitSize(l.ref.qty+' '+l.ref.unit) : null;
+  const refSz = l.ref ? parseMeasure(l.ref.qty+' '+l.ref.unit) : null;
   if(!refSz || Dec.cmp(refSz.base, Dec.ZERO)<=0){ out.unit = price; out.gross = Dec.mul(qty, price); return out; }     // plain price per picked unit
   // pro-rata: what size is one picked unit?
-  let pk = l.sizeOverride ? parseUnitSize(l.sizeOverride) : parseUnitSize(l.unit);
-  if(!pk && !l.sizeOverride && l.nameSize && sameSize(parseUnitSize(l.nameSize.qty+' '+l.nameSize.unit), refSz) && !l.perPiece){
+  let pk = l.sizeOverride ? parseMeasure(l.sizeOverride) : parseMeasure(l.unit);
+  if(!pk && !l.sizeOverride && l.nameSize && sameSize(parseMeasure(l.nameSize.qty+' '+l.nameSize.unit), refSz) && !l.perPiece){
     // "Pesto sauce 180 GM" priced per 180 gm and picked as "5 PCS": the unit is one jar of that size
     pk = refSz;
   }
@@ -271,7 +271,7 @@ async function invoiceScreen(id){
     });
     $('#main').querySelectorAll('[data-ok]').forEach(b=>b.onclick=async ()=>{
       const [act, i] = b.dataset.ok.split(':'), l = inv.lines[+i];
-      if(act==='size'){ const v = $(`[data-size="${i}"]`).value.trim(); if(!parseUnitSize(v)){ showAlert('Write the size like 350 ml, 500 gm or 1 kg.'); return; } l.sizeOverride = v; }
+      if(act==='size'){ const v = $(`[data-size="${i}"]`).value.trim(); if(!parseMeasure(v)){ showAlert('Write the size like 350 ml, 500 gm or 1 kg.'); return; } l.sizeOverride = v; }
       if(act==='piece') l.perPiece = true;
       if(act==='uo'){ const v = $(`[data-uo="${i}"]`).value.trim(); if(!Dec.parse(v)){ showAlert('Enter a plain number, like 116.67.'); return; } l.unitOverride = Dec.str(Dec.parse(v)); }
       if(act==='clear'){ delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; }
