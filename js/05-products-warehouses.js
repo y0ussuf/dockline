@@ -136,6 +136,15 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
       <div class="field"><label>Warehouse</label><select id="f_wh">${warehouses.map(w=>`<option value="${w.id}" ${w.id===p.warehouseId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Section</label><select id="f_sec">${secForWh(p.warehouseId).map(s=>`<option value="${s.id}" ${s.id===p.sectionId?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
     </div>
+    <div class="pr-box">
+      <div class="pr-h">Prices <span class="subtle">(EGP — kept exactly as typed, never rounded)</span></div>
+      <div class="pr-grid">
+        <div class="field"><label>Cost price</label><input type="text" inputmode="decimal" id="f_cost" placeholder="0" value="${esc(p.costPrice??'')}"></div>
+        <div class="field"><label>Markup %</label><input type="text" inputmode="decimal" id="f_markup" placeholder="—" value="${esc(Dec.markupText(p.costPrice, p.sellPrice))}"></div>
+        <div class="field"><label>Sell price</label><input type="text" inputmode="decimal" id="f_sell" placeholder="0" value="${esc(p.sellPrice??'')}"></div>
+      </div>
+      <div class="subtle" id="f_pr_note" style="margin-top:-2px;"></div>
+    </div>
     <div class="field"><label>Production date</label><input type="date" id="f_pdate" value="${p.productionDate||''}"></div>
     ${expiryFieldHtml('f', {expiryDate:p.expiryDate, mode:p.expiryMode, shelfAmount:p.expiryShelfAmount, shelfUnit:p.expiryShelfUnit})}
     <div class="field"><label>Notes</label><textarea id="f_notes">${esc(p.notes)}</textarea></div>
@@ -194,10 +203,40 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
       showAlert('Could not process that image — try a different photo.');
     }
   };
+  /* cost, markup % and sell price: change any one and the others follow. Markup is only a helper for
+     working out the sell price (exactly); the cost and the sell price are what get stored. */
+  (function(){
+    const cost = $('#f_cost'), mk = $('#f_markup'), sell = $('#f_sell'), note = $('#f_pr_note');
+    let last = 'sell';   // which of markup / sell was typed last — a changed cost keeps that one
+    const bad = el=> el.value.trim()!=='' && !Dec.parse(el.value);
+    const refreshNote = ()=>{
+      const msgs = [];
+      [cost,sell].forEach(el=>el.classList.toggle('bad', bad(el)));
+      const c = Dec.parse(cost.value), s = Dec.parse(sell.value);
+      if(c && s && Dec.cmp(s,c)<0) msgs.push('⚠ Sell price is below the cost price.');
+      if((c && Dec.cmp(c,Dec.ZERO)===0) || (s && Dec.cmp(s,Dec.ZERO)===0)) msgs.push('⚠ A price of 0 is saved as 0.');
+      note.innerHTML = msgs.join(' ');
+    };
+    cost.oninput = ()=>{
+      if(last==='markup' && Dec.parse(mk.value) && Dec.parse(cost.value)){ sell.value = Dec.sellFromMarkup(cost.value, mk.value) || ''; }
+      else mk.value = Dec.markupText(cost.value, sell.value);
+      refreshNote();
+    };
+    mk.oninput = ()=>{ last = 'markup'; const v = Dec.sellFromMarkup(cost.value, mk.value); if(v!==null) sell.value = v; refreshNote(); };
+    sell.oninput = ()=>{ last = 'sell'; mk.value = Dec.markupText(cost.value, sell.value); refreshNote(); };
+    refreshNote();
+  })();
   $('#f_cancel').onclick = closeModal;
   $('#f_save').onclick = async ()=>{
     const name = $('#f_name').value.trim();
     if(!name){ showAlert('Product name is required.'); return; }
+    const costTxt = $('#f_cost').value.trim(), sellTxt = $('#f_sell').value.trim();
+    if((costTxt && !Dec.parse(costTxt)) || (sellTxt && !Dec.parse(sellTxt))){ showAlert('Prices must be plain numbers, like 71.78.'); return; }
+    const newCost = costTxt ? Dec.str(Dec.parse(costTxt)) : '', newSell = sellTxt ? Dec.str(Dec.parse(sellTxt)) : '';
+    if(newCost!==(p.costPrice||'') || newSell!==(p.sellPrice||'')){
+      p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:newCost, sell:newSell, from:'edit'}].slice(-50);
+    }
+    p.costPrice = newCost; p.sellPrice = newSell;
     p.name = name;
     p.unit = $('#f_unit').value.trim();
     p.supplierId = $('#f_supplier').value;

@@ -484,3 +484,24 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .sp-name{flex:1; min-width:0;}
 .sp-q{white-space:nowrap;}
 .sp-count{font-size:13px; color:var(--muted, #6b7280); margin:0 0 12px;}
+
+/* product prices */
+.pr-box{border:1px solid var(--line); border-radius:14px; padding:12px 14px 4px; margin-bottom:14px; background:var(--card, #fff);}
+.pr-h{font-weight:700; margin-bottom:8px;}
+.pr-grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;}
+.pr-grid input.bad{border-color:var(--danger, #dc2626);}
+@media(max-width:420px){.pr-grid{grid-template-columns:1fr 1fr;} .pr-grid .field:last-child{grid-column:1 / -1;}}
+
+.co-logo-row{display:flex; align-items:center; gap:14px; margin:12px 0;}
+.co-logo{width:84px; height:84px; border:1px dashed var(--line); border-radius:16px; display:grid; place-items:center; overflow:hidden; background:var(--card, #fff);}
+.co-logo img{max-width:100%; max-height:100%;}
+
+/* price import */
+.pr-row{border:1px solid var(--line); border-radius:14px; padding:10px 14px; margin-bottom:8px; background:var(--card, #fff);}
+.pr-row.choose{border-left:4px solid var(--warn, #d97706);} .pr-row.none{border-left:4px solid var(--danger, #dc2626);}
+.pr-top{display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;}
+.pr-name{display:flex; align-items:center; gap:10px; min-width:0; flex:1; cursor:pointer;}
+.pr-px{white-space:nowrap; font-variant-numeric:tabular-nums;}
+.pr-warn{color:var(--warn, #b45309); font-size:13px; margin-top:6px;}
+.pr-act{margin-top:4px;}
+.pr-bar{position:sticky; bottom:0; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; margin-top:12px; background:var(--card, #fff); border:1px solid var(--line); border-radius:14px; box-shadow:0 -6px 18px rgba(0,0,0,.06);}
