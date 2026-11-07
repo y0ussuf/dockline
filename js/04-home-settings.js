@@ -92,7 +92,7 @@ route('home', async ()=>{
 
 /* ==================================== SETTINGS ==================================== */
 route('settings', async ()=>{
-  const [themeRec, syncCfgRaw] = await Promise.all([getOne('settings','theme'), getSyncConfig()]);
+  const [themeRec, syncCfgRaw, company] = await Promise.all([getOne('settings','theme'), getSyncConfig(), getCompany()]);
   const syncCfgCache = syncCfgRaw || {};
   const currentAccent = (themeRec && themeRec.accent) ? themeRec.accent.toLowerCase() : DEFAULT_ACCENT.toLowerCase();
   $('#main').innerHTML = `
@@ -105,6 +105,7 @@ route('settings', async ()=>{
         ${isAdmin() ? `<label class="btn btn-ghost btn-sm" style="cursor:pointer;">⬆ Restore from backup<input type="file" id="restoreFile" accept=".json" style="display:none;"></label>` : `<span class="subtle">Restoring a backup is admin-only — it overwrites everything on this device.</span>`}
       </div>
     </div>
+    ${companyCardHtml(company)}
     <div class="card" style="margin-top:24px;" id="syncCard">
       <div class="section-title">Crew sync</div>
       <p class="subtle">Share one live set of products, warehouses and orders with the rest of the crew. Everything still works with no signal — changes made offline send themselves as soon as a connection comes back.</p>
@@ -133,6 +134,7 @@ route('settings', async ()=>{
       </div>
     </div>`;
   $('#doBackup').onclick = downloadBackup;
+  bindCompanyCard(company);
   if($('#restoreFile')) $('#restoreFile').onchange = e=>{
     const file = e.target.files[0];
     if(file) restoreBackupFile(file);
