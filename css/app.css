@@ -460,3 +460,7 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 #suList{padding-bottom:70px;}
 @media (max-width:720px){ .su-row{grid-template-columns:1fr 1fr;} .su-name{grid-column:1/-1;} .su-sw{grid-column:1/-1; padding-bottom:0;} }
 @media (min-width:861px){ .su-bar{left:230px;} }
+.bt-mini{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding:6px 10px; border-radius:10px; background:var(--paper-dim); font-size:.85rem;}
+.bt-mini.bt-soon{background:var(--warn-bg);} .bt-mini.bt-expired{background:var(--danger-bg);}
+.bt-mini-t{flex:1; min-width:120px;}
+.bt-chg{border:0; background:none; color:var(--sea); font-weight:700; text-decoration:underline; padding:4px; font-size:.85rem; cursor:pointer;}

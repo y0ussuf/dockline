@@ -523,6 +523,9 @@ async function pickingBatchScreen(orderId, warehouseId){
   }
   const storeLabel = warehouseId ? (byId[batchIds[0]].warehouseName || 'Unassigned') : 'All stores';
   const prevItem = findPreviousItem(scopeItems, byId[batchIds[0]], order);
+  const anyTracked = Object.values(productsCache).some(batchTracked);
+  const [allBatches, batchSt] = anyTracked ? await Promise.all([getAll('batches'), getBatchSettings()]) : [[], {minMonths:2}];
+  const sugOf = (it, product)=> batchTracked(product) ? pickSuggestion(allBatches, product.id, it.batchChoice, batchSt.minMonths) : null;
 
   $('#main').innerHTML = `
     <div class="pick-wrap">
@@ -556,6 +559,7 @@ async function pickingBatchScreen(orderId, warehouseId){
               <div class="batch-name">${esc(it.excelDesc)}</div>
               <div class="batch-qty-box">${qtyNum}<span class="unit">${esc(qtyUnit)}</span></div>
               ${metaBits ? `<div class="subtle batch-meta">${metaBits}</div>` : ''}
+              ${product ? batchMiniHtml(sugOf(it, product), product, batchSt.minMonths, id) : ''}
             </div>
           </div>`;
         }).join('')}
@@ -578,7 +582,14 @@ async function pickingBatchScreen(orderId, warehouseId){
     btn.textContent = `✓ Mark checked as picked (${checked})`;
   }
   $('#batchList').querySelectorAll('.batch-check').forEach(cb=>cb.onchange = updateConfirmBtn);
-  $('#batchList').querySelectorAll('[data-openitem]').forEach(row=>row.onclick = ()=>{
+  $('#batchList').querySelectorAll('[data-openitem]').forEach(row=>row.onclick = (e)=>{
+    const chg = e.target.closest('[data-chbatch]');
+    if(chg){
+      e.stopPropagation();
+      const it = byId[chg.dataset.chbatch], product = productsCache[it.productId];
+      openBatchChooser(it, product, sugOf(it, product), batchSt.minMonths, refresh);
+      return;
+    }
     openItemActionModal(orderId, row.dataset.openitem, refresh);
   });
   $('#batch_confirm').onclick = async ()=>{

@@ -224,25 +224,36 @@ async function pickBatchCardHtml(it, product){
       ${sug.list.length>1?`<button class="btn btn-ghost btn-sm" id="pk_changebatch">Change batch</button>`:''}
     </div></div>`};
 }
+function openBatchChooser(it, product, sug, minMonths, onDone){
+  showModal(`<h3>Choose batch</h3><p class="subtle" style="margin-top:-8px;">${esc(product.name)} — the earliest expiry is suggested first.</p>
+    <div style="display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow:auto;">
+    ${sug.list.map((b,i)=>`<button class="bt-opt ${b.id===sug.batch.id?'on':''}" data-b="${b.id}">
+      <span><b>${b.batchNo?esc(b.batchNo):(b.kind==='opening'?'Opening stock':'No batch no.')}</b>${i===0?' <span class="bt-first">earliest</span>':''}
+      <span class="subtle" style="display:block;">${round2(b.qtyRemaining)} ${esc(product.unit||'')} left</span></span>${expBadge(b.expiryDate, minMonths)}</button>`).join('')}
+    </div><button class="btn btn-ghost" style="margin-top:12px; width:100%;" onclick="closeModal()">Cancel</button>`);
+  $('#modal-root').querySelectorAll('[data-b]').forEach(x=>x.onclick = async ()=>{
+    const first = sug.list[0].id;
+    it.batchChoice = x.dataset.b===first ? '' : x.dataset.b;
+    await put('orderItems', it); closeModal(); onDone();
+  });
+}
 function bindPickBatch(it, product, info, onDone){
   const btn = $('#pk_changebatch'); if(!btn || !info.sug) return;
-  btn.onclick = ()=>{
-    showModal(`<h3>Choose batch</h3><p class="subtle" style="margin-top:-8px;">${esc(product.name)} — the earliest expiry is suggested first.</p>
-      <div style="display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow:auto;">
-      ${info.sug.list.map((b,i)=>`<button class="bt-opt ${b.id===info.sug.batch.id?'on':''}" data-b="${b.id}">
-        <span><b>${b.batchNo?esc(b.batchNo):(b.kind==='opening'?'Opening stock':'No batch no.')}</b>${i===0?' <span class="bt-first">earliest</span>':''}
-        <span class="subtle" style="display:block;">${round2(b.qtyRemaining)} ${esc(product.unit||'')} left</span></span>${expBadge(b.expiryDate, info.minMonths)}</button>`).join('')}
-      </div><button class="btn btn-ghost" style="margin-top:12px; width:100%;" onclick="closeModal()">Cancel</button>`);
-    $('#modal-root').querySelectorAll('[data-b]').forEach(x=>x.onclick = async ()=>{
-      const first = info.sug.list[0].id;
-      it.batchChoice = x.dataset.b===first ? '' : x.dataset.b;
-      await put('orderItems', it); closeModal(); onDone();
-    });
-  };
+  btn.onclick = ()=>openBatchChooser(it, product, info.sug, info.minMonths, onDone);
+}
+/* one-line batch hint for the "pick several at once" list */
+function batchMiniHtml(sug, product, minMonths, itemId){
+  if(!sug) return '';
+  const b = sug.batch;
+  return `<div class="bt-mini bt-${sug.status}"><span class="bt-mini-t"><b>${b.batchNo?esc(b.batchNo):(b.kind==='opening'?'Opening stock':'No batch no.')}</b>
+    · ${round2(b.qtyRemaining)} ${esc(product.unit||'')} left</span>${expBadge(b.expiryDate, minMonths)}
+    ${sug.list.length>1?`<button class="bt-chg" data-chbatch="${itemId}">change</button>`:''}</div>`;
 }
 
 /* ------------------------------ screens ------------------------------ */
 route('batches', async (parts)=>{
+  if(parts[0]==='recall') return recallScreen();
+  if(parts[0]==='trace' && parts[1]) return traceBatchScreen(parts[1]);
   if(parts[0]) return productBatchesScreen(parts[0]);
   return batchesOverviewScreen();
 });
@@ -274,6 +285,7 @@ async function batchesOverviewScreen(){
     ${expired.length?`<div class="bt-h">Expired</div><div class="bt-list">${expired.map(rowB).join('')}</div>`:''}
     ${soon.length?`<div class="bt-h">Expiring within ${st.minMonths} month${st.minMonths===1?'':'s'}</div><div class="bt-list">${soon.map(rowB).join('')}</div>`:''}
     ${needs.length?`<div class="bt-h">Need batch details <span class="subtle" style="font-weight:500;">— stock without dates yet</span></div><div class="bt-list">${needs.map(rowB).join('')}</div>`:''}
+    <a href="#/batches/recall" class="bt-row" style="margin-top:20px;"><span style="font-size:1.4rem;">🔎</span><div style="flex:1;"><b>Trace a batch</b><div class="subtle">Recall check — find which vessels received a batch</div></div><span>›</span></a>
     <div class="bt-h">Products with batch tracking</div>
     <div class="bt-list">${tracked.map(p=>{
       const bs = live.filter(b=>b.productId===p.id).sort(fefoSort), first = bs.find(b=>b.expiryDate);
@@ -308,6 +320,7 @@ async function productBatchesScreen(productId){
         <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
           <button class="btn btn-ghost btn-sm" data-edit="${b.id}">✎ Edit details</button>
           ${b.kind==='opening'?`<button class="btn btn-signal btn-sm" data-split="${b.id}">Split into real batches</button>`:''}
+          <a class="btn btn-ghost btn-sm" href="#/batches/trace/${b.id}">Where did it go?</a>
           ${b.invoiceId?`<a class="btn btn-ghost btn-sm" href="#/receiving/${b.invoiceId}">Delivery</a>`:''}
         </div></div>`; }).join('') || `<p class="subtle">No batches with stock.</p>`}
     <div style="margin-top:8px;"><a href="#/batches" class="btn btn-ghost">Back</a></div>`;
@@ -378,4 +391,72 @@ function openSplitBatch(p, opening, done){
     };
   };
   draw();
+}
+
+/* ------------------------------ recall / trace ------------------------------ */
+/* batchId -> [{order, item, qty}] from the batches each finished line was picked from */
+async function batchUsageMap(){
+  const [items, orders] = await Promise.all([getAll('orderItems'), getAll('orders')]);
+  const om = new Map(orders.map(o=>[o.id,o]));
+  const m = new Map();
+  const add = (alloc, it)=>{ const o = om.get(it.orderId); if(!o) return; if(!m.has(alloc.batchId)) m.set(alloc.batchId, []); m.get(alloc.batchId).push({order:o, item:it, qty:alloc.qty}); };
+  for(const it of items){
+    (it.batchAllocs||[]).forEach(a=>add(a,it));
+    (Array.isArray(it.replacements)?it.replacements:[]).forEach(r=>(r.batchAllocs||[]).forEach(a=>add(a,it)));
+  }
+  return m;
+}
+function usageByVessel(uses){
+  const g = new Map();
+  for(const u of uses){
+    const key = u.order.id;
+    if(!g.has(key)) g.set(key, {order:u.order, qty:0, lines:[]});
+    const e = g.get(key); e.qty = round2(e.qty+u.qty); e.lines.push(u);
+  }
+  return [...g.values()].sort((a,b)=>String(b.order.orderDate||b.order.completedAt||'').localeCompare(String(a.order.orderDate||a.order.completedAt||'')));
+}
+function orderDateOf(o){ const d = String(o.orderDate||o.completedAt||'').slice(0,10); return d ? fmtDate(d) : ''; }
+
+async function recallScreen(){
+  const [batches, products, usage, st] = await Promise.all([getAll('batches'), slimProducts(), batchUsageMap(), getBatchSettings()]);
+  const pm = new Map(products.map(p=>[p.id,p]));
+  const rows = batches.filter(b=>pm.has(b.productId));
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Trace a batch</h1><a href="#/batches" class="btn btn-ghost" style="text-decoration:none;">Back</a></div>
+    <p class="subtle" style="margin-top:-10px;">Type a batch number, product or supplier to see where that batch went.</p>
+    <div class="field" style="max-width:420px;"><input type="text" id="rcQ" placeholder="Batch no., product or supplier…" autofocus></div>
+    <div id="rcRes" class="bt-list"></div>`;
+  function draw(q){
+    const nq = normalize(q);
+    if(!nq){ $('#rcRes').innerHTML = `<p class="subtle">Start typing to search ${rows.length} batch${rows.length===1?'':'es'}.</p>`; return; }
+    const hit = rows.filter(b=>normalize([b.batchNo, pm.get(b.productId).name, b.supplierName].join(' ')).includes(nq))
+      .sort((a,b)=>String(b.receivedAt||'').localeCompare(String(a.receivedAt||''))).slice(0,40);
+    $('#rcRes').innerHTML = hit.map(b=>{
+      const p = pm.get(b.productId), v = usageByVessel(usage.get(b.id)||[]);
+      return `<a class="bt-row" href="#/batches/trace/${b.id}"><div style="flex:1; min-width:0;"><b>${esc(p.name)}</b>
+        <div class="subtle">${batchTitle(b)}${b.supplierName?' · '+esc(b.supplierName):''} · ${v.length} order${v.length===1?'':'s'}</div></div>${expBadge(b.expiryDate, st.minMonths)}</a>`;
+    }).join('') || `<p class="subtle">No batch matches.</p>`;
+  }
+  draw('');
+  let t; $('#rcQ').addEventListener('input', e=>{ clearTimeout(t); const v=e.target.value; t=setTimeout(()=>draw(v), 300); });
+}
+
+async function traceBatchScreen(batchId){
+  const [b, usage, st] = await Promise.all([getOne('batches', batchId), batchUsageMap(), getBatchSettings()]);
+  if(!b){ location.hash = '#/batches/recall'; return; }
+  const p = await getOne('products', b.productId);
+  const uses = usage.get(b.id)||[], by = usageByVessel(uses);
+  const picked = round2(uses.reduce((s,u)=>s+u.qty,0)), unit = esc((p&&p.unit)||'');
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>${esc(b.productName||(p&&p.name)||'Batch')}</h1><a href="#/batches/recall" class="btn btn-ghost" style="text-decoration:none;">Back</a></div>
+    <div class="bt-card" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><b style="flex:1; font-size:1.15rem;">${batchTitle(b)}</b>${expBadge(b.expiryDate, st.minMonths)}</div>
+      <div class="bt-meta" style="margin-top:10px;"><span>Received <b>${round2(b.qtyReceived)}</b> ${unit}${b.receivedAt?' · '+fmtDate(b.receivedAt):''}</span><span>Left in stock <b>${round2(b.qtyRemaining)}</b> ${unit}</span></div>
+      <div class="subtle">${b.supplierName?esc(b.supplierName)+' · ':''}${b.productionDate?'Prod '+fmtDate(b.productionDate)+' · ':''}${b.expiryDate?'Exp '+fmtDate(b.expiryDate):'No expiry date'}${b.invoiceId?` · <a href="#/receiving/${b.invoiceId}">delivery</a>`:''}</div>
+    </div>
+    <div class="bt-h">Went to ${by.length} order${by.length===1?'':'s'} <span class="subtle" style="font-weight:500;">— ${picked} ${unit} in total</span></div>
+    <div class="bt-list">${by.map(e=>`<a class="bt-row" href="#/order/${e.order.id}/summary"><div style="flex:1; min-width:0;"><b>${esc(cleanVesselName(e.order.vessel||'')||e.order.vessel||'Vessel')}</b>
+      <div class="subtle">${esc(e.order.orderNumber||'')}${orderDateOf(e.order)?' · '+orderDateOf(e.order):''} · ${e.lines.length} line${e.lines.length===1?'':'s'}</div></div><span class="exp-badge exp-ok">${e.qty} ${unit}</span></a>`).join('')
+      || `<p class="subtle">Nothing from this batch has been picked for an order yet.</p>`}</div>
+    <p class="subtle" style="margin-top:14px;">Only orders finished after batch tracking was switched on are listed. Stock taken by manual corrections isn't tied to a vessel.</p>`;
 }
