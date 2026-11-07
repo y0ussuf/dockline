@@ -666,7 +666,7 @@ route('deliveries', async ()=>{
       renderView();
     };
 
-    document.querySelectorAll('.sdel-tab-btn').forEach(btn=>{
+    $$('.sdel-tab-btn').forEach(btn=>{
       btn.onclick = ()=>{
         window.__sdelTab = btn.dataset.tab;
         renderView();
