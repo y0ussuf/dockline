@@ -29,7 +29,7 @@ route('productsetup', async ()=>{
     return `<div class="su-row ${changed?'su-changed':''} ${err?'su-bad':''}" data-id="${p.id}">
       <div class="su-name"><b>${esc(p.name)}</b><span class="subtle">${esc(p.unit||'no unit')}</span></div>
       <label class="su-f"><span>Stock on hand</span><input type="number" step="any" inputmode="decimal" data-k="stockQty" placeholder="not tracked" value="${hasStock(p)?esc(cur(p,'stockQty')):''}"></label>
-      <label class="su-f"><span>Pack size</span><input type="number" step="any" inputmode="decimal" data-k="packSize" placeholder="e.g. 360" value="${parseFloat(cur(p,'packSize'))>0?esc(cur(p,'packSize')):''}"></label>
+      <label class="su-f"><span>Pack size</span><input type="number" step="any" inputmode="decimal" data-k="packSize" placeholder="Quantity per pack" value="${parseFloat(cur(p,'packSize'))>0?esc(cur(p,'packSize')):''}"></label>
       <label class="su-f"><span>Pack name</span><input type="text" data-k="packName" placeholder="box" value="${esc(cur(p,'packName')||'')}"></label>
       <label class="su-sw"><input type="checkbox" data-k="trackBatches" ${cur(p,'trackBatches')?'checked':''}><span>Track batches</span></label>
       ${err?`<div class="su-err">${err}</div>`:''}

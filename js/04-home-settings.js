@@ -109,12 +109,12 @@ route('settings', async ()=>{
       <div class="section-title">Crew sync</div>
       <p class="subtle">Share one live set of products, warehouses and orders with the rest of the crew. Everything still works with no signal — changes made offline send themselves as soon as a connection comes back.</p>
       ${DEMO_MODE ? `<p class="subtle" style="color:var(--warn);">🧪 Disabled in demo mode — there's no real account behind this session, so there's nothing to sync.</p>` : `<p id="syncIndicator" style="margin:12px 0;"></p>`}
-      <div class="field"><label>Your name (shown as who made each change)</label><input type="text" id="syncCrewName" placeholder="e.g. Ahmed" value="${esc(syncCfgCache.crewName||'')}"></div>
+      <div class="field"><label>Your name (shown as who made each change)</label><input type="text" id="syncCrewName" placeholder="Your name" value="${esc(syncCfgCache.crewName||'')}"></div>
       ${isAdmin() ? `
       <details ${syncCfgCache.url?'':'open'}>
         <summary class="subtle" style="cursor:pointer; margin-bottom:10px;">Connection details</summary>
         <div class="field"><label>Supabase project URL</label><input type="text" id="syncUrl" placeholder="https://xxxx.supabase.co/rest/v1" value="${esc(syncCfgCache.url||'')}"></div>
-        <div class="field"><label>Supabase API key</label><input type="text" id="syncKey" placeholder="sb_publishable_…" value="${esc(syncCfgCache.key||'')}"></div>
+        <div class="field"><label>Supabase API key</label><input type="text" id="syncKey" placeholder="Project publishable key" value="${esc(syncCfgCache.key||'')}"></div>
       </details>` : ''}
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn btn-signal btn-sm" id="syncSave">Save &amp; sync now</button>

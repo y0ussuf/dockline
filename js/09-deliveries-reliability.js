@@ -79,7 +79,7 @@ async function finishOrder(orderId, skipCheck){
    immediately, without leaving the delivery screen. */
 function openNewBoxTypeModal(onSaved){
   showModal(`<h3>New box type</h3>
-    <div class="field"><label>Name</label><input type="text" id="nbt_name" placeholder="e.g. Ice boxes" autofocus></div>
+    <div class="field"><label>Name</label><input type="text" id="nbt_name" placeholder="Box type name" autofocus></div>
     <div style="display:flex; gap:10px; margin-top:10px;">
       <button class="btn btn-signal" id="nbt_save" style="flex:1;">Save</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -99,7 +99,7 @@ function openNewBoxTypeModal(onSaved){
    (if wanted) can still be filled in later from the Suppliers page. */
 function openNewSupplierModal(onSaved){
   showModal(`<h3>New supplier</h3>
-    <div class="field"><label>Name</label><input type="text" id="nsp_name" placeholder="e.g. Aegean Traders" autofocus></div>
+    <div class="field"><label>Name</label><input type="text" id="nsp_name" placeholder="Supplier name" autofocus></div>
     <div style="display:flex; gap:10px; margin-top:10px;">
       <button class="btn btn-signal" id="nsp_save" style="flex:1;">Save</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -135,12 +135,12 @@ function openLogReceiptDetailsModal(product, suppliers, onSaved, initial){
   showModal(`<h3>Log received stock</h3>
     <p class="subtle" style="margin-top:-10px;">${esc(product.name)}</p>
     <div class="row2">
-      <div class="field"><label>Quantity received</label><input type="number" id="rr_qty" step="any" placeholder="e.g. 1000" value="${initial.qty!=null?esc(initial.qty):''}" autofocus></div>
+      <div class="field"><label>Quantity received</label><input type="number" id="rr_qty" step="any" placeholder="Quantity" value="${initial.qty!=null?esc(initial.qty):''}" autofocus></div>
       <div class="field"><label>Unit</label><input type="text" id="rr_unit" value="${esc(initial.unit!=null?initial.unit:(product.unit||''))}" placeholder="pcs, kg…"></div>
     </div>
     <div class="field"><label>Supplier</label><select id="rr_supplier">${supplierOptionsHtml(initial.supplierId||'')}</select></div>
     <div class="field"><label>Date received</label><input type="date" id="rr_date" value="${initial.date||today}"></div>
-    <div class="field"><label>Note (optional)</label><input type="text" id="rr_note" value="${esc(initial.note||'')}" placeholder="e.g. invoice #, batch, condition"></div>
+    <div class="field"><label>Note (optional)</label><input type="text" id="rr_note" value="${esc(initial.note||'')}" placeholder="Note"></div>
     ${!isStockTracked(product) ? `<p class="subtle">This product isn't being stock-tracked, so this will just be logged to history — "stock on hand" won't change. Turn tracking on from Stock if you want it to.</p>` : ''}
     <div style="display:flex; gap:10px; margin-top:10px;">
       <button class="btn btn-signal" id="rr_save" style="flex:1;">Save</button>
@@ -262,7 +262,7 @@ async function boxReceiptsScreen(orderId, forceConfirm){
         </div>
         <div class="field" style="margin-bottom:0;">
           <label>Dock Delivery Note / Reference (Optional)</label>
-          <input type="text" id="rc_note" placeholder="e.g. Inward Waybill #4092, driver Alex">
+          <input type="text" id="rc_note" placeholder="Reference or note">
         </div>
       </div>
 
@@ -320,7 +320,7 @@ async function boxReceiptsScreen(orderId, forceConfirm){
         <div class="field" style="margin-bottom:0; display:flex; gap:8px; align-items:end;">
           <div style="flex:1;">
             <label style="font-size:.78rem;">Quantity Received (Boxes)</label>
-            <input type="number" class="rcl-qty" data-line="${l.key}" step="any" min="0" placeholder="e.g. 10" value="${l.qty}">
+            <input type="number" class="rcl-qty" data-line="${l.key}" step="any" min="0" placeholder="Quantity" value="${l.qty}">
           </div>
           ${lines.length>1 ? `<button type="button" class="btn btn-ghost btn-sm" data-removeline="${l.key}" title="Remove line" style="color:var(--danger);">✕</button>` : ''}
         </div>

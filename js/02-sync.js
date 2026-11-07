@@ -15,11 +15,11 @@ const SYNC_TABLES=['warehouses','sections','products','mappings','orders','order
    batches of 500 instead (see pushHistory / the pull below). A record without synced:true hasn't been
    uploaded yet; deletions are remembered in settings.historyPendingDeletes until they've been sent. */
 const HISTORY_STORES=['historyOrders','historyLines'];
-const DEFAULT_SUPABASE_URL='https://flhwqqblybrmargalgld.supabase.co/rest/v1';
-const DEFAULT_SUPABASE_KEY='sb_publishable_VJtbFCSJSkCymNi2V_hl1g_gRUzDmX6';
+const DEFAULT_SUPABASE_URL = (window.DOCKLINE_CONFIG && window.DOCKLINE_CONFIG.supabaseUrl) || '';
+const DEFAULT_SUPABASE_KEY = (window.DOCKLINE_CONFIG && window.DOCKLINE_CONFIG.supabaseKey) || '';
 async function seedSyncConfigIfEmpty(){
   const existing = await getSyncConfig();
-  if(existing) return;
+  if(existing || !DEFAULT_SUPABASE_URL || !DEFAULT_SUPABASE_KEY) return;
   await rawPut('settings', {id:'syncConfig', url:DEFAULT_SUPABASE_URL, key:DEFAULT_SUPABASE_KEY, crewName:''});
 }
 let syncDebounceTimer=null, syncInFlight=false, syncIntervalHandle=null, syncPaused=false; // paused while a bulk delete runs

@@ -151,8 +151,8 @@ async function orderQuantityCheck(orderId){
     if(!cand.length) return showAlert('Every item of this order is already in the check.');
     showModal(`<h3>Check another item</h3>
       <div class="field"><label>Item</label><select id="ac_item">${cand.map(it=>`<option value="${it.id}">${esc(it.productName||it.excelDesc)} — ${it.qtyAdjusted?it.excelQty:it.requestedQty} ${esc(it.requestedUnit||'')}</option>`).join('')}</select></div>
-      <div class="row2"><div class="field"><label>Order in multiples of</label><input type="number" step="any" inputmode="decimal" id="ac_step" placeholder="e.g. 1 or 12" autofocus></div>
-      <div class="field"><label>Called</label><input type="text" id="ac_name" placeholder="kg, box, pack"></div></div>
+      <div class="row2"><div class="field"><label>Order in multiples of</label><input type="number" step="any" inputmode="decimal" id="ac_step" placeholder="Quantity per pack" autofocus></div>
+      <div class="field"><label>Called</label><input type="text" id="ac_name" placeholder="Name of the pack"></div></div>
       <div class="field"><label>Rounding</label><select id="ac_mode"><option value="up">Round up</option><option value="">Use the general rule</option><option value="nearest">Round to nearest</option><option value="down">Round down</option></select></div>
       <label class="bt-switch"><input type="checkbox" id="ac_save" checked><span><b>Remember for this item</b><small>Saves it as the item's pack size and rounding, so it's checked automatically next time.</small></span></label>
       <div style="display:flex; gap:10px; margin-top:12px;"><button class="btn btn-signal" id="ac_ok" style="flex:1;">Add to check</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);

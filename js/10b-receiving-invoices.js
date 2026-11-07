@@ -520,19 +520,19 @@ async function newDeliveryScreen(){
         <div class="rcv-item-grid">
           <div class="field" style="margin-bottom:0;">
             <label>Quantity Received *</label>
-            <input type="number" step="any" inputmode="decimal" data-f="qty" placeholder="e.g. 100" value="${esc(l.qty)}">
+            <input type="number" step="any" inputmode="decimal" data-f="qty" placeholder="Quantity" value="${esc(l.qty)}">
           </div>
           <div class="field" style="margin-bottom:0;">
             <label>Unit of Measure</label>
-            <input type="text" data-f="unit" placeholder="e.g. pcs, cartons" value="${esc(l.unit)}">
+            <input type="text" data-f="unit" placeholder="Unit" value="${esc(l.unit)}">
           </div>
           <div class="field" style="margin-bottom:0;">
             <label>Batch / Lot # ${hasBatchTracking ? '<span style="color:var(--sea);">●</span>' : ''}</label>
-            <input type="text" data-f="batchNo" placeholder="e.g. B-2026-001" value="${esc(l.batchNo||'')}">
+            <input type="text" data-f="batchNo" placeholder="Batch / lot no." value="${esc(l.batchNo||'')}">
           </div>
           <div class="field" style="margin-bottom:0;">
             <label>Pack size <span class="subtle" style="font-weight:500;">(optional)</span></label>
-            <input type="number" step="any" inputmode="decimal" data-f="packSize" placeholder="${esc((prodMap.get(l.productId)||{}).packSize||'e.g. 360')}" value="${esc(l.packSize||'')}">
+            <input type="number" step="any" inputmode="decimal" data-f="packSize" placeholder="${esc((prodMap.get(l.productId)||{}).packSize||'Quantity per pack')}" value="${esc(l.packSize||'')}">
           </div>
         </div>
 
@@ -639,11 +639,11 @@ async function newDeliveryScreen(){
         </div>
         <div class="field" style="margin-bottom:0;">
           <label>Invoice / Waybill / Delivery Note #</label>
-          <input type="text" id="dvNo" placeholder="e.g. INV-88492" value="${esc(S.invoiceNo)}">
+          <input type="text" id="dvNo" placeholder="Invoice or delivery note no." value="${esc(S.invoiceNo)}">
         </div>
         <div class="field" style="margin-bottom:0;">
           <label>Internal Note / Bay Reference</label>
-          <input type="text" id="dvNote" placeholder="e.g. Dock 2, checked by Alex" value="${esc(S.note)}">
+          <input type="text" id="dvNote" placeholder="Note" value="${esc(S.note)}">
         </div>
       </div>
     </div>

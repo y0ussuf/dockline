@@ -69,7 +69,7 @@ function expiryFieldHtml(prefix, opts){
       </div>
       <input type="date" id="${prefix}_edate" value="${esc(opts.expiryDate||'')}" style="${mode==='shelf'?'display:none;':''}">
       <div id="${prefix}_shelf_wrap" class="row2" style="${mode==='date'?'display:none;':''}">
-        <input type="number" id="${prefix}_shelf_amount" min="0" step="any" value="${opts.shelfAmount??''}" placeholder="e.g. 60">
+        <input type="number" id="${prefix}_shelf_amount" min="0" step="any" value="${opts.shelfAmount??''}" placeholder="Amount">
         <select id="${prefix}_shelf_unit">
           <option value="days" ${unit==='days'?'selected':''}>Day(s)</option>
           <option value="weeks" ${unit==='weeks'?'selected':''}>Week(s)</option>
