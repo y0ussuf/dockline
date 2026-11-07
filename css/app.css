@@ -535,3 +535,6 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 }
 
 .inv-tw{overflow-x:auto;}
+
+.iv-work{font-size:12.5px; color:var(--muted, #6b7280); margin-top:6px; font-variant-numeric:tabular-nums;}
+.iv-fix{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;} .iv-fix input{flex:1 1 150px; min-width:0; padding:9px 12px; border-radius:10px; border:1px solid var(--line); background:var(--card,#fff);}
