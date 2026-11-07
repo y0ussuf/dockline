@@ -170,6 +170,7 @@ route('splitter', async ()=>{
     for(const row of dataRows){
       const desc = String((kDesc!==-1 ? row[kDesc] : '') ?? '').trim();
       if(!desc) continue;
+      if(sheetRowHeading(row, headerInfo)) continue;   // a heading such as BOND is not a product
       const qtyRaw = kQty!==-1 ? row[kQty] : '';
       const qty = parseFloat(qtyRaw);
       const srVal = kSr!==-1 ? String(row[kSr] ?? '').trim() : '';

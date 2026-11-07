@@ -205,6 +205,7 @@ async function parseHistorySheet(file){
     for(const row of aoa.slice(headerInfo.rowIndex+1)){
       const desc = String((kDesc!==-1 ? row[kDesc] : '') ?? '').trim();
       if(!desc) continue;
+      if(sheetRowHeading(row, headerInfo)) continue;
       const qty = parseFloat(kQty!==-1 ? row[kQty] : '');
       if(isNaN(qty) || qty<=0){ out.skippedLines++; continue; }
       out.lines.push({sr: kSr!==-1 ? String(row[kSr]??'').trim() : '', desc, qty, unit: kUnit!==-1 ? String(row[kUnit]??'').trim() : ''});
