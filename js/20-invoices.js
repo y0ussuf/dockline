@@ -1,0 +1,267 @@
+/* ============================ INVOICES ============================
+   One invoice per order type (Provision, Bond, Cash…) of a finished order, built from what was actually
+   picked. Quantities are as picked, prices as stored — all maths is exact (see 17-money.js), nothing is
+   rounded. A draft can be edited; once issued an invoice is locked: to fix it, cancel it (its number stays
+   on record) and make a new one. */
+const INV_STATUS = {draft:'Draft', issued:'Issued', cancelled:'Cancelled'};
+const dm = v=> Dec.parse(v) || Dec.ZERO;
+const money = d=> Dec.fmt(d, 2);
+
+/* the picked lines of one order type, ready to price */
+function invoiceLinesFromItems(items, byProd, basis){
+  const lines = [];
+  const push = (it, productId, desc, qty, unit)=>{
+    const q = Dec.parse(qty); if(!q || Dec.cmp(q, Dec.ZERO)<=0) return;
+    const p = productId ? byProd.get(productId) : null;
+    lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
+      cost:(p&&p.costPrice)||'', sell:(p&&p.sellPrice)||'', price:(p ? (basis==='cost'?p.costPrice:p.sellPrice) : '')||'',
+      priceUnit:(p&&p.unit)||'', discType:'', disc:'', include:true, substituted:it.status==='substituted'});
+  };
+  for(const it of items){
+    if(it.status==='not_available' || it.status==='pending' || it.status==='unmatched') continue;
+    if(it.status==='substituted'){
+      const reps = replacementsOf(it);
+      if(reps.length){ reps.forEach(r=>push(it, r.productId, r.name || it.replacementName || it.excelDesc, r.qty, r.unit)); continue; }
+    }
+    push(it, it.productId, it.productName || it.excelDesc, it.actualQty, it.actualUnit || it.requestedUnit);
+  }
+  return lines;
+}
+/* every number of an invoice, exactly */
+function invoiceTotals(inv){
+  let sub = Dec.ZERO, disc = Dec.ZERO;
+  const rows = inv.lines.map(l=>{
+    if(!l.include) return {gross:Dec.ZERO, disc:Dec.ZERO, net:Dec.ZERO};
+    const gross = Dec.mul(dm(l.qty), dm(l.price));
+    let d = Dec.ZERO;
+    if(l.discType==='pct' && Dec.parse(l.disc)) d = Dec.pct(gross, dm(l.disc));
+    else if(l.discType==='amt' && Dec.parse(l.disc)) d = dm(l.disc);
+    sub = Dec.add(sub, gross); disc = Dec.add(disc, d);
+    return {gross, disc:d, net:Dec.sub(gross, d)};
+  });
+  const taxable = Dec.sub(sub, disc);
+  const tax = inv.taxOn ? Dec.pct(taxable, dm(inv.taxRate)) : Dec.ZERO;
+  return {rows, sub, disc, taxable, tax, total:Dec.add(taxable, tax)};
+}
+function lineIssues(l, inv){
+  const w = [];
+  if(!l.include) return w;
+  if(l.price==='' || !Dec.parse(l.price)) w.push('No price');
+  else if(Dec.cmp(dm(l.price), Dec.ZERO)===0) w.push('Price is 0');
+  const u = normalize(l.unit), pu = normalize(l.priceUnit);
+  if(l.price!=='' && u && pu && u!==pu) w.push(`Picked in “${l.unit}”, price is per “${l.priceUnit}” — check`);
+  if(l.substituted) w.push('Substituted item — check the price');
+  const cost = Dec.parse(l.cost);
+  if(cost && Dec.parse(l.price)){
+    const t = invoiceTotals({lines:[l], taxOn:false});
+    if(Dec.cmp(t.rows[0].net, Dec.mul(dm(l.qty), cost))<0) w.push('Below cost');
+  }
+  return w;
+}
+async function nextInvoiceNumber(prefix){
+  const year = new Date().getFullYear(), head = `${prefix}-${year}-`;
+  let max = 0;
+  for(const i of await getAll('invoices')){ if(i.number && i.number.startsWith(head)){ const n = parseInt(i.number.slice(head.length), 10); if(n>max) max = n; } }
+  return head + String(max+1).padStart(4,'0');
+}
+const invBadge = s=> `<span class="badge inv-${s}">${INV_STATUS[s]||s}</span>`;
+
+/* ---------- the printed document ---------- */
+function invoiceDocHtml(inv){
+  const co = inv.company || {}, t = invoiceTotals(inv), lines = inv.lines.map((l,i)=>({l,r:t.rows[i]})).filter(x=>x.l.include);
+  const anyDisc = lines.some(x=>Dec.cmp(x.r.disc,Dec.ZERO)!==0);
+  return `<div class="inv-doc ${inv.status==='cancelled'?'is-cancelled':''}" id="inv_doc">
+    ${inv.status==='cancelled' ? '<div class="inv-stamp">CANCELLED</div>' : ''}
+    <div class="inv-head">
+      <div class="inv-co">${co.logo?`<img class="inv-logo" src="${esc(co.logo)}" alt="">`:''}
+        <div><div class="inv-co-name">${esc(co.name||'')}</div>
+          <div class="inv-sub">${esc(co.address||'').replace(/\n/g,'<br>')}</div>
+          <div class="inv-sub">${[co.phone,co.email].filter(Boolean).map(esc).join(' · ')}</div></div></div>
+      <div class="inv-title"><div class="inv-h1">SALES INVOICE</div><div class="inv-no">${inv.number?esc(inv.number):'DRAFT'}</div></div>
+    </div>
+    <div class="inv-meta">
+      <div><div class="inv-k">Bill to (vessel)</div><div class="inv-v">${esc(inv.vessel)}</div><div class="inv-sub">${esc(inv.code||'')}</div></div>
+      <div><div class="inv-k">Order type</div><div class="inv-v">${esc(inv.orderType)}</div><div class="inv-sub">Order ${esc(inv.orderNumber||'')}</div></div>
+      <div><div class="inv-k">Invoice date</div><div class="inv-v">${fmtDate(inv.invoiceDate)}</div></div>
+    </div>
+    <div class="inv-tw"><table class="inv-table"><thead><tr><th>#</th><th>Description</th><th class="n">Qty</th><th>Unit</th><th class="n">Unit price</th>${anyDisc?'<th class="n">Discount</th>':''}<th class="n">Total</th></tr></thead><tbody>
+      ${lines.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b></td><td class="n">${Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.l.unit)}</td><td class="n">${money(dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="inv-foot">
+      <div class="inv-notes"><div class="inv-k">Notes &amp; terms</div><div>${esc(inv.notes||'').replace(/\n/g,'<br>')}</div></div>
+      <div class="inv-tot">
+        <div><span>Subtotal</span><span>${money(t.sub)} EGP</span></div>
+        <div><span>Total discount</span><span>- ${money(t.disc)} EGP</span></div>
+        <div><span>${esc(inv.taxLabel||'Tax')} (${inv.taxOn?esc(Dec.fmt(dm(inv.taxRate),0)):'0'}%)</span><span>${money(t.tax)} EGP</span></div>
+        <div class="grand"><span>Total</span><span>${money(t.total)} EGP</span></div>
+      </div>
+    </div>
+    <div class="inv-sign"><div><span>Receiver's signature</span></div><div><span>Company stamp</span></div></div>
+  </div>`;
+}
+
+/* ---------- list ---------- */
+route('invoices', async ()=>{
+  const all = (await getAll('invoices')).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  const f = window.__invFilter || 'all';
+  const view = all.filter(i=> f==='all' || i.status===f);
+  const nums = new Map(); all.forEach(i=>{ if(i.number) nums.set(i.number,(nums.get(i.number)||0)+1); });
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Invoices</h1><button class="btn btn-signal btn-sm" id="inv_new">+ New invoice</button></div>
+    <div class="tag-row" id="inv_f">${[['all','All'],['draft','Drafts'],['issued','Issued'],['cancelled','Cancelled']].map(([k,l])=>`<button class="chip ${f===k?'active':''}" data-f="${k}">${l} · ${k==='all'?all.length:all.filter(i=>i.status===k).length}</button>`).join('')}</div>
+    <div class="card" style="margin-top:12px;">${view.length ? view.map(i=>{ const t = invoiceTotals(i); return `
+      <a class="list-row inv-row" href="#/invoice/${i.id}">
+        <div style="flex:1; min-width:0;"><b>${i.number?esc(i.number):'Draft'}</b> ${nums.get(i.number)>1?'<span class="badge b-unmatched">duplicate number</span>':''}
+          <div class="subtle">${esc(i.vessel)} · ${esc(i.orderType)} · ${fmtDate(i.invoiceDate)}</div></div>
+        <div style="text-align:right;"><b>${money(t.total)}</b> <span class="subtle">EGP</span><div>${invBadge(i.status)}</div></div>
+      </a>`; }).join('') : `<div class="empty"><div class="ic">🧾</div>${all.length?'Nothing here.':'No invoices yet. Open a completed order and make one.'}</div>`}</div>`;
+  $('#inv_f').querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{ window.__invFilter = b.dataset.f; routes['invoices']([]); });
+  $('#inv_new').onclick = async ()=>{
+    const orders = (await getAll('orders')).filter(o=>o.status==='completed').sort(compareOrdersForList);
+    showModal(`<h3>Invoice which order?</h3><div style="max-height:55vh; overflow:auto;">${orders.length ? orders.map(o=>`<a class="list-row" href="#/invoice/order/${o.id}" onclick="closeModal()"><div style="flex:1;"><b>${esc(o.vessel)}</b><div class="subtle">${esc(o.orderNumber)} · ${fmtDate(o.orderDate)}</div></div></a>`).join('') : '<p class="subtle">No completed orders yet.</p>'}</div><button class="btn btn-ghost" style="margin-top:10px;" onclick="closeModal()">Close</button>`);
+  };
+});
+
+/* ---------- per order: one invoice per type ---------- */
+route('invoice', async (parts)=>{
+  if(parts[0]==='order') return invoiceOrderScreen(parts[1]);
+  return invoiceScreen(parts[0]);
+});
+async function invoiceOrderScreen(orderId){
+  const [order, allItems, invs, products, co] = await Promise.all([getOne('orders', orderId), getAll('orderItems'), getAll('invoices'), getAll('products'), getCompany()]);
+  if(!order){ location.hash = '#/invoices'; return; }
+  const items = allItems.filter(it=>it.orderId===orderId).sort((a,b)=>(a.importIndex||0)-(b.importIndex||0));
+  const byProd = new Map(products.map(p=>[p.id,p]));
+  const types = [...new Set(items.map(it=>it.orderType||'Provision'))];
+  const mine = invs.filter(i=>i.orderId===orderId);
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Invoices</h1><a class="btn btn-ghost btn-sm" href="#/order/${order.id}/summary">← Order</a></div>
+    <p class="subtle" style="margin-top:-10px;">${esc(order.vessel)} · ${esc(order.imo||order.orderNumber)} — one invoice for each type of order in this sheet, built from what was picked.</p>
+    ${order.status!=='completed' ? '<div class="bt-warn" style="margin-bottom:14px;"><b>This order is not finished yet.</b><div class="subtle">Only lines already picked are included. Finish the order first so the quantities are final.</div></div>' : ''}
+    ${types.map(t=>{
+      const its = items.filter(it=>(it.orderType||'Provision')===t), lines = invoiceLinesFromItems(its, byProd, 'sell');
+      const have = mine.filter(i=>i.orderType===t).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+      const live = have.find(i=>i.status!=='cancelled');
+      return `<div class="card" style="margin-bottom:14px;"><div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div><b style="font-size:1.1rem;">${esc(t)}</b><div class="subtle">${its.length} line${its.length===1?'':'s'} · ${lines.length} to bill</div></div>
+        ${live ? `<a class="btn btn-ghost btn-sm" href="#/invoice/${live.id}">Open ${live.number?esc(live.number):'draft'} ${invBadge(live.status)}</a>` : `<button class="btn btn-signal btn-sm" data-mk="${esc(t)}" ${lines.length?'':'disabled'}>Create invoice</button>`}
+      </div>${have.filter(i=>i!==live).length ? `<div class="subtle" style="margin-top:8px;">Earlier: ${have.filter(i=>i!==live).map(i=>`<a href="#/invoice/${i.id}">${esc(i.number||'draft')}</a> (${INV_STATUS[i.status]})`).join(' · ')}</div>`:''}</div>`; }).join('')}`;
+  $('#main').querySelectorAll('[data-mk]').forEach(b=>b.onclick=async ()=>{
+    const t = b.dataset.mk;
+    const inv = {id:uid(), number:'', status:'draft', orderId:order.id, orderType:t, vessel:order.vessel, code:order.imo||'', orderNumber:order.orderNumber,
+      priceBasis:'sell', taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'',
+      lines: invoiceLinesFromItems(items.filter(it=>(it.orderType||'Provision')===t), byProd, 'sell'), createdAt:new Date().toISOString()};
+    await put('invoices', inv); location.hash = '#/invoice/'+inv.id;
+  });
+}
+
+/* ---------- one invoice: edit a draft / view an issued one ---------- */
+async function invoiceScreen(id){
+  let inv = await getOne('invoices', id);
+  if(!inv){ location.hash = '#/invoices'; return; }
+  const products = await getAll('products'); const byProd = new Map(products.map(p=>[p.id,p]));
+  const save = async ()=>{ await put('invoices', inv); };
+  function draw(){
+    if(inv.status!=='draft'){
+      $('#main').innerHTML = `
+        <div class="topbar no-print"><h1>${esc(inv.number)}</h1>${invBadge(inv.status)}</div>
+        <div class="no-print" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+          <button class="btn btn-signal btn-sm" id="iv_print">🖨 Print / save as PDF</button>
+          <button class="btn btn-ghost btn-sm" id="iv_xls">⬇ Excel</button>
+          ${inv.status==='issued' ? '<button class="btn btn-ghost btn-sm" id="iv_cancel" style="color:var(--danger);">Cancel invoice</button>' : '<button class="btn btn-ghost btn-sm" id="iv_redo">Make a new draft from this</button>'}
+          <a class="btn btn-ghost btn-sm" href="#/invoice/order/${inv.orderId}">Order invoices</a>
+        </div>
+        ${inv.status==='cancelled' ? `<div class="bt-warn no-print" style="margin-bottom:12px;">Cancelled ${fmtDate(inv.cancelledAt)}${inv.cancelReason?' — '+esc(inv.cancelReason):''}. The number stays on record.</div>`:''}
+        ${invoiceDocHtml(inv)}`;
+      $('#iv_print').onclick = ()=>window.print();
+      $('#iv_xls').onclick = ()=>exportInvoiceExcel(inv);
+      if($('#iv_cancel')) $('#iv_cancel').onclick = ()=>{
+        showModal(`<h3>Cancel ${esc(inv.number)}?</h3><p class="subtle">It can't be edited. The cancelled invoice and its number stay on record; you can then make a corrected one.</p><div class="field"><label>Reason (optional)</label><input type="text" id="cx_reason"></div>
+          <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="cx_go" style="flex:1; background:var(--danger);">Cancel invoice</button><button class="btn btn-ghost" onclick="closeModal()">Keep it</button></div>`);
+        $('#cx_go').onclick = async ()=>{ inv.status='cancelled'; inv.cancelledAt = new Date().toISOString(); inv.cancelReason = $('#cx_reason').value.trim(); await save(); closeModal(); if(typeof syncNow==='function') syncNow(); draw(); };
+      };
+      if($('#iv_redo')) $('#iv_redo').onclick = async ()=>{
+        const n = Object.assign({}, inv, {id:uid(), number:'', status:'draft', createdAt:new Date().toISOString(), issuedAt:undefined, cancelledAt:undefined, cancelReason:undefined, invoiceDate:todayISO(), lines:inv.lines.map(l=>Object.assign({}, l, {id:uid()}))});
+        await put('invoices', n); location.hash = '#/invoice/'+n.id;
+      };
+      return;
+    }
+    const t = invoiceTotals(inv), co = null;
+    const issues = inv.lines.map(l=>lineIssues(l, inv));
+    const blocking = inv.lines.some((l,i)=>l.include && issues[i].includes('No price'));
+    $('#main').innerHTML = `
+      <div class="topbar"><h1>${esc(inv.orderType)} invoice</h1>${invBadge('draft')}</div>
+      <p class="subtle" style="margin-top:-10px;">${esc(inv.vessel)} · ${esc(inv.code||inv.orderNumber||'')} — draft, nothing is final until you issue it. Quantities are as picked; prices are exact, never rounded.</p>
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row2">
+          <div class="field"><label>Price to use</label><div class="tag-row"><button class="chip ${inv.priceBasis==='sell'?'active':''}" data-b="sell">Sell price</button><button class="chip ${inv.priceBasis==='cost'?'active':''}" data-b="cost">Cost price</button></div></div>
+          <div class="field"><label>Invoice date</label><input type="date" id="iv_date" value="${esc(inv.invoiceDate)}"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>${esc(inv.taxLabel||'Tax')}</label><select id="iv_tax"><option value="0" ${inv.taxOn?'':'selected'}>No tax</option><option value="1" ${inv.taxOn?'selected':''}>Add tax</option></select></div>
+          <div class="field"><label>${esc(inv.taxLabel||'Tax')} rate %</label><input type="text" inputmode="decimal" id="iv_rate" value="${esc(inv.taxRate)}" ${inv.taxOn?'':'disabled'}></div>
+        </div>
+      </div>
+      <div id="iv_lines">${inv.lines.map((l,i)=>`
+        <div class="iv-line ${l.include?'':'off'}" data-i="${i}">
+          <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)}</span></div>
+          ${l.include ? `<div class="iv-grid">
+            <div class="field"><label>Unit price</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
+            <div class="field"><label>Discount</label><div style="display:flex; gap:6px;"><select data-dt="${i}" style="width:84px;"><option value="">none</option><option value="pct" ${l.discType==='pct'?'selected':''}>%</option><option value="amt" ${l.discType==='amt'?'selected':''}>EGP</option></select><input type="text" inputmode="decimal" data-d="${i}" value="${esc(l.disc)}" ${l.discType?'':'disabled'}></div></div>
+            <div class="iv-tot"><span class="subtle">Line total</span><b>${money(t.rows[i].net)}</b></div>
+          </div>
+          ${issues[i].length?`<div class="pr-warn">⚠ ${issues[i].map(esc).join(' · ')}</div>`:''}` : ''}
+        </div>`).join('')}</div>
+      <div class="card iv-sum"><div><span>Subtotal</span><b>${money(t.sub)}</b></div><div><span>Discount</span><b>- ${money(t.disc)}</b></div>${inv.taxOn?`<div><span>${esc(inv.taxLabel||'Tax')} (${esc(inv.taxRate)}%)</span><b>${money(t.tax)}</b></div>`:''}<div class="grand"><span>Total (EGP)</span><b>${money(t.total)}</b></div></div>
+      <div class="field" style="margin-top:14px;"><label>Notes &amp; terms</label><textarea id="iv_notes" rows="2">${esc(inv.notes)}</textarea></div>
+      <div class="pr-bar"><button class="btn btn-ghost btn-sm" id="iv_del">Delete draft</button><button class="btn btn-signal" id="iv_issue" ${blocking?'disabled':''}>${blocking?'Set every price to issue':'Issue invoice'}</button></div>`;
+    $('#main').querySelectorAll('[data-b]').forEach(b=>b.onclick=async ()=>{
+      inv.priceBasis = b.dataset.b;
+      inv.lines.forEach(l=>{ l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || ''; });
+      await save(); draw();
+    });
+    $('#iv_date').onchange = async e=>{ inv.invoiceDate = e.target.value; await save(); };
+    $('#iv_tax').onchange = async e=>{ inv.taxOn = e.target.value==='1'; await save(); draw(); };
+    $('#iv_rate').onchange = async e=>{ if(e.target.value.trim()!=='' && !Dec.parse(e.target.value)){ showAlert('Tax rate must be a plain number.'); e.target.value = inv.taxRate; return; } inv.taxRate = e.target.value.trim()||'0'; await save(); draw(); };
+    $('#iv_notes').onchange = async e=>{ inv.notes = e.target.value; await save(); };
+    const bad = (el, msg)=>{ showAlert(msg||'Enter a plain number, like 36.25.'); el.focus(); };
+    $('#main').querySelectorAll('[data-inc]').forEach(cb=>cb.onchange=async ()=>{ inv.lines[+cb.dataset.inc].include = cb.checked; await save(); draw(); });
+    $('#main').querySelectorAll('[data-price]').forEach(el=>el.onchange=async ()=>{ const v = el.value.trim(); if(v!=='' && !Dec.parse(v)) return bad(el); inv.lines[+el.dataset.price].price = v===''?'':Dec.str(Dec.parse(v)); await save(); draw(); });
+    $('#main').querySelectorAll('[data-dt]').forEach(el=>el.onchange=async ()=>{ const l = inv.lines[+el.dataset.dt]; l.discType = el.value; if(!el.value) l.disc = ''; await save(); draw(); });
+    $('#main').querySelectorAll('[data-d]').forEach(el=>el.onchange=async ()=>{ const v = el.value.trim(); if(v!=='' && !Dec.parse(v)) return bad(el); inv.lines[+el.dataset.d].disc = v===''?'':Dec.str(Dec.parse(v)); await save(); draw(); });
+    $('#iv_del').onclick = ()=>showConfirm('Delete this draft? Nothing is lost from the order.', async ()=>{ await del('invoices', inv.id); location.hash = '#/invoice/order/'+inv.orderId; }, {danger:true, yesLabel:'Delete draft'});
+    $('#iv_issue').onclick = async ()=>{
+      const co = await getCompany();
+      if(!co.name){ showAlert('Add your company name in Settings → Company & invoices first, so it prints on the invoice.', 'Company details missing'); return; }
+      if(!inv.lines.some(l=>l.include)){ showAlert('Tick at least one line.'); return; }
+      showConfirm(`Issue this invoice? It gets its number and can no longer be edited. Total ${money(invoiceTotals(inv).total)} EGP.`, async ()=>{
+        inv.company = {name:co.name, address:co.address, phone:co.phone, email:co.email, logo:co.logo};
+        inv.number = await nextInvoiceNumber(co.prefix||'INV'); inv.status = 'issued'; inv.issuedAt = new Date().toISOString();
+        await save(); if(typeof syncNow==='function') syncNow(); draw();
+      }, {yesLabel:'Issue invoice'});
+    };
+  }
+  draw();
+}
+
+/* ---------- Excel copy of an invoice ---------- */
+async function exportInvoiceExcel(inv){
+  const t = invoiceTotals(inv), wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Invoice');
+  const co = inv.company || {};
+  ws.addRow([co.name||'']).font = {bold:true, size:14};
+  ws.addRow([[co.address, co.phone, co.email].filter(Boolean).join(' · ')]);
+  ws.addRow([]);
+  ws.addRow(['SALES INVOICE', inv.number||'DRAFT']).font = {bold:true};
+  ws.addRow(['Vessel', inv.vessel]); ws.addRow(['Order code', inv.code||'']); ws.addRow(['Order type', inv.orderType]); ws.addRow(['Date', fmtDate(inv.invoiceDate)]);
+  ws.addRow([]);
+  const h = ws.addRow(['#','Description','Qty','Unit','Unit price','Discount','Total']); h.font = {bold:true};
+  const fmtc = '#,##0.00##############';
+  inv.lines.forEach((l,i)=>{ if(!l.include) return; const r = t.rows[i];
+    const row = ws.addRow([ws.rowCount-9, l.desc, Number(l.qty), l.unit, Number(l.price), Number(Dec.str(r.disc)), Number(Dec.str(r.net))]);
+    [5,6,7].forEach(c=>row.getCell(c).numFmt = fmtc); });
+  ws.addRow([]);
+  [['Subtotal',t.sub],['Total discount',t.disc],[`${inv.taxLabel||'Tax'} (${inv.taxOn?inv.taxRate:'0'}%)`,t.tax],['Total (EGP)',t.total]].forEach(([k,v])=>{ const r = ws.addRow(['','','','','',k,Number(Dec.str(v))]); r.getCell(7).numFmt = fmtc; r.font = {bold:k.startsWith('Total (')}; });
+  ws.columns = [{width:5},{width:42},{width:10},{width:14},{width:14},{width:18},{width:16}];
+  const buf = await wb.xlsx.writeBuffer();
+  await saveFile(`${(inv.number||'draft')}-${inv.vessel}.xlsx`.replace(/[^\w.\- ]+/g,'_'), new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+}
