@@ -464,3 +464,5 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .bt-mini.bt-soon{background:var(--warn-bg);} .bt-mini.bt-expired{background:var(--danger-bg);}
 .bt-mini-t{flex:1; min-width:120px;}
 .bt-chg{border:0; background:none; color:var(--sea); font-weight:700; text-decoration:underline; padding:4px; font-size:.85rem; cursor:pointer;}
+.qc-rule{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; font-size:.82rem; font-weight:600; color:var(--ink-soft);}
+.qc-rule select{width:auto; max-width:100%; padding:6px 8px; font-size:.85rem;}

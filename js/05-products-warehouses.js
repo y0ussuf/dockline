@@ -151,7 +151,9 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
         <div class="field"><label>Pack size</label><input type="number" id="f_packsize" step="any" placeholder="e.g. 3 or 360" value="${p.packSize===''||p.packSize==null?'':esc(p.packSize)}"></div>
         <div class="field"><label>Pack name</label><input type="text" id="f_packname" placeholder="box, tray, carton" value="${esc(p.packName||'')}"></div>
       </div>
-      <p class="subtle" style="margin:-4px 0 12px;">How much is in one pack, in this product's unit. Used to round vessel orders to whole packs. A batch can have its own pack size when it differs.</p>
+      <div class="field"><label>Rounding for this item</label><select id="f_packround">
+        ${[['','Use the general rule'],['up','Always round up'],['nearest','Round to nearest'],['down','Always round down']].map(([v,l])=>`<option value="${v}" ${(p.packRound||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+      <p class="subtle" style="margin:-4px 0 12px;">Pack size is how much one pack holds, in this product's unit — used to round vessel orders to whole packs. It can also be a step: size 1 with name “kg” orders this item in whole kg. A batch can have its own pack size when it differs. Items without a pack size are never changed.</p>
       <label class="bt-switch"><input type="checkbox" id="f_trackbatches" ${p.trackBatches?'checked':''}><span><b>Track batches</b><small>Keep this product's stock as batches with their own batch no., production and expiry dates. Needs "Stock on hand" above (0 is fine). Turning it off removes its batch records.</small></span></label>
     </details>
     <div style="display:flex; gap:10px; margin-top:14px;">
@@ -214,6 +216,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     p.trackBatches = !!$('#f_trackbatches').checked;
     p.packSize = $('#f_packsize').value.trim()==='' ? '' : parseFloat($('#f_packsize').value);
     p.packName = $('#f_packname').value.trim();
+    p.packRound = $('#f_packround').value;
     if(p.trackBatches && !isStockTracked(p)){ showAlert('To track batches, fill in "Stock on hand" first (0 is fine).'); return; }
     if(!editing){
       const siblings = (await getAll('products')).filter(x=>x.sectionId===p.sectionId);
