@@ -19,7 +19,7 @@ function packOf(product, batches){
   if(!(size>0)) return null;
   return {size, name: product.packName || 'pack', fromBatch: !!withPack};
 }
-function packPlural(name, n){ if(n===1) return name; return /(s|x|z|ch|sh)$/i.test(name) ? name+'es' : /[^aeiou]y$/i.test(name) ? name.slice(0,-1)+'ies' : name+'s'; }
+function packPlural(name, n){ if(n===1 || /^(kg|g|gm|gms|l|ltr|ltrs|ml|pcs|pc|pkt|pkts|oz|lb|lbs)$/i.test(name.trim())) return name; return /(s|x|z|ch|sh)$/i.test(name) ? name+'es' : /[^aeiou]y$/i.test(name) ? name.slice(0,-1)+'ies' : name+'s'; }
 function roundToPacks(qtyInProductUnit, size, mode){
   const packs = qtyInProductUnit/size;
   const whole = Math.abs(packs-Math.round(packs)) < 1e-6;
@@ -39,7 +39,8 @@ function packCheck(row, product, batches, mode){
     if(!c || !(c.convertedQty>0)) return null;
     factor = c.convertedQty/q;
   }
-  const r = roundToPacks(q*factor, pack.size, mode);
+  const useMode = ['up','nearest','down'].includes(product.packRound) ? product.packRound : mode;   // an item can have its own rule
+  const r = roundToPacks(q*factor, pack.size, useMode);
   if(r.ok) return null;
   return {pack, packs:r.packs, suggested: round2(r.qty/factor), productQty: r.qty};
 }
