@@ -297,7 +297,7 @@ async function loadMatchContext(){
   const active = products.filter(p=>p.active);
   const byName = new Map();
   for(const p of active){ const k = normalize(p.name); if(!byName.has(k)) byName.set(k, p); }
-  return {products, mapByKey, byId, active, byName};
+  return {products, mapByKey, byId, active, byName, index: (typeof buildSuggestIndex==='function') ? buildSuggestIndex(products, mappings) : null};
 }
 async function matchExcelRow(desc, ctx){
   ctx = ctx || await loadMatchContext();
@@ -311,6 +311,11 @@ async function matchExcelRow(desc, ctx){
   if(exact) return {status:'auto', product:exact};
   const scored = ctx.active.map(p=>({p,score:similarity(desc,p.name)})).sort((a,b)=>b.score-a.score);
   if(scored[0] && scored[0].score >= 0.82) return {status:'auto', product:scored[0].p};
+  if(ctx.index){
+    const sm = suggestSmart(desc, ctx.index, 4, 0.4);
+    if(sm.length) return {status:'suggest', candidates: sm.map(c=>({p:c.p, score:c.s, via:c.via}))};
+    return {status:'unmatched'};
+  }
   const candidates = scored.filter(s=>s.score>=0.4).slice(0,4);
   if(candidates.length) return {status:'suggest', candidates};
   return {status:'unmatched'};

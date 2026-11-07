@@ -245,7 +245,7 @@ async function matchScreen(orderId){
       if(r.status==='mapped' || r.status==='auto'){
         applyMatch(it, r.product, r.status==='mapped'?'saved mapping':'auto-matched');
       } else if(r.status==='suggest'){
-        it._candidates = r.candidates.map(c=>({id:c.p.id, name:c.p.name, score:c.score}));
+        it._candidates = r.candidates.map(c=>({id:c.p.id, name:c.p.name, score:c.score, via:c.via||''}));
         it.status='unmatched';
       } else {
         it.status='unmatched'; it._candidates=[];
@@ -295,7 +295,7 @@ async function matchScreen(orderId){
           <div style="margin-top:8px;"><button class="btn btn-ghost btn-sm" data-change="${it.id}">Pick a product instead</button></div>
         ` : `
           <div class="cand-list">
-            ${(it._candidates||[]).map(c=>`<button class="cand-btn" data-pick="${it.id}" data-pid="${c.id}">${esc(c.name)} <span class="subtle">· ${Math.round(c.score*100)}% match</span></button>`).join('')}
+            ${(it._candidates||[]).map(c=>`<button class="cand-btn" data-pick="${it.id}" data-pid="${c.id}">${esc(c.name)} <span class="subtle">· ${Math.round(c.score*100)}% match${c.via?` · also called “${esc(c.via)}”`:''}</span></button>`).join('')}
             <button class="btn btn-ghost btn-sm" data-search="${it.id}">🔍 Search database…</button>
             <button class="btn btn-ghost btn-sm" data-createprod="${it.id}">+ Create new product</button>
             <button class="btn btn-ghost btn-sm" data-na="${it.id}">Mark “not available”</button>
