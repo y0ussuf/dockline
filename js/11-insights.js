@@ -723,6 +723,7 @@ async function historyMatchScreen(keep){
     const [lines, products, warehouses, sections, mappings] = await Promise.all([cachedAll('historyLines'), cachedAll('products'), getAll('warehouses'), getAll('sections'), cachedAll('mappings')]);
     _hm = {lines, products, warehouses, sections, mappings};
   }
+  if(!_hm.index || _hm.indexFor!==_hm.products || _hm.indexMap!==_hm.mappings){ _hm.index = buildSuggestIndex(_hm.products, _hm.mappings); _hm.indexFor = _hm.products; _hm.indexMap = _hm.mappings; }
   const {lines:hLines, products, warehouses, sections} = _hm;
   const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w]));
   const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
@@ -745,16 +746,17 @@ async function historyMatchScreen(keep){
     <div class="topbar"><h1>Match product names</h1></div>
     <p class="subtle" style="margin-top:-10px;">${list.length} name${list.length===1?'':'s'} left, most-used first. For each one: pick the product it is, add it as a new product, or leave it out. Pick once and every past line with that name is updated — your choices are remembered for future imports too.</p>
     ${list.length ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <button class="btn btn-signal btn-sm" id="hm_confident">⚡ Match all confident ones…</button>
       <button class="btn btn-ghost btn-sm" id="hm_recheck">↻ Re-check against my products</button>
       <button class="btn btn-ghost btn-sm" id="hm_addall">➕ Add many as new products…</button>
     </div>` : ''}
     <div id="hm_list">${page.map(g=>{
-      const cands = suggestProducts(g.desc, active, 4, 0.4);
+      const cands = suggestSmart(g.desc, _hm.index, 4, 0.4);
       const exact = byNormName.get(g.key);
       return `<div class="match-card warn" data-key="${esc(g.key)}">
         <div><b>${esc(g.desc)}</b><div class="subtle">${g.count} line${g.count===1?'':'s'} · ${g.vessels.size} vessel${g.vessels.size===1?'':'s'} · usually “${esc(topUnit(g))}”</div></div>
         <div class="cand-list">
-          ${cands.map(c=>`<button class="cand-btn" data-pick="${esc(g.key)}" data-pid="${c.p.id}">${esc(c.p.name)} <span class="subtle">· ${Math.round(c.s*100)}%</span></button>`).join('')}
+          ${cands.map(c=>`<button class="cand-btn" data-pick="${esc(g.key)}" data-pid="${c.p.id}">${esc(c.p.name)} <span class="subtle">· ${Math.round(c.s*100)}%${c.via?` · also called “${esc(c.via)}”`:''}</span></button>`).join('')}
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn btn-ghost btn-sm" data-search="${esc(g.key)}">🔍 Search database…</button>
             <button class="btn btn-signal btn-sm" data-new="${esc(g.key)}">➕ Add as new product</button>
@@ -774,11 +776,12 @@ async function historyMatchScreen(keep){
     return (await getMany('historyLines', ids)).filter(l=>!l.productId);
   };
   const applyToState = changed=>{ const m = new Map(changed.map(l=>[l.id,l])); _hm.lines = _hm.lines.map(l=>m.get(l.id)||l); };
-  async function assign(key, product, quiet){
-    const all = await getAll('mappings');
-    if(!all.find(m=>m.excelDescNormalized===key)){
+  async function assign(key, product, quiet, keySet){
+    const have = keySet ? keySet.has(key) : (await getAll('mappings')).some(m=>m.excelDescNormalized===key);
+    if(!have){
       const g = groups.get(key) || leftOut.get(key);
       await put('mappings', {id:uid(), excelDescNormalized:key, label:g?g.desc:key, productId:product.id});
+      if(keySet) keySet.add(key);
     }
     const fresh = await freshLines(key);
     for(const l of fresh){
@@ -795,10 +798,50 @@ async function historyMatchScreen(keep){
     return fresh.length;
   }
   const list_ = $('#hm_list');
-  list_.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=> assign(b.dataset.pick, products.find(p=>p.id===b.dataset.pid)));
+  /* after you match one name, other waiting names that look like it can be matched to the same product in one go */
+  async function assignWithSimilar(key, product){
+    const g = groups.get(key);
+    const rest = g ? list.filter(o=>o.key!==key).map(o=>({o, s:nameAlike(g.desc, o.desc, _hm.index)})).filter(x=>x.s>=0.6).sort((a,b)=>b.s-a.s).slice(0,30) : [];
+    await assign(key, product, true);
+    if(!rest.length){ _hm.mappings = await cachedAll('mappings'); if(typeof syncNow==='function') syncNow(); historyMatchScreen(true); return; }
+    showModal(`<h3>Same product?</h3><p class="subtle" style="margin-top:-8px;">These waiting names look like <b>${esc(product.name)}</b> too. Untick any that are a different product.</p>
+      <div style="max-height:50vh; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:6px;">${rest.map((x,i)=>`<label style="display:flex; gap:10px; align-items:center; padding:7px 4px; border-bottom:1px solid var(--line);">
+        <input type="checkbox" data-sim="${i}" ${x.s>=0.75?'checked':''}><span style="flex:1; min-width:0;"><b>${esc(x.o.desc)}</b><span class="subtle" style="display:block;">${x.o.count} line${x.o.count===1?'':'s'} · ${Math.round(x.s*100)}% alike</span></span></label>`).join('')}</div>
+      <div style="display:flex; gap:10px; margin-top:12px;"><button class="btn btn-signal" id="sim_go" style="flex:1;">Match ticked to ${esc(product.name)}</button><button class="btn btn-ghost" id="sim_skip">Not now</button></div>`);
+    const finish = async ()=>{ closeModal(); _hm.mappings = await cachedAll('mappings'); if(typeof syncNow==='function') syncNow(); historyMatchScreen(true); };
+    $('#sim_skip').onclick = finish;
+    $('#sim_go').onclick = async ()=>{
+      $('#sim_go').disabled = true; $('#sim_go').textContent = 'Matching…';
+      const keys = new Set((await getAll('mappings')).map(m=>m.excelDescNormalized));
+      for(const [i,x] of rest.entries()) if(document.querySelector(`[data-sim="${i}"]`).checked) await assign(x.o.key, product, true, keys);
+      await finish();
+    };
+  }
+  list_.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=> assignWithSimilar(b.dataset.pick, products.find(p=>p.id===b.dataset.pid)));
   list_.querySelectorAll('[data-search]').forEach(b=>b.onclick=()=>{
-    openProductPicker(null, products, whMap, secMap, picked=> assign(b.dataset.search, picked));
+    openProductPicker(null, products, whMap, secMap, picked=> assignWithSimilar(b.dataset.search, picked));
   });
+  /* ---- match every name whose best suggestion is clearly right, after a review ---- */
+  const confBtn = $('#hm_confident');
+  if(confBtn) confBtn.onclick = ()=>{
+    const rows = list.map(g=>({g, sug:suggestSmart(g.desc, _hm.index, 2, 0.5)})).filter(r=>isConfident(r.sug));
+    if(!rows.length){ showAlert('No name has a clearly best match yet. Match a few by hand — every match you make teaches the app, and more names become confident.', 'Nothing confident yet'); return; }
+    showModal(`<h3>Match ${rows.length} confident name${rows.length===1?'':'s'}</h3>
+      <p class="subtle" style="margin-top:-8px;">Each one has a clearly best product. Look it over, untick any that are wrong, then match the rest.</p>
+      <div style="max-height:52vh; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:6px;">${rows.map((r,i)=>`<label style="display:flex; gap:10px; align-items:center; padding:7px 4px; border-bottom:1px solid var(--line);">
+        <input type="checkbox" data-cf="${i}" checked><span style="flex:1; min-width:0;"><b>${esc(r.g.desc)}</b><span class="subtle" style="display:block;">→ ${esc(r.sug[0].p.name)} · ${Math.round(r.sug[0].s*100)}%${r.sug[0].via?` · also called “${esc(r.sug[0].via)}”`:''} · ${r.g.count} line${r.g.count===1?'':'s'}</span></span></label>`).join('')}</div>
+      <div style="display:flex; gap:10px; margin-top:12px;"><button class="btn btn-signal" id="cf_go" style="flex:1;">Match ticked</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+    $('#cf_go').onclick = async ()=>{
+      $('#cf_go').disabled = true; $('#cf_go').textContent = 'Matching…';
+      const keys = new Set((await getAll('mappings')).map(m=>m.excelDescNormalized));
+      let names=0, lines=0;
+      for(const [i,r] of rows.entries()) if(document.querySelector(`[data-cf="${i}"]`).checked){ lines += await assign(r.g.key, r.sug[0].p, true, keys); names++; }
+      closeModal(); if(typeof syncNow==='function') syncNow();
+      _hm.mappings = await cachedAll('mappings');
+      showAlert(`${names} name${names===1?'':'s'} matched (${lines.toLocaleString()} lines).`, 'Done');
+      historyMatchScreen(true);
+    };
+  };
   list_.querySelectorAll('[data-skip]').forEach(b=>b.onclick=async ()=>{
     const fresh = await freshLines(b.dataset.skip);
     fresh.forEach(l=>{ l.skipped = true; l.synced=false; });
@@ -828,7 +871,7 @@ async function historyMatchScreen(keep){
   /* ---- add MANY as new products, with a review step ---- */
   const addAll = $('#hm_addall');
   if(addAll) addAll.onclick = ()=>{
-    const rows = list.map((g,i)=>{ const sim = suggestProducts(g.desc, active, 1, 0.6)[0]; return {g, i, sim}; });
+    const rows = list.map((g,i)=>{ const sim = suggestSmart(g.desc, _hm.index, 1, 0.6)[0]; return {g, i, sim}; });
     showModal(`<h3>Add many as new products</h3>
       <p class="subtle">Tick the names that really are new products. Names that look like a product you already have are left unticked — match those by hand instead, so you don't create duplicates. You can fix a name or unit before adding.</p>
       <div style="max-height:52vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:6px;">
