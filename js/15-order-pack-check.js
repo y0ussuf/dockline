@@ -24,7 +24,7 @@ async function orderPackLines(order, items, manual){
   const [products, batches, st] = await Promise.all([getAll('products'), getAll('batches'), getPackSettings()]);
   const prod = new Map(products.map(p=>[p.id,p]));
   const loose = new Set(st.loose[orderVesselKey(order)] || []);
-  const rows = [];
+  const rows = [], unjudged = [];
   for(const it of items){
     if(it.status!=='pending' || !it.productId) continue;
     const p = prod.get(it.productId); if(!p) continue;
@@ -37,13 +37,14 @@ async function orderPackLines(order, items, manual){
       isManual = !!check;
     }
     if(check || isLoose) rows.push({it, p, base, check, isLoose, isManual, choice:'suggest', custom:''});
+    else if(packUnjudgeable({qty:base, unit:it.requestedUnit}, p, batches)) unjudged.push({it, p, base});
   }
-  return {rows, st};
+  return {rows, st, unjudged};
 }
 async function needsQuantityCheck(order, items){
   if(order.packChecked) return false;
-  const {rows} = await orderPackLines(order, items);
-  return rows.length>0;
+  const {rows, unjudged} = await orderPackLines(order, items);
+  return rows.length>0 || unjudged.length>0;
 }
 
 async function orderQuantityCheck(orderId){
@@ -51,10 +52,10 @@ async function orderQuantityCheck(orderId){
   if(!order){ location.hash='#/orders'; return; }
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
   const manual = new Map();   // items added by hand for this order only: itemId -> {step, name, mode}
-  let {rows, st} = await orderPackLines(order, items, manual);
+  let {rows, st, unjudged} = await orderPackLines(order, items, manual);
   const vKey = orderVesselKey(order), vName = cleanVesselName(order.vessel||'') || order.vessel || 'this vessel';
   const finalQty = r=> !r.check ? r.base : r.choice==='keep' ? r.base : (r.choice==='custom' && parseFloat(r.custom)>0) ? parseFloat(r.custom) : r.check.suggested;
-  const reload = async ()=>{ const old = new Map(rows.map(r=>[r.it.id,r])); const n = await orderPackLines(order, items, manual); rows = n.rows; st = n.st;
+  const reload = async ()=>{ const old = new Map(rows.map(r=>[r.it.id,r])); const n = await orderPackLines(order, items, manual); rows = n.rows; st = n.st; unjudged = n.unjudged;
     rows.forEach(r=>{ const o = old.get(r.it.id); if(o){ r.choice=o.choice; r.custom=o.custom; } }); };
 
   const ruleName = m=> ({up:'round up', nearest:'nearest', down:'round down'})[m]||m;
@@ -84,6 +85,10 @@ async function orderQuantityCheck(orderId){
         </div>`).join('')}
         ${loose.length?`<div class="subtle" style="margin-top:12px;"><b>Loose for ${esc(vName)}:</b> ${loose.map(r=>`${esc(r.it.productName||r.it.excelDesc)} <button class="qc-link" data-unloose="${r.p.id}">undo</button>`).join(' · ')}</div>`:''}
       </div>
+      ${unjudged.length?`<div class="bt-warn"><div class="bt-warn-h"><span class="bt-warn-ic">⚠</span><div><b>${unjudged.length} item${unjudged.length===1?'':'s'} couldn’t be checked</b>
+        <div class="subtle">The ordered unit doesn’t match the product’s unit, so the app can’t tell if it’s a whole pack. They stay as ordered.</div></div></div>
+        ${unjudged.map(u=>`<div class="bt-warn-row"><span><b>${esc(u.it.productName||u.it.excelDesc)}</b><span class="subtle" style="display:block;">ordered ${u.base} ${esc(u.it.requestedUnit||'')} · product is kept in “${esc(u.p.unit||'no unit')}”</span></span>
+          <button class="btn btn-ghost btn-sm" data-fixunit="${u.p.id}">Edit product</button></div>`).join('')}</div>`:''}
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn btn-signal btn-lg" id="oq_go" style="flex:1;">Apply &amp; start picking</button>
         <a class="btn btn-ghost btn-lg" style="text-decoration:none;" href="#/order/${orderId}/match">Back to matching</a>
@@ -106,6 +111,10 @@ async function orderQuantityCheck(orderId){
       };
     });
     $('#oq_add').onclick = ()=>openAddCheck();
+    $('#main').querySelectorAll('[data-fixunit]').forEach(b=>b.onclick = async ()=>{
+      const [whs, secs, sups, p] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('suppliers'), getOne('products', b.dataset.fixunit)]);
+      openProductForm(p, whs, secs, sups, async ()=>{ await reload(); draw(); });
+    });
     $('#oq_whole').onclick = async ()=>{
       let n = 0;
       for(const it of items){
