@@ -143,6 +143,9 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
         <div class="field"><label>Markup %</label><input type="text" inputmode="decimal" id="f_markup" placeholder="—" value="${esc(Dec.markupText(p.costPrice, p.sellPrice))}"></div>
         <div class="field"><label>Sell price</label><input type="text" inputmode="decimal" id="f_sell" placeholder="0" value="${esc(p.sellPrice??'')}"></div>
       </div>
+      <div class="field"><label>These prices are for <span class="subtle">(optional — leave empty if the price is per unit picked)</span></label>
+        <div style="display:flex; gap:8px;"><input type="text" inputmode="decimal" id="f_refq" placeholder="e.g. 200" value="${esc(p.priceRef?p.priceRef.qty:'')}" style="flex:1;"><select id="f_refu" style="width:96px;">${['','ml','l','g','kg'].map(u=>`<option value="${u}" ${(p.priceRef&&p.priceRef.unit===u)?'selected':''}>${u||'—'}</option>`).join('')}</select></div>
+        <div class="subtle">Pro-rata: with “200 ml”, a 350 ml bottle is billed at price × 350 ÷ 200.</div></div>
       <div class="subtle" id="f_pr_note" style="margin-top:-2px;"></div>
     </div>
     <div class="field"><label>Production date</label><input type="date" id="f_pdate" value="${p.productionDate||''}"></div>
@@ -236,6 +239,9 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     if(newCost!==(p.costPrice||'') || newSell!==(p.sellPrice||'')){
       p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:newCost, sell:newSell, from:'edit'}].slice(-50);
     }
+    const rq = $('#f_refq').value.trim(), ru = $('#f_refu').value;
+    if((rq && (!Dec.parse(rq) || !ru)) || (!rq && ru)){ showAlert('Fill both the size and its unit (like 200 and ml), or leave both empty.'); return; }
+    p.priceRef = rq ? {qty:Dec.str(Dec.parse(rq)), unit:ru} : null;
     p.costPrice = newCost; p.sellPrice = newSell;
     p.name = name;
     p.unit = $('#f_unit').value.trim();

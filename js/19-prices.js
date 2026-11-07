@@ -22,7 +22,9 @@ route('prices', async ()=>{
     for(const row of aoa.slice(hr+1)){
       const name = String(row[kName]==null?'':row[kName]).trim(); if(!name) continue;
       const cost = numText(row[kCost]), sell = numText(row[kSell]);
-      out.push({id:uid(), name, cost: cost===null?'':cost, sell: sell===null?'':sell, bad: cost===null || sell===null});
+      const sz = parseSize(name);   // "seasoning sauce 200 ML" → the price is for 200 ml
+      out.push({id:uid(), name, ref: sz ? {qty:sz.qty, unit:sz.unit} : null, stripped: sz ? name.replace(sz.text,' ').replace(/\s+/g,' ').trim() : '',
+        cost: cost===null?'':cost, sell: sell===null?'':sell, bad: cost===null || sell===null});
     }
     return out;
   }
@@ -35,7 +37,7 @@ route('prices', async ()=>{
     if(r.cost==='' && !r.bad) w.push('No cost'); if(r.sell==='' && !r.bad) w.push('No sell price');
     return w;
   }
-  const same = r=>{ const p = r.productId && prodById.get(r.productId); return !!p && (p.costPrice||'')===r.cost && (p.sellPrice||'')===r.sell; };
+  const same = r=>{ const p = r.productId && prodById.get(r.productId); return !!p && (p.costPrice||'')===r.cost && (p.sellPrice||'')===r.sell && JSON.stringify(p.priceRef||null)===JSON.stringify(r.ref||null); };
 
   async function process(file){
     const buf = await file.arrayBuffer();
@@ -47,10 +49,15 @@ route('prices', async ()=>{
     state.ctx = await loadMatchContext();
     let n = 0;
     for(const r of rows){
-      const m = await matchExcelRow(r.name, state.ctx);
+      let m = await matchExcelRow(r.name, state.ctx);
+      if(!(m.status==='mapped'||m.status==='auto') && r.stripped){
+        const m2 = await matchExcelRow(r.stripped, state.ctx);          // the product may be stored without its size
+        if(m2.status==='mapped'||m2.status==='auto') m = m2;
+      }
       r.productId = (m.status==='mapped'||m.status==='auto') ? m.product.id : '';
       r.how = m.status==='mapped' ? 'saved name' : m.status==='auto' ? 'matched' : '';
       r.cands = r.productId ? [] : suggestSmart(r.name, state.ctx.index, 3, 0.4);
+      if(!r.productId && r.stripped){ const more = suggestSmart(r.stripped, state.ctx.index, 3, 0.4); const seen = new Set(r.cands.map(c=>c.p.id)); more.forEach(c=>{ if(!seen.has(c.p.id)) r.cands.push(c); }); r.cands.sort((a,b)=>b.s-a.s); r.cands = r.cands.slice(0,3); }
       r.include = !!r.productId && !r.bad;
       if(++n % 40 === 0){ const el = $('#pr_prog'); if(el) el.textContent = `Matching… ${n} of ${rows.length}`; await new Promise(res=>setTimeout(res,0)); }
     }
@@ -101,7 +108,7 @@ route('prices', async ()=>{
         const p = r.productId && prodById.get(r.productId), w = warnsOf(r), cat = catOf(r);
         return `<div class="pr-row ${cat}" data-id="${r.id}">
           <div class="pr-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${r.id}" ${r.include?'checked':''} ${r.productId?'':'disabled'}><b>${esc(r.name)}</b></label>
-            <span class="pr-px">${money(r.cost)} <span class="subtle">cost</span> · ${money(r.sell)} <span class="subtle">sell</span></span></div>
+            <span class="pr-px">${money(r.cost)} <span class="subtle">cost</span> · ${money(r.sell)} <span class="subtle">sell</span>${r.ref?` <span class="badge">per ${esc(r.ref.qty)} ${esc(r.ref.unit)}</span>`:''}</span></div>
           ${p ? `<div class="subtle">→ ${esc(p.name)}${r.how?` · ${r.how}`:''}${(p.costPrice||p.sellPrice)? ` · now ${money(p.costPrice||'')} / ${money(p.sellPrice||'')}`:' · no price yet'}${same(r)?' · <b>unchanged</b>':''}</div>`
             : `<div class="cand-list">${r.cands.map(c=>`<button class="cand-btn" data-pick="${r.id}" data-pid="${c.p.id}">${esc(c.p.name)} <span class="subtle">· ${Math.round(c.s*100)}%${c.via?` · also called “${esc(c.via)}”`:''}</span></button>`).join('')}
               <button class="btn btn-ghost btn-sm" data-search="${r.id}">🔍 Search…</button><button class="btn btn-ghost btn-sm" data-skip="${r.id}">Skip</button></div>`}
@@ -152,8 +159,8 @@ route('prices', async ()=>{
       const keys = new Set((await getAll('mappings')).map(m=>m.excelDescNormalized));
       for(const r of todo){
         const p = await getOne('products', r.productId); if(!p) continue;
-        p.costPrice = r.cost; p.sellPrice = r.sell;
-        p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:r.cost, sell:r.sell, from:'sheet '+state.fileName}].slice(-50);
+        p.costPrice = r.cost; p.sellPrice = r.sell; p.priceRef = r.ref || null;
+        p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:r.cost, sell:r.sell, ref:r.ref||null, from:'sheet '+state.fileName}].slice(-50);
         await put('products', p); prodById.set(p.id, p); saved++;
         const k = normalize(r.name);
         if(r.learn && k && !keys.has(k) && normalize(p.name)!==k){ await put('mappings', {id:uid(), excelDescNormalized:k, label:r.name, productId:p.id}); keys.add(k); }

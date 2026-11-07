@@ -1,7 +1,7 @@
 /* ============================ COMPANY DETAILS & INVOICE SETTINGS ============================
    One shared record (sharedSettings 'company') — everyone on the crew sees the same details on invoices.
    Changing it affects invoices made afterwards only: an issued invoice keeps its own copy. */
-const COMPANY_DEFAULTS = {id:'company', name:'', address:'', phone:'', email:'', logo:'', taxOn:false, taxRate:'14', taxLabel:'Tax', prefix:'INV', notes:'Thank you for your business.'};
+const COMPANY_DEFAULTS = {id:'company', name:'', address:'', phone:'', email:'', logo:'', taxOn:false, taxRate:'14', taxLabel:'Tax', roundMode:'ask', prefix:'INV', notes:'Thank you for your business.'};
 async function getCompany(){ return Object.assign({}, COMPANY_DEFAULTS, (await getOne('sharedSettings','company')) || {}); }
 async function saveCompany(c){ await put('sharedSettings', Object.assign({}, c, {id:'company'})); }
 
@@ -31,6 +31,11 @@ function companyCardHtml(c){
       <div class="field"><label>New invoices</label><select id="co_taxon"><option value="0" ${c.taxOn?'':'selected'}>Without tax (default)</option><option value="1" ${c.taxOn?'selected':''}>With tax (default)</option></select></div>
     </div>
     <p class="subtle" style="margin-top:-4px;">You can still switch tax on or off for each invoice when you make it.</p>
+    <div class="field"><label>When a line total never ends (e.g. 233.333…)</label><select id="co_round">
+      <option value="ask" ${c.roundMode==='ask'?'selected':''}>Ask me to type the unit price (nothing is rounded for me)</option>
+      <option value="half_up" ${c.roundMode==='half_up'?'selected':''}>Round that line half up to 2 decimals</option>
+      <option value="block" ${c.roundMode==='block'?'selected':''}>Don't allow it — block the line</option></select></div>
+    <p class="subtle" style="margin-top:-4px;">Only applies to pro-rata prices that cannot be written exactly. Everything else is never rounded. Confirm the rule with your accountant.</p>
     <div class="field"><label>Notes &amp; terms (printed at the bottom)</label><textarea id="co_notes" rows="2">${esc(c.notes)}</textarea></div>
     <button class="btn btn-signal btn-sm" id="co_save">Save company details</button>
   </div>`;
@@ -62,7 +67,7 @@ function bindCompanyCard(c){
     const rate = $('#co_taxrate').value.trim();
     if(rate!=='' && !Dec.parse(rate)){ showAlert('Tax rate must be a plain number, like 14.'); return; }
     await saveCompany({name:$('#co_name').value.trim(), address:$('#co_address').value.trim(), phone:$('#co_phone').value.trim(), email:$('#co_email').value.trim(),
-      logo, prefix:($('#co_prefix').value.trim()||'INV'), taxLabel:($('#co_taxlabel').value.trim()||'Tax'), taxRate:rate||'0', taxOn:$('#co_taxon').value==='1', notes:$('#co_notes').value.trim()});
+      logo, prefix:($('#co_prefix').value.trim()||'INV'), taxLabel:($('#co_taxlabel').value.trim()||'Tax'), taxRate:rate||'0', taxOn:$('#co_taxon').value==='1', roundMode:$('#co_round').value, notes:$('#co_notes').value.trim()});
     if(typeof syncNow==='function') syncNow();
     showAlert('Company details saved.', 'Saved');
   };

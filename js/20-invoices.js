@@ -15,7 +15,8 @@ function invoiceLinesFromItems(items, byProd, basis){
     const p = productId ? byProd.get(productId) : null;
     lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
       cost:(p&&p.costPrice)||'', sell:(p&&p.sellPrice)||'', price:(p ? (basis==='cost'?p.costPrice:p.sellPrice) : '')||'',
-      priceUnit:(p&&p.unit)||'', discType:'', disc:'', include:true, substituted:it.status==='substituted'});
+      priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
+      discType:'', disc:'', include:true, substituted:it.status==='substituted'});
   };
   for(const it of items){
     if(it.status==='not_available' || it.status==='pending' || it.status==='unmatched') continue;
@@ -27,34 +28,77 @@ function invoiceLinesFromItems(items, byProd, basis){
   }
   return lines;
 }
+/* How one line is priced. Without a reference size the price is per picked unit (qty × price). With one
+   ("65 per 200 ml") the price is pro-rata: the picked size decides — 350 ml → 65 × 350 ÷ 200 = 113.75 each.
+   Returns {unit, gross, note, issue, rounded}; gross is exact unless the person's rounding rule says otherwise. */
+function lineCalc(l, priceText, roundMode){
+  const price = Dec.parse(priceText), qty = Dec.parse(l.qty);
+  const out = {unit:null, gross:Dec.ZERO, note:'', issue:'', rounded:false, exactText:''};
+  if(!price || !qty) return out;
+  if(l.unitOverride && Dec.parse(l.unitOverride)){ out.unit = Dec.parse(l.unitOverride); out.gross = Dec.mul(qty, out.unit); out.note = 'unit price typed by you'; return out; }
+  const refSz = l.ref ? parseUnitSize(l.ref.qty+' '+l.ref.unit) : null;
+  if(!refSz || Dec.cmp(refSz.base, Dec.ZERO)<=0){ out.unit = price; out.gross = Dec.mul(qty, price); return out; }     // plain price per picked unit
+  // pro-rata: what size is one picked unit?
+  let pk = l.sizeOverride ? parseUnitSize(l.sizeOverride) : parseUnitSize(l.unit);
+  if(!pk && !l.sizeOverride && l.nameSize && sameSize(parseUnitSize(l.nameSize.qty+' '+l.nameSize.unit), refSz) && !l.perPiece){
+    // "Pesto sauce 180 GM" priced per 180 gm and picked as "5 PCS": the unit is one jar of that size
+    pk = refSz;
+  }
+  if(l.perPiece){ out.unit = price; out.gross = Dec.mul(qty, price); out.note = 'billed per piece at the price as is'; return out; }
+  if(!pk){ out.issue = 'Size needed'; return out; }
+  if(pk.family!==refSz.family){ out.issue = 'Unit not comparable'; return out; }
+  const unitRat = Rat.mul(Rat.fromDec(price), Rat.div(Rat.fromDec(pk.base), Rat.fromDec(refSz.base)));
+  const grossRat = Rat.mul(Rat.fromDec(qty), unitRat);
+  const sz = pk.qty+' '+pk.unit, work = `${Dec.fmt(qty,0)} × ${sz} ÷ ${l.ref.qty} ${l.ref.unit} × ${Dec.fmt(price,0)}`;
+  const g = Rat.toDec(grossRat), u = Rat.toDec(unitRat);
+  if(g){
+    out.gross = g; out.unit = u || Rat.roundHalfUp(unitRat, 4);   // unit price on the printout only; the total above is exact
+    out.note = `${work} = ${Dec.fmt(g,2)}`; out.unitApprox = !u; return out;
+  }
+  out.exactText = Rat.peek(grossRat);
+  if(roundMode==='half_up'){
+    out.gross = Rat.roundHalfUp(grossRat, 2); out.unit = Rat.roundHalfUp(unitRat, 4); out.unitApprox = true; out.rounded = true;
+    out.note = `${work} = ${out.exactText} → ${Dec.fmt(out.gross,2)} (rounded half up, per your rule)`; return out;
+  }
+  out.issue = roundMode==='block' ? 'Does not divide exactly' : 'Does not divide exactly — type the unit price';
+  out.note = `${work} = ${out.exactText}`;
+  return out;
+}
 /* every number of an invoice, exactly */
 function invoiceTotals(inv){
   let sub = Dec.ZERO, disc = Dec.ZERO;
   const rows = inv.lines.map(l=>{
-    if(!l.include) return {gross:Dec.ZERO, disc:Dec.ZERO, net:Dec.ZERO};
-    const gross = Dec.mul(dm(l.qty), dm(l.price));
+    if(!l.include) return {gross:Dec.ZERO, disc:Dec.ZERO, net:Dec.ZERO, calc:{}};
+    const calc = lineCalc(l, l.price, inv.roundMode), gross = calc.gross;
     let d = Dec.ZERO;
     if(l.discType==='pct' && Dec.parse(l.disc)) d = Dec.pct(gross, dm(l.disc));
     else if(l.discType==='amt' && Dec.parse(l.disc)) d = dm(l.disc);
     sub = Dec.add(sub, gross); disc = Dec.add(disc, d);
-    return {gross, disc:d, net:Dec.sub(gross, d)};
+    return {gross, disc:d, net:Dec.sub(gross, d), calc};
   });
   const taxable = Dec.sub(sub, disc);
   const tax = inv.taxOn ? Dec.pct(taxable, dm(inv.taxRate)) : Dec.ZERO;
   return {rows, sub, disc, taxable, tax, total:Dec.add(taxable, tax)};
 }
-function lineIssues(l, inv){
+function lineIssues(l, inv, calc){
   const w = [];
   if(!l.include) return w;
-  if(l.price==='' || !Dec.parse(l.price)) w.push('No price');
-  else if(Dec.cmp(dm(l.price), Dec.ZERO)===0) w.push('Price is 0');
-  const u = normalize(l.unit), pu = normalize(l.priceUnit);
-  if(l.price!=='' && u && pu && u!==pu) w.push(`Picked in “${l.unit}”, price is per “${l.priceUnit}” — check`);
+  if(l.price==='' || !Dec.parse(l.price)){ w.push('No price'); return w; }
+  if(Dec.cmp(dm(l.price), Dec.ZERO)===0) w.push('Price is 0');
+  calc = calc || lineCalc(l, l.price, inv.roundMode);
+  if(calc.issue) w.push(calc.issue);
+  if(!l.ref){
+    const u = normalize(l.unit), pu = normalize(l.priceUnit);
+    if(u && pu && u!==pu) w.push(`Picked in “${l.unit}”, price is per “${l.priceUnit}” — check`);
+  }
   if(l.substituted) w.push('Substituted item — check the price');
   const cost = Dec.parse(l.cost);
-  if(cost && Dec.parse(l.price)){
-    const t = invoiceTotals({lines:[l], taxOn:false});
-    if(Dec.cmp(t.rows[0].net, Dec.mul(dm(l.qty), cost))<0) w.push('Below cost');
+  if(cost && !calc.issue){
+    const cc = lineCalc(l, l.cost, inv.roundMode);
+    if(!cc.issue){
+      const net = invoiceTotals({lines:[l], taxOn:false, roundMode:inv.roundMode}).rows[0].net;
+      if(Dec.cmp(net, cc.gross)<0) w.push('Below cost');
+    }
   }
   return w;
 }
@@ -85,7 +129,7 @@ function invoiceDocHtml(inv){
       <div><div class="inv-k">Invoice date</div><div class="inv-v">${fmtDate(inv.invoiceDate)}</div></div>
     </div>
     <div class="inv-tw"><table class="inv-table"><thead><tr><th>#</th><th>Description</th><th class="n">Qty</th><th>Unit</th><th class="n">Unit price</th>${anyDisc?'<th class="n">Discount</th>':''}<th class="n">Total</th></tr></thead><tbody>
-      ${lines.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b></td><td class="n">${Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.l.unit)}</td><td class="n">${money(dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
+      ${lines.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b></td><td class="n">${Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.l.unit)}</td><td class="n">${money(x.r.calc.unit || dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
     </tbody></table></div>
     <div class="inv-foot">
       <div class="inv-notes"><div class="inv-k">Notes &amp; terms</div><div>${esc(inv.notes||'').replace(/\n/g,'<br>')}</div></div>
@@ -149,7 +193,7 @@ async function invoiceOrderScreen(orderId){
   $('#main').querySelectorAll('[data-mk]').forEach(b=>b.onclick=async ()=>{
     const t = b.dataset.mk;
     const inv = {id:uid(), number:'', status:'draft', orderId:order.id, orderType:t, vessel:order.vessel, code:order.imo||'', orderNumber:order.orderNumber,
-      priceBasis:'sell', taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'',
+      priceBasis:'sell', taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'', roundMode:co.roundMode||'ask',
       lines: invoiceLinesFromItems(items.filter(it=>(it.orderType||'Provision')===t), byProd, 'sell'), createdAt:new Date().toISOString()};
     await put('invoices', inv); location.hash = '#/invoice/'+inv.id;
   });
@@ -187,8 +231,9 @@ async function invoiceScreen(id){
       return;
     }
     const t = invoiceTotals(inv), co = null;
-    const issues = inv.lines.map(l=>lineIssues(l, inv));
-    const blocking = inv.lines.some((l,i)=>l.include && issues[i].includes('No price'));
+    const issues = inv.lines.map((l,i)=>lineIssues(l, inv, t.rows[i].calc));
+    const BLOCK = ['No price','Size needed','Unit not comparable','Does not divide exactly'];
+    const blocking = inv.lines.some((l,i)=>l.include && issues[i].some(m=>BLOCK.some(b=>m.startsWith(b))));
     $('#main').innerHTML = `
       <div class="topbar"><h1>${esc(inv.orderType)} invoice</h1>${invBadge('draft')}</div>
       <p class="subtle" style="margin-top:-10px;">${esc(inv.vessel)} · ${esc(inv.code||inv.orderNumber||'')} — draft, nothing is final until you issue it. Quantities are as picked; prices are exact, never rounded.</p>
@@ -206,10 +251,14 @@ async function invoiceScreen(id){
         <div class="iv-line ${l.include?'':'off'}" data-i="${i}">
           <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)}</span></div>
           ${l.include ? `<div class="iv-grid">
-            <div class="field"><label>Unit price</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
+            <div class="field"><label>${l.ref?`Price per ${esc(l.ref.qty)} ${esc(l.ref.unit)}`:'Unit price'}</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
             <div class="field"><label>Discount</label><div style="display:flex; gap:6px;"><select data-dt="${i}" style="width:84px;"><option value="">none</option><option value="pct" ${l.discType==='pct'?'selected':''}>%</option><option value="amt" ${l.discType==='amt'?'selected':''}>EGP</option></select><input type="text" inputmode="decimal" data-d="${i}" value="${esc(l.disc)}" ${l.discType?'':'disabled'}></div></div>
             <div class="iv-tot"><span class="subtle">Line total</span><b>${money(t.rows[i].net)}</b></div>
           </div>
+          ${t.rows[i].calc.note?`<div class="iv-work">${esc(t.rows[i].calc.note)}</div>`:''}
+          ${issues[i].includes('Size needed')?`<div class="iv-fix"><input type="text" data-size="${i}" placeholder="Size of one ${esc(l.unit||'unit')}, e.g. 350 ml"><button class="btn btn-ghost btn-sm" data-ok="size:${i}">Use size</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill per piece at this price</button></div>`:''}
+          ${issues[i].some(m=>m.startsWith('Does not divide'))?`<div class="iv-fix"><span class="subtle">Exact amount ${esc(t.rows[i].calc.exactText)} never ends.</span><input type="text" inputmode="decimal" data-uo="${i}" placeholder="Unit price to use"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`:''}
+          ${(l.unitOverride||l.sizeOverride||l.perPiece)?`<button class="qc-link" data-ok="clear:${i}">Undo my change to this line</button>`:''}
           ${issues[i].length?`<div class="pr-warn">⚠ ${issues[i].map(esc).join(' · ')}</div>`:''}` : ''}
         </div>`).join('')}</div>
       <div class="card iv-sum"><div><span>Subtotal</span><b>${money(t.sub)}</b></div><div><span>Discount</span><b>- ${money(t.disc)}</b></div>${inv.taxOn?`<div><span>${esc(inv.taxLabel||'Tax')} (${esc(inv.taxRate)}%)</span><b>${money(t.tax)}</b></div>`:''}<div class="grand"><span>Total (EGP)</span><b>${money(t.total)}</b></div></div>
@@ -218,6 +267,14 @@ async function invoiceScreen(id){
     $('#main').querySelectorAll('[data-b]').forEach(b=>b.onclick=async ()=>{
       inv.priceBasis = b.dataset.b;
       inv.lines.forEach(l=>{ l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || ''; });
+      await save(); draw();
+    });
+    $('#main').querySelectorAll('[data-ok]').forEach(b=>b.onclick=async ()=>{
+      const [act, i] = b.dataset.ok.split(':'), l = inv.lines[+i];
+      if(act==='size'){ const v = $(`[data-size="${i}"]`).value.trim(); if(!parseUnitSize(v)){ showAlert('Write the size like 350 ml, 500 gm or 1 kg.'); return; } l.sizeOverride = v; }
+      if(act==='piece') l.perPiece = true;
+      if(act==='uo'){ const v = $(`[data-uo="${i}"]`).value.trim(); if(!Dec.parse(v)){ showAlert('Enter a plain number, like 116.67.'); return; } l.unitOverride = Dec.str(Dec.parse(v)); }
+      if(act==='clear'){ delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; }
       await save(); draw();
     });
     $('#iv_date').onchange = async e=>{ inv.invoiceDate = e.target.value; await save(); };
@@ -257,7 +314,7 @@ async function exportInvoiceExcel(inv){
   const h = ws.addRow(['#','Description','Qty','Unit','Unit price','Discount','Total']); h.font = {bold:true};
   const fmtc = '#,##0.00##############';
   inv.lines.forEach((l,i)=>{ if(!l.include) return; const r = t.rows[i];
-    const row = ws.addRow([ws.rowCount-9, l.desc, Number(l.qty), l.unit, Number(l.price), Number(Dec.str(r.disc)), Number(Dec.str(r.net))]);
+    const row = ws.addRow([ws.rowCount-9, l.desc, Number(l.qty), l.unit, Number(Dec.str(r.calc.unit || dm(l.price))), Number(Dec.str(r.disc)), Number(Dec.str(r.net))]);
     [5,6,7].forEach(c=>row.getCell(c).numFmt = fmtc); });
   ws.addRow([]);
   [['Subtotal',t.sub],['Total discount',t.disc],[`${inv.taxLabel||'Tax'} (${inv.taxOn?inv.taxRate:'0'}%)`,t.tax],['Total (EGP)',t.total]].forEach(([k,v])=>{ const r = ws.addRow(['','','','','',k,Number(Dec.str(v))]); r.getCell(7).numFmt = fmtc; r.font = {bold:k.startsWith('Total (')}; });
