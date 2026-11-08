@@ -11,6 +11,8 @@ const PT_COLS = [
   {k:'cost',     label:'Cost (EGP)',      f:'costPrice',     kind:'dec'},
   {k:'markup',   label:'Markup %',        kind:'markup'},
   {k:'sell',     label:'Sell (EGP)',      f:'sellPrice',     kind:'dec'},
+  {k:'ref',      label:'Prices are for',  f:'priceRef',      kind:'ref'},
+  {k:'perunit',  label:'Per 1 unit',      kind:'ro'},
   {k:'stock',    label:'Stock on hand',   f:'stockQty',      kind:'qty'},
   {k:'limit',    label:'Low-stock limit', f:'lowStockLimit', kind:'qty'},
   {k:'pack',     label:'Pack size',       f:'packSize',      kind:'qty'},
@@ -18,10 +20,26 @@ const PT_COLS = [
   {k:'perorder', label:'Bought per order',kind:'ro'},
   {k:'active',   label:'Active',          f:'active',        kind:'bool'}
 ];
-const PT_DEFAULT = ['unit','cost','markup','sell','stock','limit'];
+const PT_DEFAULT = ['unit','cost','markup','sell','ref','perunit','stock','limit'];
 const PT_COMPACT = ['cost','sell','stock'];
-const PT_FIELD_LABEL = {costPrice:'cost', sellPrice:'sell price', stockQty:'stock', lowStockLimit:'low-stock limit', packSize:'pack size', supplierId:'supplier', active:'active'};
+const PT_FIELD_LABEL = {priceRef:'prices are for', costPrice:'cost', sellPrice:'sell price', stockQty:'stock', lowStockLimit:'low-stock limit', packSize:'pack size', supplierId:'supplier', active:'active'};
 
+const ptEq = (a,b)=> JSON.stringify(a==null||a===''?null:a)===JSON.stringify(b==null||b===''?null:b);
+const ptRefText = r=> r && r.qty ? `${r.qty} ${r.unit||''}`.trim() : '';
+/* exact a ÷ b as a Dec when it ends; otherwise {approx:true, text} to 4 decimals (display only) */
+function ptDivide(a, b){
+  if(!a || !b || b.n<=0n) return null;
+  const num = a.n*(10n**BigInt(b.s)), den = b.n*(10n**BigInt(a.s));
+  for(let k=0; k<=12; k++){ const t = num*(10n**BigInt(k)); if(t%den===0n) return {exact:true, text:Dec.fmt({n:t/den, s:k}, 2)}; }
+  const sc = 10n**4n, v = (num*sc)/den; return {exact:false, text:'≈ '+Dec.fmt({n:v, s:4}, 2)};
+}
+function ptPerUnit(sell, ref){
+  const s = Dec.parse(sell), q = ref && Dec.parse(ref.qty); if(!s || !q || !ref.unit) return '';
+  const a = ptDivide(s, q); if(!a) return '';
+  let out = `${a.text} /${ref.unit}`;
+  if(ref.unit==='ml' || ref.unit==='g'){ const b = ptDivide(Dec.mul(s, Dec.parse('1000')), q); if(b) out += ` · ${b.text} /${ref.unit==='ml'?'l':'kg'}`; }
+  return out;
+}
 function ptWho(){ return (AUTH && AUTH.email) ? AUTH.email.split('@')[0] : 'this device'; }
 
 route('table', async ()=>{
@@ -40,7 +58,7 @@ route('table', async ()=>{
   /* ---- values as they are now (saved value, or the pending change on top of it) ---- */
   const eff = (p,f)=> (pending.get(p.id) && f in pending.get(p.id)) ? pending.get(p.id)[f] : p[f];
   const isChanged = (p,f)=> !!(pending.get(p.id) && f in pending.get(p.id));
-  const same = (a,b)=> String(a==null?'':a)===String(b==null?'':b);
+  const same = (a,b)=> (typeof a==='object' || typeof b==='object') ? ptEq(a,b) : String(a==null?'':a)===String(b==null?'':b);
   function setPending(p, f, v){
     let m = pending.get(p.id);
     if(same(p[f], v)){ if(m){ delete m[f]; if(!Object.keys(m).length) pending.delete(p.id); } return; }
@@ -104,6 +122,9 @@ route('table', async ()=>{
       case 'cost': return `<td>${inp(p,'costPrice','dec','placeholder="—"')}</td>`;
       case 'sell': return `<td>${inp(p,'sellPrice','dec','placeholder="—"')}</td>`;
       case 'markup': return `<td><input class="pt-in ${(isChanged(p,'costPrice')||isChanged(p,'sellPrice'))?'chg':''}" data-p="${p.id}" data-f="__markup" data-kind="markup" inputmode="decimal" placeholder="—" value="${esc(markupOf(p))}"></td>`;
+      case 'ref': { const r = eff(p,'priceRef') || {qty:'', unit:''}; const ch = isChanged(p,'priceRef');
+        return `<td style="white-space:nowrap;"><input class="pt-in pt-ref ${ch?'chg':''}" style="width:64px;" data-p="${p.id}" data-f="priceRef" data-part="qty" data-kind="ref" inputmode="decimal" placeholder="—" value="${esc(r.qty)}"> <select class="pt-in pt-sel ${ch?'chg':''}" style="width:68px;" data-p="${p.id}" data-f="priceRef" data-part="unit" data-kind="ref">${['','ml','l','g','kg'].map(u=>`<option value="${u}" ${r.unit===u?'selected':''}>${u||'—'}</option>`).join('')}</select></td>`; }
+      case 'perunit': return `<td class="pt-ro" data-pu="${p.id}">${esc(ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef')))}</td>`;
       case 'stock': return p.trackBatches ? `<td class="pt-ro" title="This product's stock comes from its batches">🔒 ${esc(p.stockQty??'')}</td>` : `<td>${inp(p,'stockQty','qty','placeholder="not tracked"')}</td>`;
       case 'limit': return `<td>${inp(p,'lowStockLimit','qty','placeholder="—"')}</td>`;
       case 'pack': return `<td>${inp(p,'packSize','pack','placeholder="—"')}</td>`;
@@ -141,13 +162,14 @@ route('table', async ()=>{
     <div class="mg-bar pt-save" id="pt_save" hidden></div>`;
 
   function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
-  function drawFilters(){ const c = counts(); $('#pt_filters').innerHTML = FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join(''); }
+  function drawFilters(){ const c = counts(); setHtml($('#pt_filters'), FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join('')); }
+  const setHtml = (el, h)=>{ if(el.__h!==h){ el.innerHTML = h; el.__h = h; } };   // same content: leave the buttons alone, or a tap that blurs a cell could miss them
   function drawBars(){
     const n = pending.size, fields = [...pending.values()].reduce((a,m)=>a+Object.keys(m).length, 0);
     const bar = $('#pt_save'); bar.hidden = !n;
-    bar.innerHTML = n ? `<span>${fields} change${fields===1?'':'s'} in ${n} product${n===1?'':'s'}</span><button class="btn btn-ghost btn-sm" id="pt_discard">Discard</button><button class="btn btn-signal" id="pt_do_save">Save</button>` : '';
+    setHtml(bar, n ? `<span>${fields} change${fields===1?'':'s'} in ${n} product${n===1?'':'s'}</span><button class="btn btn-ghost btn-sm" id="pt_discard">Discard</button><button class="btn btn-signal" id="pt_do_save">Save</button>` : '');
     const bulk = $('#pt_bulk'); bulk.hidden = !sel.size;
-    bulk.innerHTML = sel.size ? `<span>${sel.size} selected</span><button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button><button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button><button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button><button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '';
+    setHtml(bulk, sel.size ? `<span>${sel.size} selected</span><button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button><button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button><button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button><button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
     document.body.classList.toggle('pt-two-bars', !!n && !!sel.size);
     drawFilters();
   }
@@ -167,6 +189,7 @@ route('table', async ()=>{
     const set = (f, v)=>{ const el = tr.querySelector(`[data-f="${f}"]`); if(el && el!==document.activeElement) el.value = v; };
     set('costPrice', eff(p,'costPrice')??''); set('sellPrice', eff(p,'sellPrice')??''); set('__markup', markupOf(p));
     tr.querySelectorAll('.pt-in[data-f]').forEach(el=>{ const f = el.dataset.f; el.classList.toggle('chg', f==='__markup' ? (isChanged(p,'costPrice')||isChanged(p,'sellPrice')) : isChanged(p,f)); });
+    const pu = tr.querySelector('[data-pu]'); if(pu) pu.textContent = ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef'));
     const fl = flags(p); tr.classList.toggle('pt-warn', !!fl.length);
     const nm = tr.querySelector('.pt-name span'); if(nm) nm.innerHTML = esc(p.name) + (fl.length ? ` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>` : '');
   }
@@ -185,6 +208,11 @@ route('table', async ()=>{
     } else if(kind==='markup'){
       ok = decOk(t); el.classList.toggle('bad', !ok);
       if(ok && t!==''){ last.set(p.id,'markup'); lastMk.set(p.id,t); const sv = Dec.sellFromMarkup(eff(p,'costPrice'), t); if(sv!==null) setPending(p,'sellPrice',sv); }
+    } else if(kind==='ref'){
+      const tr = rowEl(p.id), qEl = tr.querySelector('[data-part=qty]'), uEl = tr.querySelector('[data-part=unit]');
+      const qt = qEl.value.trim().replace(/,/g,''); ok = qt==='' || (!!Dec.parse(qt) && Dec.cmp(Dec.parse(qt), Dec.ZERO)>0 && /^\d*\.?\d+$/.test(qt));
+      qEl.classList.toggle('bad', !ok);
+      if(ok){ setPending(p,'priceRef', qt==='' ? null : {qty:Dec.str(Dec.parse(qt)), unit:uEl.value}); }
     } else if(kind==='qty' || kind==='pack'){
       ok = t==='' || (/^\d*\.?\d+$/.test(t.replace(/,/g,'')) && (kind!=='pack' || parseFloat(t)>0)); el.classList.toggle('bad', !ok);
       if(ok) setPending(p, f, t==='' ? '' : parseFloat(t.replace(/,/g,'')));
@@ -200,13 +228,18 @@ route('table', async ()=>{
     if(el.matches('.pt-sel-r')){ el.checked ? sel.add(el.dataset.sel) : sel.delete(el.dataset.sel); drawBars(); return; }
     if(!el.matches('.pt-in[data-f], .pt-chk')) return;
     const p = prodById.get(el.dataset.p), f = el.dataset.f;
-    if(el.dataset.kind==='select'){ setPending(p, f, el.value); el.classList.toggle('chg', isChanged(p,f)); }
+    if(el.dataset.kind==='ref'){
+      const tr = rowEl(p.id), qt = tr.querySelector('[data-part=qty]').value.trim().replace(/,/g,'');
+      if(qt!=='' && Dec.parse(qt) && /^\d*\.?\d+$/.test(qt)) setPending(p,'priceRef',{qty:Dec.str(Dec.parse(qt)), unit:tr.querySelector('[data-part=unit]').value});
+      tr.querySelectorAll('[data-f=priceRef]').forEach(x=>x.classList.toggle('chg', isChanged(p,'priceRef'))); refreshRow(p);
+    }
+    else if(el.dataset.kind==='select'){ setPending(p, f, el.value); el.classList.toggle('chg', isChanged(p,f)); }
     else if(el.dataset.kind==='bool'){ setPending(p, f, el.checked); }
     drawBars();
   });
   wrap.addEventListener('keydown', e=>{
     const el = e.target.closest('.pt-in'); if(!el || e.key!=='Enter') return; e.preventDefault();
-    const all = [...wrap.querySelectorAll(`.pt-in[data-f="${el.dataset.f}"]`)], i = all.indexOf(el), nx = all[i + (e.shiftKey ? -1 : 1)];
+    const all = [...wrap.querySelectorAll(`.pt-in[data-f="${el.dataset.f}"]${el.dataset.part?`[data-part="${el.dataset.part}"]`:''}`)], i = all.indexOf(el), nx = all[i + (e.shiftKey ? -1 : 1)];
     if(nx){ nx.focus(); if(nx.select) nx.select(); nx.scrollIntoView({block:'nearest'}); }
   });
   wrap.addEventListener('focusin', e=>{ const el = e.target; if(el.matches && el.matches('input.pt-in')) setTimeout(()=>{ try{ el.select(); }catch(_){} }, 0); });
@@ -262,6 +295,7 @@ route('table', async ()=>{
     if(e.target.closest('#pt_discard')){ showConfirm('Discard all unsaved changes?', ()=>{ pending.clear(); last.clear(); draw(true); }, {yesLabel:'Discard'}); return; }
     if(!e.target.closest('#pt_do_save')) return;
     if(wrap.querySelector('.pt-in.bad')){ showAlert('Some cells hold something that is not a valid number (marked red). Fix or clear them first.'); return; }
+    for(const [pid,ch] of pending){ if(ch.priceRef && !ch.priceRef.unit){ showAlert(`Pick a unit (ml, l, g or kg) for “Prices are for” on ${prodById.get(pid).name}, or clear the quantity.`); return; } }
     const btn = $('#pt_do_save'); btn.disabled = true; btn.textContent = 'Saving…';
     try{
       const entry = {id:'pt-'+Date.now(), at:new Date().toISOString(), by:ptWho(), items:[], undone:false};
@@ -280,7 +314,7 @@ route('table', async ()=>{
       showAlert(`${entry.items.length} product${entry.items.length===1?'':'s'} updated. You can undo this from History.`, 'Saved');
     }catch(err){ showAlert('Saving did not finish: '+(err.message||err)); btn.disabled = false; btn.textContent = 'Save'; }
   };
-  const fmtVal = (f,v)=> f==='supplierId' ? ((supById.get(v)||{}).name || '—') : f==='active' ? (v===false?'off':'on') : (v===''||v==null ? '—' : v);
+  const fmtVal = (f,v)=> f==='priceRef' ? (ptRefText(v)||'—') : f==='supplierId' ? ((supById.get(v)||{}).name || '—') : f==='active' ? (v===false?'off':'on') : (v===''||v==null ? '—' : v);
   $('#pt_hist').onclick = async ()=>{
     const store = await getOne('sharedSettings','tableLog'), entries = (store && store.entries || []).slice(0, 25);
     showModal(`<h3>Recent changes</h3><div style="max-height:60vh; overflow:auto;">${entries.length ? entries.map(en=>`<div class="pt-h ${en.undone?'undone':''}">
@@ -310,6 +344,7 @@ route('table', async ()=>{
           case 'limit': return eff(p,'lowStockLimit')===''||eff(p,'lowStockLimit')==null ? '' : Number(eff(p,'lowStockLimit'));
           case 'pack': return eff(p,'packSize')===''||eff(p,'packSize')==null ? '' : Number(eff(p,'packSize'));
           case 'expiry': return p.expiryDate||''; case 'perorder': return isPerOrderProduct(p, whMap) ? 'Yes' : '';
+          case 'ref': return ptRefText(eff(p,'priceRef')); case 'perunit': return ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef'));
           case 'active': return eff(p,'active')===false ? 'No' : 'Yes';
         }
         return '';
@@ -335,7 +370,7 @@ async function ptUndo(entryId){
     const p = await getOne('products', it.id); if(!p) continue;
     let touched = false;
     for(const [f,[oldV,newV]] of Object.entries(it.changes)){
-      if(String(p[f]??'')===String(newV??'')){ p[f] = oldV; res.n++; touched = true; } else res.skipped++;
+      if(ptEq(p[f], newV)){ p[f] = (f==='priceRef' && !oldV) ? null : oldV; res.n++; touched = true; } else res.skipped++;
     }
     if(touched){ if('costPrice' in it.changes || 'sellPrice' in it.changes) p.priceHistory = (p.priceHistory||[]).filter(h=>!(h.from==='product table' && h.at===en.at));
       await put('products', p); res.restored.push(it.id); }
