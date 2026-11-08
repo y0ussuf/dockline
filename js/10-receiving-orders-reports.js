@@ -78,7 +78,7 @@ async function postponedScreen(orderId){
   list.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>resolve(b.dataset.add, async it=>{
     const product = it.productId ? await getOne('products', it.productId) : null;
     const vals = resolveAddedValues(it, product);
-    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit;
+    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit; lookFeedback('ok');
   }));
   list.querySelectorAll('[data-na]').forEach(b=>b.onclick=()=>resolve(b.dataset.na, it=>{ it.status='not_available'; }));
   list.querySelectorAll('[data-fs]').forEach(b=>b.onclick=()=>resolve(b.dataset.fs, async it=>{

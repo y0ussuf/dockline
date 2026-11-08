@@ -1,0 +1,77 @@
+/* ===== Colour themes: light tokens on [data-look], dark tokens on [data-look][data-theme="dark"] ===== */
+:root[data-look="midnight"]{ --ink:#0B2233; --ink-soft:#4A6275; --paper:#EEF6FA; --paper-dim:#E0EDF4; --line:#C9DDE8; --card:#FFFFFF; --sea:#0E7490; }
+:root[data-look="midnight"][data-theme="dark"]{ --ink:#E6F3FA; --ink-soft:#9DB8CA; --paper:#071A2B; --paper-dim:#0D2438; --line:#1D3A52; --card:#0D2438; --sea:#38BDF8; }
+:root[data-look="forest"]{ --ink:#16261B; --ink-soft:#4B5F50; --paper:#F3F5EC; --paper-dim:#E8EDDC; --line:#D3DAC4; --card:#FFFFFF; --sea:#2F6F54; }
+:root[data-look="forest"][data-theme="dark"]{ --ink:#E6EEDF; --ink-soft:#A5B8A8; --paper:#0E1A12; --paper-dim:#15261B; --line:#25402E; --card:#15261B; --sea:#6FC79A; }
+:root[data-look="sunset"]{ --ink:#3A1F1A; --ink-soft:#7A5A52; --paper:#FFF4EC; --paper-dim:#FCE7D8; --line:#F0D5C6; --card:#FFFFFF; --sea:#B4456B; }
+:root[data-look="sunset"][data-theme="dark"]{ --ink:#FBEAE0; --ink-soft:#CDB0B8; --paper:#1E1224; --paper-dim:#2A1A33; --line:#44294F; --card:#2A1A33; --sea:#F58BB0; }
+:root[data-look="graphite"]{ --ink:#1B1C1F; --ink-soft:#5D6068; --paper:#F2F2F3; --paper-dim:#E7E8EA; --line:#D9DADD; --card:#FFFFFF; --sea:#475569; }
+:root[data-look="graphite"][data-theme="dark"]{ --ink:#ECEDEF; --ink-soft:#A3A7AF; --paper:#121316; --paper-dim:#1B1D21; --line:#2B2E34; --card:#1B1D21; --sea:#94A3B8; }
+:root[data-look="rose"]{ --ink:#3B1423; --ink-soft:#80596A; --paper:#FFF1F4; --paper-dim:#FCE3EA; --line:#F6D3DC; --card:#FFFFFF; --sea:#9D2A5C; }
+:root[data-look="rose"][data-theme="dark"]{ --ink:#FCE7EE; --ink-soft:#D1AEBB; --paper:#1F0F17; --paper-dim:#2B1521; --line:#46232F; --card:#2B1521; --sea:#F28CB3; }
+:root[data-look="lavender"]{ --ink:#241B3D; --ink-soft:#675C86; --paper:#F4F1FF; --paper-dim:#E9E3FB; --line:#DAD2F4; --card:#FFFFFF; --sea:#5B3FD1; }
+:root[data-look="lavender"][data-theme="dark"]{ --ink:#ECE8FF; --ink-soft:#B3AAD3; --paper:#151126; --paper-dim:#1F1A38; --line:#342D5A; --card:#1F1A38; --sea:#B6A3FB; }
+body{transition:background-color .35s ease, color .35s ease;}
+
+/* ===== Theme picker tiles, segmented control, switches ===== */
+.lk-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:10px; margin:12px 0;}
+.lk-tile{display:flex; flex-direction:column; align-items:center; gap:7px; padding:10px 8px; background:var(--card); color:var(--ink); border:2px solid var(--line); border-radius:12px; cursor:pointer; font-weight:600; font-size:.82rem;}
+.lk-tile.on{border-color:var(--signal); box-shadow:0 0 0 2px color-mix(in srgb, var(--signal) 30%, transparent);}
+.lk-prev{position:relative; width:100%; height:44px; border-radius:8px; border:1px solid var(--line); overflow:hidden;}
+.lk-prev i{position:absolute; right:7px; bottom:7px; width:16px; height:16px; border-radius:50%; box-shadow:0 0 0 2px #fff8;}
+.lk-seg{display:inline-flex; border:1.5px solid var(--line); border-radius:10px; overflow:hidden;}
+.lk-seg button{background:var(--card); color:var(--ink); border:none; padding:9px 18px; font-weight:600;}
+.lk-seg button.on{background:var(--signal); color:var(--signal-text);}
+.lk-sw{display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--line); cursor:pointer;}
+.lk-sw:last-of-type{border-bottom:none;}
+.lk-sw span{flex:1; min-width:0;} .lk-sw small{display:block; color:var(--ink-soft); font-size:.8rem; font-weight:400;}
+.lk-sw input{appearance:none; -webkit-appearance:none; width:46px; height:26px; flex-shrink:0; border-radius:13px; background:var(--line); position:relative; cursor:pointer; transition:background .2s; order:2; margin:0;}
+.lk-sw input::after{content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; transition:transform .2s; box-shadow:0 1px 3px rgba(0,0,0,.3);}
+.lk-sw input:checked{background:var(--signal);} .lk-sw input:checked::after{transform:translateX(20px);}
+.lk-themebtn{background:transparent; border:none; font-size:1.25rem; padding:4px 8px; margin-left:auto; line-height:1;}
+.lk-sidebtn{margin-top:auto; cursor:pointer;}
+html:not(.lk-themebtn) .lk-themebtn, html:not(.lk-themebtn) .lk-sidebtn{display:none !important;}
+
+/* ===== Home hero / greeting ===== */
+.lk-hero{margin:0 0 18px; padding:2px 0;}
+.lk-hero h1{margin:0;}
+.lk-sub{color:var(--ink-soft); margin-top:4px;}
+.lk-hero.grad{padding:20px 22px; border-radius:16px; color:#fff; background:linear-gradient(rgba(0,0,0,.22), rgba(0,0,0,.22)), linear-gradient(120deg, var(--signal), var(--sea)); box-shadow:0 8px 24px color-mix(in srgb, var(--signal) 28%, transparent);}
+.lk-hero.grad h1, .lk-hero.grad .lk-sub{color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.25);} .lk-hero.grad .lk-sub{opacity:.92;}
+.lk-wave{display:inline-block; transform-origin:70% 70%;}
+html.lk-motion .lk-wave{animation:lk-wave 2.4s .5s 1;}
+@keyframes lk-wave{0%,60%,100%{transform:rotate(0)}10%{transform:rotate(16deg)}20%{transform:rotate(-8deg)}30%{transform:rotate(16deg)}40%{transform:rotate(-4deg)}50%{transform:rotate(10deg)}}
+
+/* ===== Warehouse colour dots ===== */
+.wh-dot{display:none; width:.7em; height:.7em; border-radius:50%; margin-right:.5em; vertical-align:baseline; flex-shrink:0;}
+html.lk-whcolors .wh-dot{display:inline-block;}
+
+/* ===== Friendlier empty screens ===== */
+html.lk-emptyart .empty .ic{display:flex; align-items:center; justify-content:center; width:84px; height:84px; margin:0 auto 14px; border-radius:50%; font-size:2.2rem;
+  background:radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--signal) 28%, var(--card)), color-mix(in srgb, var(--sea) 18%, var(--card)));
+  box-shadow:0 0 0 8px color-mix(in srgb, var(--signal) 8%, transparent);}
+html.lk-emptyart.lk-motion .empty .ic{animation:lk-float 3.2s ease-in-out infinite;}
+@keyframes lk-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+
+/* ===== Smooth movement ===== */
+@keyframes lk-rise{from{opacity:0; transform:translateY(10px)}to{opacity:1; transform:none}}
+html.lk-motion #main > *{animation:lk-rise .38s cubic-bezier(.2,.7,.2,1) both;}
+html.lk-motion #main > *:nth-child(2){animation-delay:.04s} html.lk-motion #main > *:nth-child(3){animation-delay:.08s}
+html.lk-motion #main > *:nth-child(4){animation-delay:.12s} html.lk-motion #main > *:nth-child(5){animation-delay:.16s}
+html.lk-motion #main > *:nth-child(n+6){animation-delay:.2s}
+html.lk-motion .list-row{animation:lk-rise .3s ease both;}
+html.lk-motion .btn, html.lk-motion .chip, html.lk-motion .lk-tile{transition:transform .12s ease, box-shadow .15s ease, background-color .2s, border-color .2s;}
+html.lk-motion .btn:active, html.lk-motion .chip:active, html.lk-motion .lk-tile:active{transform:scale(.96);}
+@media (hover:hover){ html.lk-motion .btn:hover{transform:translateY(-1px);} html.lk-motion .stat:hover, html.lk-motion .card:hover{box-shadow:0 6px 18px rgba(0,0,0,.10);} }
+html.lk-motion .stat, html.lk-motion .card{transition:box-shadow .2s ease;}
+html.lk-motion .navlink{transition:background-color .2s, padding-left .2s;}
+@media (prefers-reduced-motion: reduce){ html.lk-motion *{animation:none !important; transition:none !important;} }
+
+/* ===== Order celebration ===== */
+.lk-cele{position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; background:color-mix(in srgb, var(--paper) 55%, transparent); backdrop-filter:blur(2px); animation:lk-fade .25s both;}
+.lk-cele canvas{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
+.lk-check{position:relative; text-align:center; font-family:var(--font-d); font-size:1.4rem; color:var(--ink);}
+.lk-check svg{width:112px; height:112px; display:block; margin:0 auto 10px; stroke:var(--signal); animation:lk-pop .5s cubic-bezier(.2,1.4,.4,1) both;}
+.lk-check circle{stroke-dasharray:152; stroke-dashoffset:152; animation:lk-draw .6s .05s ease forwards;}
+.lk-check path{stroke-dasharray:50; stroke-dashoffset:50; animation:lk-draw .4s .45s ease forwards;}
+@keyframes lk-draw{to{stroke-dashoffset:0}} @keyframes lk-pop{from{transform:scale(.4); opacity:0}to{transform:none; opacity:1}} @keyframes lk-fade{from{opacity:0}to{opacity:1}}

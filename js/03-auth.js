@@ -213,11 +213,12 @@ function applyAccent(hex){
   document.documentElement.style.setProperty('--signal-text', pickTextColor(hex));
 }
 async function loadAndApplyTheme(){
+  if(typeof loadLook==='function'){ await loadLook(); installThemeButtons(); return; }
   const rec = await getOne('settings', 'theme');
   applyAccent(rec && rec.accent ? rec.accent : DEFAULT_ACCENT);
 }
 async function saveAccent(hex){
-  await put('settings', {id:'theme', accent:hex});
+  await put('settings', {id:'theme', accent:hex, custom:true});
   applyAccent(hex);
 }
 

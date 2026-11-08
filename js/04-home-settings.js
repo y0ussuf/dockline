@@ -42,7 +42,7 @@ route('home', async ()=>{
     ${partialOrders.map(o=>{ const n=(o.postponed||[]).length; return `<a href="#/order/${o.id}/open" class="btn btn-ghost btn-sm" style="border-color:var(--sea); color:var(--sea);">⏳ ${esc(o.vessel)} · ${n} item${n===1?'':'s'} waiting</a>`; }).join('')}
   </div>` : '';
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Dashboard</h1></div>
+    ${await homeHeaderHtml(active, awaitingCount, completedToday)}
     ${DEMO_MODE ? `<div class="card" style="margin-bottom:18px; border-color:var(--warn); background:var(--warn-bg);"><b>🧪 Demo mode</b><span class="subtle"> — you're testing locally, not logged into a real account. Nothing here syncs anywhere, and this ends when you reload the page.</span></div>` : ''}
     ${waitingHtml}
     ${(lowStockCount || shortfalls.length) ? `
@@ -92,9 +92,8 @@ route('home', async ()=>{
 
 /* ==================================== SETTINGS ==================================== */
 route('settings', async ()=>{
-  const [themeRec, syncCfgRaw, company] = await Promise.all([getOne('settings','theme'), getSyncConfig(), getCompany()]);
+  const [syncCfgRaw, company] = await Promise.all([getSyncConfig(), getCompany()]);
   const syncCfgCache = syncCfgRaw || {};
-  const currentAccent = (themeRec && themeRec.accent) ? themeRec.accent.toLowerCase() : DEFAULT_ACCENT.toLowerCase();
   $('#main').innerHTML = `
     <div class="topbar"><h1>Settings</h1></div>
     <div class="card">
@@ -122,17 +121,7 @@ route('settings', async ()=>{
         ${syncCfgCache.url?'<button class="btn btn-ghost btn-sm" id="syncOff">Turn off sync on this device</button>':''}
       </div>
     </div>
-    <div class="card" style="margin-top:24px;">
-      <div class="section-title">Theme color</div>
-      <p class="subtle">Pick an accent color for buttons and highlights — purely cosmetic, change it whenever you like.</p>
-      <div style="display:flex; gap:10px; flex-wrap:wrap; margin:14px 0;" id="themeSwatches">
-        ${THEME_PRESETS.map(p=>`<button class="theme-swatch ${p.hex.toLowerCase()===currentAccent?'selected':''}" data-color="${p.hex}" style="background:${p.hex}" title="${p.name}"></button>`).join('')}
-      </div>
-      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-        <label class="subtle" style="display:flex; align-items:center; gap:8px;">Custom: <input type="color" id="themeCustom" value="${currentAccent}"></label>
-        <button class="btn btn-ghost btn-sm" id="themeReset">Reset to default</button>
-      </div>
-    </div>`;
+    ${lookCardHtml()}`;
   $('#doBackup').onclick = downloadBackup;
   bindCompanyCard(company);
   if($('#restoreFile')) $('#restoreFile').onchange = e=>{
@@ -140,19 +129,7 @@ route('settings', async ()=>{
     if(file) restoreBackupFile(file);
     e.target.value = '';
   };
-  $('#themeSwatches').querySelectorAll('[data-color]').forEach(b=>b.onclick=async ()=>{
-    await saveAccent(b.dataset.color);
-    routes['settings']([]);
-  });
-  $('#themeCustom').onchange = async e=>{
-    await saveAccent(e.target.value);
-    routes['settings']([]);
-  };
-  $('#themeCustom').oninput = e=> applyAccent(e.target.value); // live preview while dragging the picker
-  $('#themeReset').onclick = async ()=>{
-    await saveAccent(DEFAULT_ACCENT);
-    routes['settings']([]);
-  };
+  bindLookCard();
   renderSyncIndicator();
   $('#syncSave').onclick = async ()=>{
     const crewName = $('#syncCrewName').value.trim();
