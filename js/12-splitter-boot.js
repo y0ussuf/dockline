@@ -42,7 +42,7 @@ function exportSplitterExcel(groups, sourceLabel, sourceCode){
       cc.alignment = {vertical:'middle', horizontal: CENTER_COLS.includes(colNum) ? 'center' : 'left'};
     });
 
-    g.items.forEach(item=>{
+    const addItem = item=>{
       // the sheet's own Sr. number (e.g. 75), not a per-warehouse recount — so it still matches
       // the original uploaded order when someone's cross-checking the two side by side
       const row = ws.addRow([item.sr || '', item.desc, item.qty, item.unit].concat(showOrdered?[item.ordered!=null ? item.ordered : '']:[]));
@@ -50,7 +50,20 @@ function exportSplitterExcel(groups, sourceLabel, sourceCode){
         cc.border = {bottom:{style:'hair', color:{argb:'FFEDEAE1'}}};
         cc.alignment = {vertical:'middle', horizontal: CENTER_COLS.includes(colNum) ? 'center' : 'left'};
       });
-    });
+    };
+    if(g.sections){
+      // a warehouse with more than one section: each section gets its own sub-heading under the warehouse
+      for(const sec of g.sections){
+        const sRow = ws.addRow([sec.name]);
+        sRow.height = 20;
+        ws.mergeCells(sRow.number,1,sRow.number,NC);
+        const sc = sRow.getCell(1);
+        sc.font = {bold:true, size:11, color:{argb:'FF12202B'}};
+        sc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFD6E8F2'}};
+        sc.alignment = {vertical:'middle', horizontal:'left', indent:1};
+        sec.items.forEach(addItem);
+      }
+    } else g.items.forEach(addItem);
     ws.addRow([]);
   }
 
@@ -237,7 +250,18 @@ route('splitter', async ()=>{
       if(!chosen.length){ showAlert('Tick at least one item to export.'); return; }
       const btn = $('#sp_export');
       btn.disabled = true; btn.textContent = 'Exporting…';
-      const withOrdered = chosen.map(g=>({id:g.id, name:g.name, items:g.items.map(r=>Object.assign({}, r, {ordered: (parseFloat(r.qty)!==parseFloat(r.origQty)) ? r.origQty : null}))}));
+      const withOrdered = chosen.map(g=>{
+        const items = g.items.map(r=>Object.assign({}, r, {ordered: (parseFloat(r.qty)!==parseFloat(r.origQty)) ? r.origQty : null}));
+        // more than one section set up in this warehouse → split the sheet by section (shelf order; items with no section last)
+        const defined = g.id==='unassigned' ? [] : sectionList.filter(s=>s.warehouseId===g.id);
+        let sections = null;
+        if(defined.length>1){
+          const by = new Map();
+          for(const it of items){ const sid = secOf(it).id; if(!by.has(sid)) by.set(sid, {id:sid, name:secOf(it).name, items:[]}); by.get(sid).items.push(it); }
+          sections = [...by.values()].sort((a,b)=> a.id==='none' ? 1 : b.id==='none' ? -1 : ((secById[a.id]?.priority ?? 9999) - (secById[b.id]?.priority ?? 9999)) || a.name.localeCompare(b.name));
+        }
+        return {id:g.id, name:g.name, items, sections};
+      });
       await exportSplitterExcel(withOrdered, sourceLabel, sourceCode);
       btn.disabled = false; btn.textContent = '⬇ Export selected to Excel';
     };
