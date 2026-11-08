@@ -7,6 +7,7 @@ route('products', async ()=>{
   const secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
   const supMap = new Map(suppliers.map(s=>[s.id,s]));
 
+  window.__mgSel = window.__mgSel || new Set(); window.__mgMode = !!window.__mgMode;
   window.__filterWh = window.__filterWh || 'all';
   window.__search = window.__search || '';
 
@@ -36,8 +37,8 @@ route('products', async ()=>{
         <div class="section-title">${wh?esc(wh.name)+' · ':''}${sec?esc(sec.name):'No section'}</div>
         <div data-sortable-section="${sid}">
         ${groups[sid].map(p=>`
-          <div class="list-row" data-id="${p.id}">
-            <span class="drag-handle">⠿</span>
+          <div class="list-row ${window.__mgMode&&window.__mgSel.has(p.id)?'mg-picked':''}" data-id="${p.id}">
+            ${window.__mgMode ? `<label class="mg-chk"><input type="checkbox" data-pick="${p.id}" ${window.__mgSel.has(p.id)?'checked':''}></label>` : '<span class="drag-handle">⠿</span>'}
             <div class="thumb">${p.image?`<img src="${p.image}" loading="lazy" decoding="async">`:'📦'}</div>
             <div style="flex:1; min-width:0;">
               <div style="font-weight:700;">${esc(p.name)} ${p.active?'':'<span class="badge b-picked_later">inactive</span>'} ${!p.warehouseId?'<span class="badge b-unmatched">needs setup</span>':''}</div>
@@ -61,6 +62,7 @@ route('products', async ()=>{
         <a class="btn btn-ghost" href="#/duplicates">⇄ Possible duplicates</a>
         <a class="btn btn-ghost" href="#/productsetup">⚙ Stock &amp; pack setup</a>
         <button class="btn btn-ghost" id="bulkImport">⇧ Bulk import (CSV)</button>
+        <button class="btn btn-ghost" id="mgToggle">${window.__mgMode?'✕ Stop selecting':'☑ Select to merge'}</button>
         <button class="btn btn-signal" id="addProd">+ Add product</button>
       </div>
     </div>
@@ -70,9 +72,25 @@ route('products', async ()=>{
       ${warehouses.map(w=>`<button class="chip ${window.__filterWh===w.id?'active':''}" data-wh="${w.id}">${esc(w.name)}</button>`).join('')}
       ${unassignedCount ? `<button class="chip ${window.__filterWh==='unassigned'?'active':''}" data-wh="unassigned">⚠ Needs setup (${unassignedCount})</button>` : ''}
     </div>
-    <div id="prodList">${list()}</div>
+    <div id="prodList" class="${window.__mgMode?'mg-on':''}">${list()}</div>
+    <div class="mg-bar" id="mgBar" hidden><span id="mgCount"></span><button class="btn btn-ghost btn-sm" id="mgClear">Clear</button><button class="btn btn-signal" id="mgGo">Merge selected…</button></div>
   `;
   $('#bulkImport').onclick = ()=>openBulkImport();
+  const mgBarUpdate = ()=>{
+    const n = window.__mgSel.size, bar = $('#mgBar');
+    bar.hidden = !window.__mgMode;
+    $('#mgCount').textContent = n ? `${n} selected` : 'Tick the products to merge';
+    $('#mgGo').disabled = n<2;
+  };
+  $('#mgToggle').onclick = ()=>{ window.__mgMode = !window.__mgMode; if(!window.__mgMode) window.__mgSel.clear(); routes['products']([]); };
+  $('#mgClear').onclick = ()=>{ window.__mgSel.clear(); $('#prodList').innerHTML = list(); attachRowHandlers(); mgBarUpdate(); };
+  $('#mgGo').onclick = ()=>{ location.hash = '#/mergemany'; };
+  $('#prodList').addEventListener('change', e=>{
+    const c = e.target.closest('[data-pick]'); if(!c) return;
+    if(c.checked) window.__mgSel.add(c.dataset.pick); else window.__mgSel.delete(c.dataset.pick);
+    c.closest('.list-row').classList.toggle('mg-picked', c.checked); mgBarUpdate();
+  });
+  mgBarUpdate();
 
   let searchDebounce;
   $('#psearch').oninput = e=>{
