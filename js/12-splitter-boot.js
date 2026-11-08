@@ -88,69 +88,6 @@ route('splitter', async ()=>{
     return arr;
   }
 
-  const looseSet = ()=> new Set(packSt.loose[vKey] || []);
-  /* decides which lines are not whole packs and sets each line's final quantity */
-  function recheck(resetChoices){
-    const loose = looseSet();
-    for(const r of fileRows){
-      const prod = r.productId ? prodById.get(r.productId) : null;
-      r.isLoose = !!(prod && loose.has(prod.id));
-      r.check = (prod && !r.isLoose) ? packCheck({qty:r.origQty, unit:r.unit}, prod, batches, packSt.mode) : null;
-      r.unjudged = !!(prod && !r.isLoose && !r.check && packUnjudgeable({qty:r.origQty, unit:r.unit}, prod, batches));
-      if(resetChoices) { r.choice = 'suggest'; r.custom = ''; }
-      if(!r.check) r.qty = r.origQty;
-      else if(r.choice==='keep') r.qty = r.origQty;
-      else if(r.choice==='custom' && parseFloat(r.custom)>0) r.qty = parseFloat(r.custom);
-      else r.qty = r.check.suggested;
-    }
-  }
-  async function setLoose(productId, on){
-    const set = looseSet(); if(on) set.add(productId); else set.delete(productId);
-    packSt.loose[vKey] = [...set]; await savePackSettings(packSt); recheck(false); draw();
-  }
-  function qtyCheckHtml(){
-    const flagged = fileRows.filter(r=>r.check);
-    const looseRows = fileRows.filter(r=>r.isLoose);
-    const unitOf = r=> r.unit ? ' '+esc(r.unit) : '';
-    const unjudged = fileRows.filter(r=>r.unjudged);
-    if(!flagged.length && !looseRows.length && !unjudged.length) return '';
-    return `<div class="bt-card" style="margin-bottom:16px;">
-      <div class="bt-h">Quantity check</div>
-      <p class="subtle" style="margin:0 0 10px;">${flagged.length ? `${flagged.length} line${flagged.length===1?' isn’t':'s aren’t'} a whole number of packs.` : 'All lines are whole packs.'} Change anything you like before exporting.</p>
-      <div class="subtle" style="font-weight:700; margin-bottom:6px;">Rounding rule — applies to every vessel</div>
-      <div class="tag-row" id="qc_mode" style="margin-bottom:12px;">
-        ${[['up','Round up'],['nearest','Nearest'],['down','Round down']].map(([m,l])=>`<button class="chip ${packSt.mode===m?'active':''}" data-m="${m}">${l}</button>`).join('')}
-      </div>
-      ${flagged.length>1?`<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;"><button class="btn btn-ghost btn-sm" id="qc_all">Accept all suggestions</button><button class="btn btn-ghost btn-sm" id="qc_none">Keep all as ordered</button></div>`:''}
-      ${flagged.map(r=>`<div class="qc-row" data-r="${r.id}">
-        <div style="min-width:0;"><b>${esc(r.desc)}</b>
-          <div class="subtle">Ordered ${r.origQty}${unitOf(r)} · pack ${r.check.pack.size} (${esc(r.check.pack.name)})${r.check.pack.fromBatch?' · from batch':''}</div></div>
-        <div class="tag-row" style="margin:8px 0 0;">
-          <button class="chip ${r.choice==='suggest'?'active':''}" data-c="suggest">${r.check.suggested}${unitOf(r)} · ${r.check.packs} ${esc(packPlural(r.check.pack.name, r.check.packs))}</button>
-          <button class="chip ${r.choice==='keep'?'active':''}" data-c="keep">Keep ${r.origQty}</button>
-          <input type="number" step="any" inputmode="decimal" class="qc-custom ${r.choice==='custom'?'on':''}" placeholder="Other" value="${r.choice==='custom'?esc(r.custom):''}">
-        </div>
-        ${vKey && r.productId ? `<button class="qc-link" data-loose="${r.productId}">Sold loose to ${esc(vesselName)} — don’t check this item</button>`:''}
-      </div>`).join('')}
-      ${unjudged.length?`<div class="bt-warn" style="margin-top:12px;"><b>⚠ ${unjudged.length} item${unjudged.length===1?'':'s'} couldn’t be checked</b><div class="subtle">The ordered unit doesn’t match the product’s unit. Fix the unit on the product (Products page) to include them.</div>${unjudged.map(r=>`<div class="bt-warn-row"><span>${esc(r.desc)}</span><span class="subtle">${r.origQty}${unitOf(r)}</span></div>`).join('')}</div>`:''}
-      ${looseRows.length?`<div class="subtle" style="margin-top:12px;"><b>Loose for ${esc(vesselName)}:</b> ${looseRows.map(r=>`${esc(r.desc)} <button class="qc-link" data-unloose="${r.productId}">undo</button>`).join(' · ')}</div>`:''}
-    </div>`;
-  }
-  function bindQtyCheck(){
-    const root = $('#sp_qc'); if(!root) return;
-    root.querySelectorAll('#qc_mode [data-m]').forEach(b=>b.onclick = async ()=>{ packSt.mode = b.dataset.m; await savePackSettings(packSt); recheck(true); draw(); });
-    const all = $('#qc_all'); if(all) all.onclick = ()=>{ fileRows.forEach(r=>{ if(r.check){ r.choice='suggest'; } }); recheck(false); draw(); };
-    const none = $('#qc_none'); if(none) none.onclick = ()=>{ fileRows.forEach(r=>{ if(r.check){ r.choice='keep'; } }); recheck(false); draw(); };
-    root.querySelectorAll('[data-r]').forEach(card=>{
-      const r = fileRows.find(x=>x.id===card.dataset.r);
-      card.querySelectorAll('[data-c]').forEach(b=>b.onclick = ()=>{ r.choice = b.dataset.c; recheck(false); draw(); });
-      const inp = card.querySelector('.qc-custom');
-      inp.onchange = ()=>{ if(parseFloat(inp.value)>0){ r.choice='custom'; r.custom=inp.value; } else { r.choice='suggest'; r.custom=''; } recheck(false); draw(); };
-    });
-    root.querySelectorAll('[data-loose]').forEach(b=>b.onclick = ()=>setLoose(b.dataset.loose, true));
-    root.querySelectorAll('[data-unloose]').forEach(b=>b.onclick = ()=>setLoose(b.dataset.unloose, false));
-  }
-
   async function processFile(file){
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array'});
@@ -185,7 +122,6 @@ route('splitter', async ()=>{
     }
     if(!rows.length){ showAlert('No usable rows found in the file.'); return false; }
     fileRows = rows;
-    recheck(true);
     rows.forEach(r=>r.on = true);   // every item is ticked for export by default
     spQuery = ''; openGroups.clear();
     return true;
@@ -195,7 +131,7 @@ route('splitter', async ()=>{
     if(!fileRows){
       $('#main').innerHTML = `
         <div class="topbar"><h1>Order Splitter</h1></div>
-        <p class="subtle" style="margin-top:-10px; max-width:680px;">A standalone tool, separate from the rest of Dockline: upload an order sheet and it splits the items by which warehouse each product is stored in, ready to send straight to a supplier. It doesn't touch orders, stock, or anything else — nothing here is saved.</p>
+        <p class="subtle" style="margin-top:-10px; max-width:680px;">A standalone tool, separate from the rest of Dockline: upload an order sheet and it splits the items by which warehouse each product is stored in, ready to send straight to a supplier. It doesn't touch orders, stock, or anything else — nothing here is saved. Quantities are exported exactly as ordered; to check them against pack sizes use <a href="#/qcheck">Quantity Check</a>.</p>
         <div class="card" style="max-width:520px;">
           <div class="field"><label>Excel file (.xlsx)</label><input type="file" id="sp_file" accept=".xlsx,.xls"></div>
           <p class="subtle" id="sp_hint">Same format as a normal order upload — Sr. / Description / Quantity / Unit, with the vessel name and order code anywhere above the header row.</p>
@@ -227,7 +163,6 @@ route('splitter', async ()=>{
         <p class="subtle" style="margin:4px 0 10px;">Pick the right product for each so it lands in the correct warehouse — items left as-is will export under "Unassigned".</p>
         <div id="sp_unassigned"></div>
       </div>` : ''}
-      <div id="sp_qc">${qtyCheckHtml()}</div>
       <div class="section-title">Choose what to export</div>
       <div class="sp-tools">
         <input type="search" id="sp_search" class="sp-search" placeholder="Search items…" value="${esc(spQuery)}" autocomplete="off">
@@ -237,7 +172,6 @@ route('splitter', async ()=>{
       <div class="sp-count" id="sp_count"></div>
       <button class="btn btn-signal btn-lg" id="sp_export">⬇ Export selected to Excel</button>`;
 
-    bindQtyCheck();
     if(unassignedCount){
       $('#sp_unassigned').innerHTML = unassignedGroup.items.map(r=>`
         <div class="list-row">
@@ -250,7 +184,7 @@ route('splitter', async ()=>{
           const row = fileRows.find(x=>x.id===b.dataset.assign);
           row.productId = picked.id;
           row.warehouseId = picked.warehouseId || '';
-          prodById.set(picked.id, picked); recheck(false);
+          prodById.set(picked.id, picked);
           row.on = true;
           if(!picked.warehouseId) showAlert(`"${picked.name}" doesn't have a warehouse set on its own product record yet, so it'll stay in "Unassigned" — set its warehouse from Products first if you want it grouped properly.`);
           draw();
