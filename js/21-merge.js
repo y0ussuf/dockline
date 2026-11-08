@@ -83,7 +83,7 @@ async function mergeProducts(keepId, dropId, o){
   drop.active = false; drop.mergedInto = keepId; drop.stockQty = ''; drop.trackBatches = false;
 
   // 3) move every reference
-  const log = {id:'merge-'+Date.now(), at:new Date().toISOString(), keepId, dropId, keepName:keepOrig.name, dropName:dropOrig.name, newName:keep.name,
+  const log = {id:'merge-'+Date.now(), at:new Date().toISOString(), keepId, dropId, keepName:keepOrig.name, dropName:dropOrig.name, newName:keep.name, batchId:o.batchId||null,
     keepBefore:{}, dropBefore:{}, changes:{}, addedMappings:[], undone:false};
   const diff = (before, after, orig)=>{ for(const k of new Set([...Object.keys(orig), ...Object.keys(after)])) if(!mgSame(orig[k], after[k])) before[k] = (k in orig) ? orig[k] : {__absent:true}; };
   diff(log.keepBefore, keep, keepOrig); diff(log.dropBefore, drop, dropOrig);
@@ -112,7 +112,7 @@ async function mergeProducts(keepId, dropId, o){
   await put('products', keep); await put('products', drop);
 
   const store = await getOne('sharedSettings', 'mergeLog') || {id:'mergeLog', entries:[]};
-  store.entries = [log, ...store.entries].slice(0, 30);
+  store.entries = [log, ...store.entries].slice(0, 150);
   await put('sharedSettings', store);
   return log;
 }
@@ -161,33 +161,47 @@ async function mgDuplicatePairs(products, mappings, ignored){
     if(ignored.has(key)) continue;
     out.push({a:A.p, b:B.p, key, score: (subset?1:0) + sim, sameSize: !!(A.s && B.s)});
   }
-  return out.sort((x,y)=>y.score-x.score).slice(0, 80);
+  return out.sort((x,y)=>y.score-x.score).slice(0, 400);
 }
 
 route('duplicates', async ()=>{
   const [products, mappings, ig, logStore, whs] = await Promise.all([getAll('products'), getAll('mappings'), getOne('sharedSettings','mergeIgnore'), getOne('sharedSettings','mergeLog'), getAll('warehouses')]);
   const ignored = new Set((ig && ig.pairs) || []), whName = new Map(whs.map(w=>[w.id,w.name]));
   const pairs = await mgDuplicatePairs(products, mappings, ignored);
-  const merged = ((logStore && logStore.entries) || []).filter(e=>!e.undone).slice(0,8);
-  const card = p=>`<div style="flex:1; min-width:0;"><b>${esc(p.name)}</b><div class="subtle">${esc(p.unit||'no unit')} · ${esc(whName.get(p.warehouseId)||'no warehouse')}${mgBlank(p.stockQty)?'':' · stock '+esc(p.stockQty)}</div></div>`;
+  const merged = ((logStore && logStore.entries) || []).filter(e=>!e.undone).slice(0,40);
+  // pairs that share a product belong together: A≈B and B≈C is one group of three
+  const byId = new Map(products.map(p=>[p.id,p])), parent = new Map();
+  const find = x=>{ while(parent.get(x)!==x){ parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  pairs.forEach(x=>{ [x.a.id,x.b.id].forEach(i=>{ if(!parent.has(i)) parent.set(i,i); }); parent.set(find(x.a.id), find(x.b.id)); });
+  const groups = new Map();
+  pairs.forEach(x=>{ const r = find(x.a.id); const g = groups.get(r) || groups.set(r,{ids:new Set(), keys:[], score:0}).get(r); g.ids.add(x.a.id); g.ids.add(x.b.id); g.keys.push(x.key); g.score = Math.max(g.score, x.score); });
+  const glist = [...groups.values()].sort((u,v)=>v.score-u.score).slice(0,60);
+  const line = p=>`<label class="mg-gl"><input type="checkbox" data-gp="${p.id}" checked><span style="flex:1; min-width:0;"><b>${esc(p.name)}</b><span class="subtle" style="display:block;">${esc(p.unit||'no unit')} · ${esc(whName.get(p.warehouseId)||'no warehouse')}${mgBlank(p.stockQty)?'':' · stock '+esc(p.stockQty)}</span></span></label>`;
+  const recent = [];
+  for(const e of merged){ const last = recent[recent.length-1]; if(e.batchId && last && last.batchId===e.batchId) last.items.push(e); else recent.push({batchId:e.batchId, items:[e]}); }
   $('#main').innerHTML = `
     <div class="topbar"><h1>Possible duplicates</h1><a href="#/products" class="btn btn-ghost btn-sm">← Products</a></div>
-    <p class="subtle" style="margin-top:-8px;">Pairs of products with almost the same name and the same size — usually the same item from a different brand. Nothing changes until you open a pair and confirm the merge.</p>
-    ${pairs.length ? `<div class="card" style="margin-bottom:22px;">${pairs.map(x=>`<div class="list-row mg-pair" data-k="${esc(x.key)}">
-        ${card(x.a)}<span class="subtle" style="padding:0 6px;">≈</span>${card(x.b)}
-        <a class="btn btn-signal btn-sm" href="#/merge/${x.a.id}/${x.b.id}">Merge…</a>
-        <button class="btn btn-ghost btn-sm" data-notdup="${esc(x.key)}" title="Stop suggesting this pair">Not the same</button></div>`).join('')}</div>`
+    <p class="subtle" style="margin-top:-8px;">Products with almost the same name and the same size — usually the same item from a different brand. Untick any that don't belong, then merge the group in one go. Nothing changes until you confirm on the next screen.</p>
+    ${glist.length ? glist.map((g,i)=>`<div class="card mg-group" data-g="${i}" data-keys="${esc(g.keys.join(','))}" style="margin-bottom:12px;">
+        ${[...g.ids].map(id=>byId.get(id)).filter(Boolean).map(line).join('')}
+        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;"><button class="btn btn-signal btn-sm" data-gmerge="${i}">Merge ticked…</button><button class="btn btn-ghost btn-sm" data-gno="${i}" title="Stop suggesting this group">Not the same</button></div></div>`).join('')
       : '<div class="empty"><div class="ic">✓</div>No likely duplicates found.</div>'}
-    ${merged.length ? `<h3 class="section-title">Recent merges</h3><div class="card">${merged.map(e=>`<div class="list-row">
-        <div style="flex:1; min-width:0;"><b>${esc(e.dropName)}</b> → <b>${esc(e.newName)}</b><div class="subtle">${fmtDate(e.at.slice(0,10))}</div></div>
-        <button class="btn btn-ghost btn-sm" data-undo="${e.id}">Undo</button></div>`).join('')}</div>` : ''}`;
-  $('#main').querySelectorAll('[data-notdup]').forEach(b=>b.onclick=async ()=>{
-    const cur = await getOne('sharedSettings','mergeIgnore') || {id:'mergeIgnore', pairs:[]};
-    if(!cur.pairs.includes(b.dataset.notdup)) cur.pairs.push(b.dataset.notdup);
-    await put('sharedSettings', cur); b.closest('.mg-pair').remove();
+    ${recent.length ? `<h3 class="section-title">Recent merges</h3><div class="card">${recent.map(r=>`<div class="list-row">
+        <div style="flex:1; min-width:0;"><b>${r.items.map(e=>esc(e.dropName)).reverse().join(', ')}</b> → <b>${esc(r.items[0].newName)}</b><div class="subtle">${fmtDate(r.items[0].at.slice(0,10))}${r.items.length>1?` · ${r.items.length} products`:''}</div></div>
+        <button class="btn btn-ghost btn-sm" data-undo="${r.items.map(e=>e.id).join(',')}">Undo</button></div>`).join('')}</div>` : ''}`;
+  $('#main').querySelectorAll('[data-gmerge]').forEach(b=>b.onclick=()=>{
+    const ids = [...b.closest('.mg-group').querySelectorAll('[data-gp]:checked')].map(c=>c.dataset.gp);
+    if(ids.length<2){ showAlert('Tick at least two products to merge.'); return; }
+    window.__mgSel = new Set(ids); window.__mgKeep = null; window.__mgName = null; location.hash = '#/mergemany';
   });
-  $('#main').querySelectorAll('[data-undo]').forEach(b=>b.onclick=()=>showConfirm('Undo this merge? Names, past orders, batches and stock go back to the two separate products.', async ()=>{
-    b.disabled = true; await undoMerge(b.dataset.undo); routes['duplicates']([]);
+  $('#main').querySelectorAll('[data-gno]').forEach(b=>b.onclick=async ()=>{
+    const grp = b.closest('.mg-group');
+    const cur = await getOne('sharedSettings','mergeIgnore') || {id:'mergeIgnore', pairs:[]};
+    grp.dataset.keys.split(',').forEach(k=>{ if(!cur.pairs.includes(k)) cur.pairs.push(k); });
+    await put('sharedSettings', cur); grp.remove();
+  });
+  $('#main').querySelectorAll('[data-undo]').forEach(b=>b.onclick=()=>showConfirm('Undo this merge? Names, past orders, batches and stock go back to the separate products.', async ()=>{
+    b.disabled = true; for(const id of b.dataset.undo.split(',')) await undoMerge(id); routes['duplicates']([]);
   }, {yesLabel:'Undo merge'}));
 });
 
@@ -256,3 +270,65 @@ async function openMergePicker(p){
   draw(''); $('#mgp_q').oninput = e=>draw(e.target.value);
   $('#mgp_list').onclick = e=>{ if(e.target.closest('a')) closeModal(); };
 }
+
+/* ---------------------------------- merge several at once ---------------------------------- */
+route('mergemany', async ()=>{
+  const [all, whs, sups] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('suppliers')]);
+  const items = [...(window.__mgSel||[])].map(id=>all.find(p=>p.id===id)).filter(p=>p && !p.mergedInto);
+  if(items.length<2){ location.hash = '#/products'; return; }
+  const nameOf = new Map([...whs, ...sups].map(x=>[x.id, x.name]));
+  let keep = items.find(p=>p.id===window.__mgKeep) || [...items].sort((u,v)=>u.name.length-v.name.length)[0];
+  const others = items.filter(p=>p.id!==keep.id);
+  const dirty = window.__mgName!=null && window.__mgName!=='';
+  const finalName = dirty ? window.__mgName : keep.name;
+  const shown = (f,v)=> esc(['warehouseId','supplierId'].includes(f) ? (nameOf.get(v)||v) : (f==='sectionId' ? '(section)' : v));
+  const counts = {}; for(const o of others){ const r = await mgCounts(o.id); for(const [s,n] of Object.entries(r.c)) counts[s] = (counts[s]||0)+n; }
+  const warns = []; others.forEach(o=>{ mgCompat(keep, o).forEach(w=>warns.push(`“${o.name}”: ${w}`)); });
+  const tracked = items.filter(p=>!mgBlank(p.stockQty));
+  const conflicts = [];
+  for(const [f,l] of MERGE_FIELDS){
+    const opts = []; items.forEach(p=>{ if(!mgBlank(p[f]) && !opts.some(o=>mgSame(o.v,p[f]))) opts.push({v:p[f], by:[p.name]}); else if(!mgBlank(p[f])) opts.find(o=>mgSame(o.v,p[f])).by.push(p.name); });
+    if(opts.length>1) conflicts.push({f,l,opts});
+  }
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Merge ${items.length} products</h1><a href="#/products" class="btn btn-ghost btn-sm">← Cancel</a></div>
+    <p class="subtle" style="margin-top:-8px;">Choose the product to keep. The others are folded into it and switched off (not deleted).</p>
+    <div class="card" style="margin-bottom:14px;">${items.map(p=>`<label class="mg-gl"><input type="radio" name="mm_keep" value="${p.id}" ${p.id===keep.id?'checked':''}>
+      <span style="flex:1; min-width:0;"><b>${esc(p.name)}</b><span class="subtle" style="display:block;">${esc(p.unit||'no unit')}${mgBlank(p.stockQty)?' · stock not tracked':' · stock '+esc(p.stockQty)}</span></span>
+      <span class="badge ${p.id===keep.id?'b-ok':'b-picked_later'}">${p.id===keep.id?'KEEP':'merge in'}</span></label>`).join('')}</div>
+    ${warns.length ? `<div class="card" style="border-color:var(--warn); margin-bottom:14px;"><b>⚠ Some of these may not be the same thing</b>${warns.map(w=>`<div class="subtle">${esc(w)}</div>`).join('')}
+      ${tracked.length>1 ? '<div class="subtle">Their stock would be added together, so only merge if the quantities are in the same measure.</div>' : ''}
+      <label style="display:block; margin-top:8px;"><input type="checkbox" id="mm_ok" style="width:auto; margin-right:8px;">They are all the same product — merge anyway</label></div>` : ''}
+    <div class="field"><label>Name after the merge</label><input type="text" id="mm_name" value="${esc(finalName)}"></div>
+    <p class="subtle" style="margin-top:-6px;">Every name stays usable: ${others.map(o=>`“${esc(o.name)}”`).join(', ')} are saved as names for the merged product, together with all their saved names.</p>
+    ${conflicts.length ? `<h3 class="section-title">Where they differ — choose</h3><div class="card">${conflicts.map(c=>`<div style="padding:8px 0; border-bottom:1px solid var(--line);"><b>${c.l}</b>
+      ${c.opts.map((o,i)=>`<label class="mg-gl"><input type="radio" name="mmf_${c.f}" value="${i}" ${(mgSame(o.v, keep[c.f]) || (mgBlank(keep[c.f]) && i===0))?'checked':''}><span style="flex:1;">${shown(c.f,o.v)} <span class="subtle">— ${o.by.map(esc).join(', ')}</span></span></label>`).join('')}</div>`).join('')}</div>
+      <p class="subtle">Prices are never combined or rounded — you pick one exactly as written.</p>` : ''}
+    <h3 class="section-title">What will happen</h3>
+    <div class="card"><ul style="margin:0; padding-left:18px; line-height:1.7;">
+      ${Object.entries(counts).map(([s,n])=>`<li><b>${n}</b> ${MG_LABELS[s]||s} move to the kept product</li>`).join('') || '<li>No orders or history use the other products.</li>'}
+      ${tracked.length>1 ? `<li>Stock is added: ${tracked.map(p=>esc(p.stockQty)).join(' + ')}</li>` : ''}
+      <li>Issued invoices keep the name they were issued with</li>
+      <li>${others.length} product${others.length===1?' is':'s are'} switched off, not deleted — and the whole merge can be undone in one tap</li>
+    </ul></div>
+    <div style="display:flex; gap:10px; margin-top:16px; max-width:420px;"><button class="btn btn-signal" id="mm_go" style="flex:1;" ${warns.length?'disabled':''}>Merge ${items.length} products</button><a class="btn btn-ghost" href="#/products">Cancel</a></div>`;
+  $('#main').querySelectorAll('input[name="mm_keep"]').forEach(r=>r.onchange = ()=>{
+    const typed = $('#mm_name').value.trim(); window.__mgName = (typed && typed!==keep.name) ? typed : null; window.__mgKeep = r.value; routes['mergemany']([]);
+  });
+  const ok = $('#mm_ok'); if(ok) ok.onchange = ()=>{ $('#mm_go').disabled = !ok.checked; };
+  $('#mm_go').onclick = async ()=>{
+    const chosen = {}; conflicts.forEach(c=>{ const r = document.querySelector(`input[name="mmf_${c.f}"]:checked`); chosen[c.f] = c.opts[r ? +r.value : 0].v; });
+    const name = $('#mm_name').value.trim() || keep.name, batchId = 'batch-'+Date.now();
+    const btn = $('#mm_go'); btn.disabled = true; btn.textContent = 'Merging…';
+    try{
+      for(let i=0;i<others.length;i++){
+        const o = others[i], pick = {};
+        conflicts.forEach(c=>{ pick[c.f] = mgSame(o[c.f], chosen[c.f]) ? 'other' : 'keep'; });
+        await mergeProducts(keep.id, o.id, {pick, batchId, name: i===others.length-1 ? name : ''});
+      }
+    }catch(err){ showAlert('The merge stopped part-way: '+(err.message||err)+'\nThe ones already merged can be undone from Possible duplicates → Recent merges.'); btn.disabled = false; btn.textContent = 'Merge'; return; }
+    window.__mgSel = new Set(); window.__mgMode = false; window.__mgKeep = null; window.__mgName = null;
+    showAlert(`${items.length} products merged into “${name}”. You can undo it from Possible duplicates → Recent merges.`, 'Merged');
+    location.hash = '#/products';
+  };
+});
