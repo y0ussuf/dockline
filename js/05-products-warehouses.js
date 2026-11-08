@@ -43,10 +43,12 @@ route('products', async ()=>{
               <div style="font-weight:700;">${esc(p.name)} ${p.active?'':'<span class="badge b-picked_later">inactive</span>'} ${!p.warehouseId?'<span class="badge b-unmatched">needs setup</span>':''}</div>
               <div class="subtle">${esc(p.unit||'no unit')} · ${esc(supplierName(p.supplierId,supMap)||'no supplier')}${p.expiryDate?' · exp '+fmtDate(p.expiryDate):''}</div>
             </div>
+            <div class="row-acts">
             <button class="iconbtn" data-alias="${p.id}" title="Also-known-as names">🔗</button>
             <button class="iconbtn" data-merge="${p.id}" title="Merge another product into this one">⇄</button>
             <button class="iconbtn" data-edit="${p.id}" title="Edit">✎</button>
             <button class="iconbtn" data-del="${p.id}" title="Delete">✕</button>
+            </div>
           </div>`).join('')}
         </div>
       </div>`;
@@ -55,7 +57,7 @@ route('products', async ()=>{
 
   $('#main').innerHTML = `
     <div class="topbar"><h1>Products</h1>
-      <div style="display:flex; gap:10px;">
+      <div class="tb-actions">
         <a class="btn btn-ghost" href="#/duplicates">⇄ Possible duplicates</a>
         <a class="btn btn-ghost" href="#/productsetup">⚙ Stock &amp; pack setup</a>
         <button class="btn btn-ghost" id="bulkImport">⇧ Bulk import (CSV)</button>
