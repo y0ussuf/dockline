@@ -151,6 +151,8 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     <div class="field"><label>Production date</label><input type="date" id="f_pdate" value="${p.productionDate||''}"></div>
     ${expiryFieldHtml('f', {expiryDate:p.expiryDate, mode:p.expiryMode, shelfAmount:p.expiryShelfAmount, shelfUnit:p.expiryShelfUnit})}
     <div class="field"><label>Notes</label><textarea id="f_notes">${esc(p.notes)}</textarea></div>
+    <div class="field"><label>Bought per order?</label>
+      <select id="f_perorder"><option value="">Same as its warehouse</option><option value="yes" ${p.perOrder==='yes'?'selected':''}>Yes — leave out of Insights</option><option value="no" ${p.perOrder==='no'?'selected':''}>No — always show in Insights</option></select></div>
     <div class="field"><label><input type="checkbox" id="f_active" ${p.active?'checked':''} style="width:auto; margin-right:8px;">Active</label></div>
     <details style="margin-bottom:14px;" ${(p.stockQty!==''&&p.stockQty!=null)?'open':''}>
       <summary class="subtle" style="cursor:pointer; margin-bottom:8px;">Stock tracking (optional)</summary>
@@ -255,6 +257,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     p.expiryShelfUnit = $('#f_shelf_unit').value;
     p.notes = $('#f_notes').value.trim();
     p.active = $('#f_active').checked;
+    p.perOrder = $('#f_perorder').value;
     p.image = newImage;
     p.stockQty = $('#f_stockqty').value.trim()==='' ? '' : parseFloat($('#f_stockqty').value);
     p.lowStockLimit = $('#f_stocklimit').value.trim()==='' ? '' : parseFloat($('#f_stocklimit').value);
@@ -601,10 +604,12 @@ route('warehouses', async ()=>{
     showModal(`<h3>${editing?'Edit warehouse':'Add warehouse'}</h3>
       <div class="field"><label>Name</label><input type="text" id="w_name" value="${esc(w.name)}"></div>
       <div class="field"><label>Description (optional)</label><input type="text" id="w_desc" value="${esc(w.description)}"></div>
+      <div class="field"><label><input type="checkbox" id="w_perorder" ${w.perOrder?'checked':''} style="width:auto; margin-right:8px;">Products here are bought per order</label>
+        <div class="subtle">Fresh or made-to-order goods (meat, pork, fish…). Insights leaves them out. A single product can still override this.</div></div>
       <div style="display:flex; gap:10px; margin-top:10px;"><button class="btn btn-signal" id="w_save" style="flex:1;">Save</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
     $('#w_save').onclick = async ()=>{
       const name = $('#w_name').value.trim(); if(!name){ showAlert('Name required'); return; }
-      w.name=name; w.description=$('#w_desc').value.trim();
+      w.name=name; w.description=$('#w_desc').value.trim(); w.perOrder = $('#w_perorder').checked;
       await put('warehouses', w); closeModal(); routes['warehouses']([]);
     };
   }

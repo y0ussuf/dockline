@@ -71,17 +71,17 @@ function buildForecast(hOrders, hLines, productsById, anchor, days){
 
 route('forecast', async ()=>{
   const days = window.__fcDays;
-  const [{hOrders, hLines}, products] = await Promise.all([insightsData(), slimProducts()]);
+  const [{hOrders, hLines}, products, perOrder] = await Promise.all([insightsData(), slimProducts(), perOrderIds()]);
   if(!hOrders.length){ location.hash='#/insights'; return; }
   const anchor = hOrders.map(o=>o.orderDate).filter(Boolean).sort().pop();
   const byId = new Map(products.map(p=>[p.id,p]));
   const f = buildForecast(hOrders, hLines, byId, anchor, days);
-  const rows = [...f.expected.entries()].filter(([pid])=>byId.has(pid)).map(([pid,e])=>{
+  const rows = [...f.expected.entries()].filter(([pid])=>byId.has(pid) && !perOrder.has(pid)).map(([pid,e])=>{
     const p = byId.get(pid), tracked = isStockTracked(p), stock = tracked ? parseFloat(p.stockQty) : null;
     return {pid, name:p.name, unit:e.unit, qty:e.qty, vessels:e.vessels.size, recent:f.recent.get(pid)||0, lastYear:f.hasYear ? (f.lastYear.get(pid)||0) : null,
       tracked, stock, short: tracked ? Math.max(0, e.qty - stock) : null};
   }).sort((a,b)=>b.qty-a.qty);
-  const lost = [...f.quietShare.entries()].filter(([pid])=>byId.has(pid)).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const lost = [...f.quietShare.entries()].filter(([pid])=>byId.has(pid) && !perOrder.has(pid)).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const dueNow = f.counted.filter(c=>c.nOrders>0).sort((a,b)=>a.dueIn-b.dueIn);
   const fq = _fmtQty;
   const chip = d=>`<button class="chip ${days===d?'active':''}" data-days="${d}">Next ${d} days</button>`;
