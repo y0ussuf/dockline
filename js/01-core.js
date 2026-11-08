@@ -290,6 +290,20 @@ function cachedAll(store){
 }
 /* products without their photos (a photo is megabytes of text; analysis never needs it) */
 let _slimMemo = null;
+/* "Bought per order" (fresh / made-to-order products): a product follows its warehouse unless it says otherwise.
+   Insights leaves these out completely. */
+function isPerOrderProduct(p, whById){
+  if(!p) return false;
+  if(p.perOrder==='yes') return true;
+  if(p.perOrder==='no') return false;
+  const w = whById && whById.get(p.warehouseId);
+  return !!(w && w.perOrder);
+}
+async function perOrderIds(){
+  const [products, whs] = await Promise.all([slimProducts(), cachedAll('warehouses')]);
+  const wm = new Map(whs.map(w=>[w.id,w]));
+  return new Set(products.filter(p=>isPerOrderProduct(p, wm)).map(p=>p.id));
+}
 async function slimProducts(){
   const stamp = dataStamp(['products']);
   if(_slimMemo && _slimMemo.stamp===stamp) return _slimMemo.p;

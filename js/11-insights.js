@@ -450,7 +450,8 @@ function loadingWithWatchdog(title, what, retry){
 async function insightsHome(){
   const stopWatch = loadingWithWatchdog('Insights', 'Loading your past orders…', insightsHome);
   let data, products;
-  try{ [data, products] = await Promise.all([insightsData(), slimProducts()]); }
+  let perOrder;
+  try{ [data, products, perOrder] = await Promise.all([insightsData(), slimProducts(), perOrderIds()]); }
   catch(err){ stopWatch(); _insightsMemo = null; return showLoadError('Insights', err, insightsHome); }
   stopWatch();
   const {hOrders, hLines, liveOrders, ignoredLive, importedOrders, badOrders} = data;
@@ -496,7 +497,7 @@ async function insightsHome(){
   const cut2 = new Date(new Date(anchor).getTime()-180*86400000).toISOString().slice(0,10);
   const prod = new Map();
   for(const l of hLines){
-    if(!l.productId || !l.baseOk) continue;
+    if(!l.productId || !l.baseOk || perOrder.has(l.productId)) continue;
     const p = prod.get(l.productId) || {id:l.productId, unit:l.baseUnit, total:0, recent:0, prior:0, vessels:new Set(), orders:new Set()};
     p.total += l.baseQty; p.vessels.add(l.vesselKey); p.orders.add(l.historyOrderId);
     if(l.orderDate>cut1) p.recent += l.baseQty; else if(l.orderDate>cut2) p.prior += l.baseQty;
@@ -506,7 +507,7 @@ async function insightsHome(){
   const fmtQ = n=> (Math.round(n*10)/10).toLocaleString();
   const linesByProduct = new Map();
   for(const l of hLines){
-    if(!l.productId || !l.baseOk) continue;
+    if(!l.productId || !l.baseOk || perOrder.has(l.productId)) continue;
     (linesByProduct.get(l.productId) || linesByProduct.set(l.productId, []).get(l.productId)).push(l);
   }
   const analyses = new Map([...linesByProduct].filter(([pid])=>byId.has(pid)).map(([pid,ls])=>[pid, analyzeProduct(ls, anchor, dates[0])]));
