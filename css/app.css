@@ -571,3 +571,6 @@ a.btn{text-decoration:none;}
 .mg-bar span{flex:1; font-weight:700;}
 @media (min-width:900px){ .mg-bar{left:230px;} }
 body:has(.mg-bar:not([hidden])) #main{padding-bottom:90px;}
+.mg-tray{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
+.mg-tray .chip{cursor:pointer;}
+.mg-gl input[type=checkbox]{width:22px; height:22px; flex-shrink:0; accent-color:var(--signal);}
