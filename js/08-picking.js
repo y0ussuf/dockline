@@ -219,7 +219,7 @@ async function storeHubScreen(orderId){
       ${[...groups.entries()].map(([whId,g])=>`
         <div class="list-row">
           <div class="thumb">▥</div>
-          <div style="flex:1;"><b>${esc(g.name)}</b><div class="subtle">${g.count} item${g.count===1?'':'s'} remaining</div></div>
+          <div style="flex:1;"><b>${whDot(whId)}${esc(g.name)}</b><div class="subtle">${g.count} item${g.count===1?'':'s'} remaining</div></div>
           <a href="#/order/${orderId}/pick/${whId}" class="btn btn-signal btn-sm">Start</a>
         </div>`).join('')}
     </div>
@@ -335,7 +335,7 @@ async function openItemActionModal(orderId, itemId, onDone){
   function finish(){ closeModal(); onDone(); }
   $('#qa_add').onclick = async ()=>{
     const vals = resolveAddedValues(it, product);
-    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit;
+    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit; lookFeedback('ok');
     await put('orderItems', it);
     await unpostpone(orderId, it.id);
     finish();
@@ -476,7 +476,7 @@ async function pickingItemScreen(orderId, warehouseId){
   };
   $('#pk_added').onclick = async ()=>{
     const vals = resolveAddedValues(it, product);
-    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit;
+    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit; lookFeedback('ok');
     await put('orderItems', it);
     await advance();
   };
@@ -598,7 +598,7 @@ async function pickingBatchScreen(orderId, warehouseId){
       const it = byId[id];
       const product = it.productId ? productsCache[it.productId] : null;
       const vals = resolveAddedValues(it, product);
-      it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit;
+      it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit; lookFeedback('ok');
       await put('orderItems', it);
     }
     refresh();

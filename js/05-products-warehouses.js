@@ -33,7 +33,7 @@ route('products', async ()=>{
       const sec = secMap[sid];
       const wh = sec ? whMap[sec.warehouseId] : null;
       return `<div class="card" style="margin-bottom:14px;">
-        <div class="section-title">${wh?esc(wh.name)+' · ':''}${sec?esc(sec.name):'No section'}</div>
+        <div class="section-title">${wh?whDot(wh.id)+esc(wh.name)+' · ':''}${sec?esc(sec.name):'No section'}</div>
         <div data-sortable-section="${sid}">
         ${groups[sid].map(p=>`
           <div class="list-row" data-id="${p.id}">
@@ -67,7 +67,7 @@ route('products', async ()=>{
     <div class="field" style="max-width:360px;"><input type="text" id="psearch" placeholder="Search products…" value="${esc(window.__search)}"></div>
     <div class="tag-row" id="whFilter">
       <button class="chip ${window.__filterWh==='all'?'active':''}" data-wh="all">All warehouses</button>
-      ${warehouses.map(w=>`<button class="chip ${window.__filterWh===w.id?'active':''}" data-wh="${w.id}">${esc(w.name)}</button>`).join('')}
+      ${warehouses.map(w=>`<button class="chip ${window.__filterWh===w.id?'active':''}" data-wh="${w.id}">${whDot(w.id)}${esc(w.name)}</button>`).join('')}
       ${unassignedCount ? `<button class="chip ${window.__filterWh==='unassigned'?'active':''}" data-wh="unassigned">⚠ Needs setup (${unassignedCount})</button>` : ''}
     </div>
     <div id="prodList">${list()}</div>
@@ -473,7 +473,7 @@ route('warehouses', async ()=>{
           <div style="flex:1; cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px;" data-togglewh="${w.id}">
             <span style="font-size:0.8rem; color:var(--ink-soft); width:14px; display:inline-block; text-align:center;">${isCollapsed ? '▶' : '▼'}</span>
             <div>
-              <b style="font-family:var(--font-d); font-size:1.05rem;">${esc(w.name)}</b>
+              <b style="font-family:var(--font-d); font-size:1.05rem;">${whDot(w.id)}${esc(w.name)}</b>
               <div class="subtle">${secs.length} section${secs.length===1?'':'s'} · ${products.filter(p=>p.warehouseId===w.id).length} products</div>
             </div>
           </div>

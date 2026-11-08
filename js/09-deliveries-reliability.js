@@ -70,6 +70,7 @@ async function finishOrder(orderId, skipCheck){
   order.partialSince = null;
   order.status='completed'; order.completedAt = new Date().toISOString();
   await put('orders', order);
+  lookCelebrate();
   location.hash = `#/order/${orderId}/summary`;
   render();
 }
