@@ -9,6 +9,9 @@ route('products', async ()=>{
 
   window.__filterWh = window.__filterWh || 'all';
   window.__search = window.__search || '';
+  window.__mvSel = window.__mvSel || new Set(); window.__mvMode = !!window.__mvMode;
+  let shownIds = [];
+  const mvBanner = await moveBannerHtml();
 
   const unassignedCount = products.filter(p=>!p.warehouseId).length;
 
@@ -19,6 +22,7 @@ route('products', async ()=>{
       if(window.__search && !normalize(p.name).includes(normalize(window.__search))) return false;
       return true;
     });
+    shownIds = items.map(p=>p.id);
     const groups = {};
     items.forEach(p=>{ const key=p.sectionId||'none'; (groups[key]=groups[key]||[]).push(p); });
     Object.values(groups).forEach(g=>g.sort((a,b)=>a.priority-b.priority));
@@ -36,8 +40,8 @@ route('products', async ()=>{
         <div class="section-title">${wh?whDot(wh.id)+esc(wh.name)+' · ':''}${sec?esc(sec.name):'No section'}</div>
         <div data-sortable-section="${sid}">
         ${groups[sid].map(p=>`
-          <div class="list-row" data-id="${p.id}">
-            <span class="drag-handle">⠿</span>
+          <div class="list-row ${window.__mvMode&&window.__mvSel.has(p.id)?'mg-picked':''}" data-id="${p.id}">
+            ${window.__mvMode ? `<label class="mg-chk"><input type="checkbox" data-pick="${p.id}" ${window.__mvSel.has(p.id)?'checked':''}></label>` : '<span class="drag-handle">⠿</span>'}
             <div class="thumb">${p.image?`<img src="${p.image}" loading="lazy" decoding="async">`:'📦'}</div>
             <div style="flex:1; min-width:0;">
               <div style="font-weight:700;">${esc(p.name)} ${p.active?'':'<span class="badge b-picked_later">inactive</span>'} ${!p.warehouseId?'<span class="badge b-unmatched">needs setup</span>':''}</div>
@@ -61,6 +65,7 @@ route('products', async ()=>{
         <a class="btn btn-ghost" href="#/duplicates">⇄ Possible duplicates</a>
         <a class="btn btn-ghost" href="#/productsetup">⚙ Stock &amp; pack setup</a>
         <button class="btn btn-ghost" id="bulkImport">⇧ Bulk import (CSV)</button>
+        <button class="btn btn-ghost" id="mvToggle">${window.__mvMode?'✕ Stop selecting':'☑ Select &amp; move'}</button>
         <button class="btn btn-signal" id="addProd">+ Add product</button>
       </div>
     </div>
@@ -70,9 +75,27 @@ route('products', async ()=>{
       ${warehouses.map(w=>`<button class="chip ${window.__filterWh===w.id?'active':''}" data-wh="${w.id}">${whDot(w.id)}${esc(w.name)}</button>`).join('')}
       ${unassignedCount ? `<button class="chip ${window.__filterWh==='unassigned'?'active':''}" data-wh="unassigned">⚠ Needs setup (${unassignedCount})</button>` : ''}
     </div>
-    <div id="prodList">${list()}</div>
+    ${mvBanner}
+    <div id="prodList" class="${window.__mvMode?'mg-on':''}">${list()}</div>
+    <div class="mg-bar" id="mvBar" hidden><span id="mvCount"></span><button class="btn btn-ghost btn-sm" id="mvAll">All shown</button><button class="btn btn-ghost btn-sm" id="mvClear">Clear</button><button class="btn btn-signal" id="mvGo">Move…</button></div>
   `;
   $('#bulkImport').onclick = ()=>openBulkImport();
+  const mvUpdate = ()=>{
+    const n = window.__mvSel.size; $('#mvBar').hidden = !window.__mvMode;
+    $('#mvCount').textContent = n ? `${n} selected` : 'Tick the products that moved'; $('#mvGo').disabled = !n;
+  };
+  const mvRedraw = ()=>{ $('#prodList').innerHTML = list(); attachRowHandlers(); mvUpdate(); };
+  $('#mvToggle').onclick = ()=>{ window.__mvMode = !window.__mvMode; if(!window.__mvMode) window.__mvSel.clear(); routes['products']([]); };
+  $('#mvAll').onclick = ()=>{ shownIds.forEach(id=>window.__mvSel.add(id)); mvRedraw(); };
+  $('#mvClear').onclick = ()=>{ window.__mvSel.clear(); mvRedraw(); };
+  $('#mvGo').onclick = ()=>openMoveModal([...window.__mvSel], ()=>{ window.__mvSel.clear(); window.__mvMode = false; routes['products']([]); });
+  $('#prodList').addEventListener('change', e=>{
+    const c = e.target.closest('[data-pick]'); if(!c) return;
+    if(c.checked) window.__mvSel.add(c.dataset.pick); else window.__mvSel.delete(c.dataset.pick);
+    c.closest('.list-row').classList.toggle('mg-picked', c.checked); mvUpdate();
+  });
+  document.querySelectorAll('[data-mvundo]').forEach(b=>b.onclick=async ()=>{ b.disabled = true; await undoMove(b.dataset.mvundo); routes['products']([]); });
+  mvUpdate();
 
   let searchDebounce;
   $('#psearch').oninput = e=>{
@@ -142,6 +165,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
       <div class="field"><label>Warehouse</label><select id="f_wh">${warehouses.map(w=>`<option value="${w.id}" ${w.id===p.warehouseId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Section</label><select id="f_sec">${secForWh(p.warehouseId).map(s=>`<option value="${s.id}" ${s.id===p.sectionId?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
     </div>
+    ${(p.locationHistory||[]).length ? `<div class="subtle" style="margin:-4px 0 10px;">Previously: ${p.locationHistory.slice(0,3).map(h=>`${esc(h.wh)} / ${esc(h.sec)} <span style="opacity:.7">(until ${fmtDate(h.at.slice(0,10))})</span>`).join(' · ')}</div>` : ''}
     <div class="pr-box">
       <div class="pr-h">Prices <span class="subtle">(EGP — kept exactly as typed, never rounded)</span></div>
       <div class="pr-grid">

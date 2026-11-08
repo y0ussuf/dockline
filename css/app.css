@@ -578,3 +578,9 @@ body:has(.mg-bar:not([hidden])) #main{padding-bottom:90px;}
 .mg-tray{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
 .mg-tray .chip{cursor:pointer;}
 .mg-gl input[type=checkbox]{width:22px; height:22px; flex-shrink:0; accent-color:var(--signal);}
+/* select & move products */
+.mg-chk{display:flex; align-items:center; padding:6px; margin-right:4px;}
+.mg-chk input{width:22px; height:22px; accent-color:var(--signal);}
+.list-row.mg-picked{background:color-mix(in srgb, var(--signal) 12%, transparent); border-radius:8px;}
+.mg-on .row-acts{display:none;}
+.mv-banner{display:flex; align-items:center; gap:10px; justify-content:space-between; margin:0 0 14px; padding:10px 14px; flex-wrap:wrap;}
