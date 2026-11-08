@@ -89,7 +89,7 @@ function installThemeButtons(){
   if(document.getElementById('lkBtnTop')) return;
   const mk = id=>{ const b = document.createElement('button'); b.type='button'; b.id=id; b.className='lk-themebtn'; b.title='Theme'; b.setAttribute('aria-label','Change theme'); b.textContent='🎨'; b.onclick=openThemeSwitcher; return b; };
   const top = document.getElementById('mobileTopbar'); if(top) top.appendChild(mk('lkBtnTop'));
-  const nav = document.getElementById('sidebar'); if(nav){ const a = document.createElement('a'); a.className='navlink lk-sidebtn'; a.href='javascript:void(0)'; a.id='lkBtnSide'; a.innerHTML='<span class="ic">🎨</span> Theme'; a.onclick=e=>{ e.preventDefault(); openThemeSwitcher(); }; nav.appendChild(a); }
+  const nav = document.querySelector('#sidebar .nav-foot'); if(nav){ const a = document.createElement('a'); a.className='navlink lk-sidebtn'; a.href='javascript:void(0)'; a.id='lkBtnSide'; a.innerHTML='<span class="ic">🎨</span> Theme'; a.onclick=e=>{ e.preventDefault(); openThemeSwitcher(); }; nav.appendChild(a); }
 }
 
 /* ------------------------------ settings card ------------------------------ */
