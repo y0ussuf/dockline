@@ -584,3 +584,30 @@ body:has(.mg-bar:not([hidden])) #main{padding-bottom:90px;}
 .list-row.mg-picked{background:color-mix(in srgb, var(--signal) 12%, transparent); border-radius:8px;}
 .mg-on .row-acts{display:none;}
 .mv-banner{display:flex; align-items:center; gap:10px; justify-content:space-between; margin:0 0 14px; padding:10px 14px; flex-wrap:wrap;}
+
+/* ---- Product Table ---- */
+.pt-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.pt-tools input{flex:1;min-width:160px}
+.pt-count{margin:6px 0}
+.pt-wrap{overflow:auto;max-height:68vh;border:1px solid var(--line,#ddd);border-radius:12px;background:var(--card,#fff);-webkit-overflow-scrolling:touch}
+table.pt{border-collapse:separate;border-spacing:0;width:100%;font-size:14px}
+table.pt th,table.pt td{padding:4px 6px;border-bottom:1px solid var(--line,#eee);white-space:nowrap;text-align:left}
+table.pt thead th{position:sticky;top:0;background:var(--card,#fff);z-index:3;font-size:12px}
+table.pt th button{background:none;border:0;font:inherit;font-weight:700;cursor:pointer;color:inherit;padding:6px 0}
+table.pt .pt-name{position:sticky;left:0;z-index:2;background:var(--card,#fff);min-width:150px;max-width:210px;white-space:normal;border-right:1px solid var(--line,#eee)}
+table.pt thead .pt-name{z-index:4}
+.pt-name label{display:flex;gap:8px;align-items:center;cursor:pointer}
+.pt-in{width:96px;padding:7px 8px;border:1px solid var(--line,#ccc);border-radius:8px;font:inherit;background:transparent;color:inherit}
+.pt-in.pt-sel{width:130px}
+.pt-in.chg{background:#fff3b0;border-color:#e0b400;color:#222}
+.pt-in.bad{border-color:#d33;background:#fde4e4;color:#222}
+.pt-ro{color:var(--muted,#777)}
+.pt-warn .pt-name{box-shadow:inset 3px 0 0 #e0a100}
+.pt-off{opacity:.55}
+.pt-flag{color:#c98a00}
+.pt-save,.pt-bulk{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.pt-bulk{bottom:0}
+.pt-two-bars .pt-bulk{bottom:64px}
+.pt-save[hidden],.pt-bulk[hidden]{display:none}
+.pt-h{padding:8px 0;border-bottom:1px solid var(--line,#eee)}.pt-h.undone{opacity:.55}
+@media(max-width:700px){.pt-in{width:84px}table.pt .pt-name{min-width:120px;max-width:140px}}
