@@ -545,3 +545,14 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .mg-side{margin:0;}
 .mg-pair{flex-wrap:wrap; gap:8px;}
 @media (max-width:640px){ .mg-grid{grid-template-columns:1fr;} .mg-grid .btn{justify-self:center;} }
+/* page-header action buttons: compact and tidy on a phone */
+a.btn{text-decoration:none;}
+.tb-actions{display:flex; gap:10px; flex-wrap:wrap;}
+@media (max-width:640px){
+  .tb-actions{display:grid; grid-template-columns:1fr 1fr; gap:8px; width:100%;}
+  .tb-actions .btn{padding:10px 8px; font-size:.82rem; justify-content:center; text-align:center; line-height:1.2; min-height:44px;}
+  .tb-actions .btn-signal{grid-row:1; grid-column:1 / -1; font-size:.95rem;}
+  .tb-actions .btn:nth-last-child(2):nth-child(odd){grid-column:1 / -1;}
+  .list-row .row-acts{flex-basis:100%; justify-content:flex-end; padding-top:2px;}
+}
+.row-acts{display:flex; gap:8px; flex-shrink:0;}
