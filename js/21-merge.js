@@ -197,6 +197,13 @@ route('duplicates', async ()=>{
   $('#main').innerHTML = `
     <div class="topbar"><h1>Possible duplicates</h1><a href="#/products" class="btn btn-ghost btn-sm">← Products</a></div>
     <p class="subtle" style="margin-top:-8px;">Each card is one item that exists more than once (usually the same product from different brands). Tick the cards you want to merge, check which product to keep in each, then merge them all with one tap. Each card becomes its own single product.</p>
+    <div class="card" id="mgHand" style="margin-bottom:16px;">
+      <b>Merge by hand</b>
+      <div class="subtle" style="margin-bottom:8px;">Search for products, tick the ones that are the same item, then merge them all into one. Your ticks stay while you search for more.</div>
+      <input type="text" id="mgq" placeholder="Search products…">
+      <div id="mgTray"></div>
+      <div id="mgRes" style="margin-top:6px;"></div>
+      <button class="btn btn-signal" id="mgHandGo" style="margin-top:10px;" disabled>Merge selected…</button></div>
     ${groups.length ? `<div class="mg-tools"><button class="btn btn-ghost btn-sm" id="mg_all">Select all</button><button class="btn btn-ghost btn-sm" id="mg_none">Select none</button><span class="subtle">${groups.length} item${groups.length===1?'':'s'} found</span></div>` : ''}
     ${groups.length ? groups.map((g,i)=>`<div class="card mg-group ${g.warns.length?'mg-flag':''}" data-g="${i}" data-keys="${esc(g.keys.join(','))}" data-ids="${g.items.map(p=>p.id).join(',')}">
         <label class="mg-sel"><input type="checkbox" data-gsel ${g.warns.length?'disabled':''}><b>Merge these ${g.items.length}</b></label>
@@ -210,12 +217,31 @@ route('duplicates', async ()=>{
           <div class="subtle">${fmtDate(r.items[0].at.slice(0,10))} · ${r.items.length} product${r.items.length===1?'':'s'} merged in</div></div>
         <button class="btn btn-ghost btn-sm" data-undo="${r.items.map(e=>e.id).join(',')}">Undo${r.items.length>1?' all':''}</button></div>`).join('')}</div>` : ''}
     <div class="mg-bar" id="mgBar" hidden><span id="mgCount"></span><button class="btn btn-signal" id="mgGo">Merge selected</button></div>`;
+  /* ---- merge by hand: search, tick (ticks are kept between searches), merge into one ---- */
+  window.__mgSel = new Set([...(window.__mgSel||[])].filter(id=>products.some(p=>p.id===id && !p.mergedInto && p.active!==false)));
+  const pool = products.filter(p=>p.active!==false && !p.mergedInto).sort((u,v)=>u.name.localeCompare(v.name));
+  const pById = new Map(pool.map(p=>[p.id,p]));
+  const drawHand = ()=>{
+    const q = normalize($('#mgq').value), toks = q ? q.split(' ') : [];
+    const rows = (toks.length ? pool.filter(p=>{ const n = normalize(p.name); return toks.every(t=>n.includes(t)); }) : []).slice(0, 40);
+    const sel = [...window.__mgSel].map(id=>pById.get(id)).filter(Boolean);
+    $('#mgTray').innerHTML = sel.length ? `<div class="mg-tray">${sel.map(p=>`<span class="chip active" data-unpick="${p.id}">${esc(p.name)} ✕</span>`).join('')}</div>` : '';
+    $('#mgRes').innerHTML = toks.length ? (rows.map(p=>`<label class="mg-gl"><input type="checkbox" data-hpick="${p.id}" ${window.__mgSel.has(p.id)?'checked':''}>
+        <span style="flex:1; min-width:0;"><b>${esc(p.name)}</b><span class="subtle" style="display:block;">${esc(p.unit||'no unit')} · ${esc(whName.get(p.warehouseId)||'no warehouse')}${mgBlank(p.stockQty)?'':' · stock '+esc(p.stockQty)}</span></span></label>`).join('') || '<p class="subtle">Nothing found.</p>') : '<p class="subtle">Type a name to start.</p>';
+    $('#mgHandGo').disabled = sel.length<2; $('#mgHandGo').textContent = sel.length>=2 ? `Merge ${sel.length} products into one…` : 'Merge selected…';
+  };
+  $('#mgq').oninput = drawHand;
+  $('#mgHand').addEventListener('change', e=>{ const c = e.target.closest('[data-hpick]'); if(!c) return; if(c.checked) window.__mgSel.add(c.dataset.hpick); else window.__mgSel.delete(c.dataset.hpick); drawHand(); });
+  $('#mgHand').addEventListener('click', e=>{ const t = e.target.closest('[data-unpick]'); if(t){ window.__mgSel.delete(t.dataset.unpick); drawHand(); } });
+  $('#mgHandGo').onclick = ()=>{ window.__mgKeep = null; window.__mgName = null; location.hash = '#/mergemany'; };
+  drawHand();
   const cards = [...$('#main').querySelectorAll('.mg-group')];
   const picked = ()=>cards.filter(c=>c.querySelector('[data-gsel]').checked);
   const refresh = ()=>{
     cards.forEach(c=>{ c.classList.toggle('mg-picked', c.querySelector('[data-gsel]').checked);
       c.querySelectorAll('.mg-gl').forEach(l=>{ const on = l.querySelector('input').checked; const t = l.querySelector('.mg-tag'); t.textContent = on?'KEEP':'merge in'; t.className = 'badge mg-tag '+(on?'b-ok':'b-picked_later'); }); });
     const sel = picked(), n = sel.reduce((a,c)=>a+c.dataset.ids.split(',').length,0);
+    if(!$('#mgBar')) return;
     $('#mgBar').hidden = !sel.length; $('#mgCount').textContent = `${sel.length} item${sel.length===1?'':'s'} · ${n} products → ${sel.length}`;
   };
   $('#main').addEventListener('change', e=>{
@@ -323,3 +349,65 @@ async function openMergePicker(p){
   draw(''); $('#mgp_q').oninput = e=>draw(e.target.value);
   $('#mgp_list').onclick = e=>{ if(e.target.closest('a')) closeModal(); };
 }
+
+/* ---------------------------------- merge several at once ---------------------------------- */
+route('mergemany', async ()=>{
+  const [all, whs, sups] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('suppliers')]);
+  const items = [...(window.__mgSel||[])].map(id=>all.find(p=>p.id===id)).filter(p=>p && !p.mergedInto);
+  if(items.length<2){ location.hash = '#/duplicates'; return; }
+  const nameOf = new Map([...whs, ...sups].map(x=>[x.id, x.name]));
+  let keep = items.find(p=>p.id===window.__mgKeep) || [...items].sort((u,v)=>u.name.length-v.name.length)[0];
+  const others = items.filter(p=>p.id!==keep.id);
+  const dirty = window.__mgName!=null && window.__mgName!=='';
+  const finalName = dirty ? window.__mgName : keep.name;
+  const shown = (f,v)=> esc(['warehouseId','supplierId'].includes(f) ? (nameOf.get(v)||v) : (f==='sectionId' ? '(section)' : v));
+  const counts = {}; for(const o of others){ const r = await mgCounts(o.id); for(const [s,n] of Object.entries(r.c)) counts[s] = (counts[s]||0)+n; }
+  const warns = []; others.forEach(o=>{ mgCompat(keep, o).forEach(w=>warns.push(`“${o.name}”: ${w}`)); });
+  const tracked = items.filter(p=>!mgBlank(p.stockQty));
+  const conflicts = [];
+  for(const [f,l] of MERGE_FIELDS){
+    const opts = []; items.forEach(p=>{ if(!mgBlank(p[f]) && !opts.some(o=>mgSame(o.v,p[f]))) opts.push({v:p[f], by:[p.name]}); else if(!mgBlank(p[f])) opts.find(o=>mgSame(o.v,p[f])).by.push(p.name); });
+    if(opts.length>1) conflicts.push({f,l,opts});
+  }
+  $('#main').innerHTML = `
+    <div class="topbar"><h1>Merge ${items.length} products</h1><a href="#/duplicates" class="btn btn-ghost btn-sm">← Cancel</a></div>
+    <p class="subtle" style="margin-top:-8px;">Choose the product to keep. The others are folded into it and switched off (not deleted).</p>
+    <div class="card" style="margin-bottom:14px;">${items.map(p=>`<label class="mg-gl"><input type="radio" name="mm_keep" value="${p.id}" ${p.id===keep.id?'checked':''}>
+      <span style="flex:1; min-width:0;"><b>${esc(p.name)}</b><span class="subtle" style="display:block;">${esc(p.unit||'no unit')}${mgBlank(p.stockQty)?' · stock not tracked':' · stock '+esc(p.stockQty)}</span></span>
+      <span class="badge ${p.id===keep.id?'b-ok':'b-picked_later'}">${p.id===keep.id?'KEEP':'merge in'}</span></label>`).join('')}</div>
+    ${warns.length ? `<div class="card" style="border-color:var(--warn); margin-bottom:14px;"><b>⚠ Some of these may not be the same thing</b>${warns.map(w=>`<div class="subtle">${esc(w)}</div>`).join('')}
+      ${tracked.length>1 ? '<div class="subtle">Their stock would be added together, so only merge if the quantities are in the same measure.</div>' : ''}
+      <label style="display:block; margin-top:8px;"><input type="checkbox" id="mm_ok" style="width:auto; margin-right:8px;">They are all the same product — merge anyway</label></div>` : ''}
+    <div class="field"><label>Name after the merge</label><input type="text" id="mm_name" value="${esc(finalName)}"></div>
+    <p class="subtle" style="margin-top:-6px;">Every name stays usable: ${others.map(o=>`“${esc(o.name)}”`).join(', ')} are saved as names for the merged product, together with all their saved names.</p>
+    ${conflicts.length ? `<h3 class="section-title">Where they differ — choose</h3><div class="card">${conflicts.map(c=>`<div style="padding:8px 0; border-bottom:1px solid var(--line);"><b>${c.l}</b>
+      ${c.opts.map((o,i)=>`<label class="mg-gl"><input type="radio" name="mmf_${c.f}" value="${i}" ${(mgSame(o.v, keep[c.f]) || (mgBlank(keep[c.f]) && i===0))?'checked':''}><span style="flex:1;">${shown(c.f,o.v)} <span class="subtle">— ${o.by.map(esc).join(', ')}</span></span></label>`).join('')}</div>`).join('')}</div>
+      <p class="subtle">Prices are never combined or rounded — you pick one exactly as written.</p>` : ''}
+    <h3 class="section-title">What will happen</h3>
+    <div class="card"><ul style="margin:0; padding-left:18px; line-height:1.7;">
+      ${Object.entries(counts).map(([s,n])=>`<li><b>${n}</b> ${MG_LABELS[s]||s} move to the kept product</li>`).join('') || '<li>No orders or history use the other products.</li>'}
+      ${tracked.length>1 ? `<li>Stock is added: ${tracked.map(p=>esc(p.stockQty)).join(' + ')}</li>` : ''}
+      <li>Issued invoices keep the name they were issued with</li>
+      <li>${others.length} product${others.length===1?' is':'s are'} switched off, not deleted — and the whole merge can be undone in one tap</li>
+    </ul></div>
+    <div style="display:flex; gap:10px; margin-top:16px; max-width:420px;"><button class="btn btn-signal" id="mm_go" style="flex:1;" ${warns.length?'disabled':''}>Merge ${items.length} products</button><a class="btn btn-ghost" href="#/duplicates">Cancel</a></div>`;
+  $('#main').querySelectorAll('input[name="mm_keep"]').forEach(r=>r.onchange = ()=>{
+    const typed = $('#mm_name').value.trim(); window.__mgName = (typed && typed!==keep.name) ? typed : null; window.__mgKeep = r.value; routes['mergemany']([]);
+  });
+  const ok = $('#mm_ok'); if(ok) ok.onchange = ()=>{ $('#mm_go').disabled = !ok.checked; };
+  $('#mm_go').onclick = async ()=>{
+    const chosen = {}; conflicts.forEach(c=>{ const r = document.querySelector(`input[name="mmf_${c.f}"]:checked`); chosen[c.f] = c.opts[r ? +r.value : 0].v; });
+    const name = $('#mm_name').value.trim() || keep.name, batchId = 'batch-'+Date.now();
+    const btn = $('#mm_go'); btn.disabled = true; btn.textContent = 'Merging…';
+    try{
+      for(let i=0;i<others.length;i++){
+        const o = others[i], pick = {};
+        conflicts.forEach(c=>{ pick[c.f] = mgSame(o[c.f], chosen[c.f]) ? 'other' : 'keep'; });
+        await mergeProducts(keep.id, o.id, {pick, batchId, name: i===others.length-1 ? name : ''});
+      }
+    }catch(err){ showAlert('The merge stopped part-way: '+(err.message||err)+'\nThe ones already merged can be undone from Possible duplicates → Recent merges.'); btn.disabled = false; btn.textContent = 'Merge'; return; }
+    window.__mgSel = new Set(); window.__mgKeep = null; window.__mgName = null;
+    showAlert(`${items.length} products merged into “${name}”. You can undo it from Possible duplicates → Recent merges.`, 'Merged');
+    location.hash = '#/duplicates';
+  };
+});
