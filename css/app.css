@@ -540,3 +540,8 @@ body.locked #mobileTopbar, body.locked #sidebarBackdrop, body.locked #shell, bod
 .iv-fix{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;} .iv-fix input{flex:1 1 150px; min-width:0; padding:9px 12px; border-radius:10px; border:1px solid var(--line); background:var(--card,#fff);}
 
 .bd-row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 0; border-top:1px solid var(--line);} .bd-row input[type=date]{width:auto;}
+/* merge products */
+.mg-grid{display:grid; grid-template-columns:1fr auto 1fr; gap:10px; align-items:center; margin:6px 0;}
+.mg-side{margin:0;}
+.mg-pair{flex-wrap:wrap; gap:8px;}
+@media (max-width:640px){ .mg-grid{grid-template-columns:1fr;} .mg-grid .btn{justify-self:center;} }
