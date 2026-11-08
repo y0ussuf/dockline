@@ -83,7 +83,7 @@ async function mergeProducts(keepId, dropId, o){
   drop.active = false; drop.mergedInto = keepId; drop.stockQty = ''; drop.trackBatches = false;
 
   // 3) move every reference
-  const log = {id:'merge-'+Date.now(), at:new Date().toISOString(), keepId, dropId, keepName:keepOrig.name, dropName:dropOrig.name, newName:keep.name,
+  const log = {id:'merge-'+Date.now(), at:new Date().toISOString(), keepId, dropId, keepName:keepOrig.name, dropName:dropOrig.name, newName:keep.name, batchId:o.batchId||null,
     keepBefore:{}, dropBefore:{}, changes:{}, addedMappings:[], undone:false};
   const diff = (before, after, orig)=>{ for(const k of new Set([...Object.keys(orig), ...Object.keys(after)])) if(!mgSame(orig[k], after[k])) before[k] = (k in orig) ? orig[k] : {__absent:true}; };
   diff(log.keepBefore, keep, keepOrig); diff(log.dropBefore, drop, dropOrig);
@@ -112,7 +112,7 @@ async function mergeProducts(keepId, dropId, o){
   await put('products', keep); await put('products', drop);
 
   const store = await getOne('sharedSettings', 'mergeLog') || {id:'mergeLog', entries:[]};
-  store.entries = [log, ...store.entries].slice(0, 30);
+  store.entries = [log, ...store.entries].slice(0, 300);
   await put('sharedSettings', store);
   return log;
 }
@@ -161,34 +161,101 @@ async function mgDuplicatePairs(products, mappings, ignored){
     if(ignored.has(key)) continue;
     out.push({a:A.p, b:B.p, key, score: (subset?1:0) + sim, sameSize: !!(A.s && B.s)});
   }
-  return out.sort((x,y)=>y.score-x.score).slice(0, 80);
+  return out.sort((x,y)=>y.score-x.score).slice(0, 400);
+}
+
+/* groups of products that belong together: A≈B and B≈C is one group of three */
+function mgGroups(pairs){
+  const parent = new Map(), find = x=>{ while(parent.get(x)!==x){ parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  pairs.forEach(x=>{ [x.a.id,x.b.id].forEach(i=>{ if(!parent.has(i)) parent.set(i,i); }); parent.set(find(x.a.id), find(x.b.id)); });
+  const g = new Map(), prod = new Map();
+  pairs.forEach(x=>{ prod.set(x.a.id,x.a); prod.set(x.b.id,x.b); });
+  pairs.forEach(x=>{ const r = find(x.a.id); const o = g.get(r) || g.set(r,{ids:new Set(), keys:[], score:0}).get(r); o.ids.add(x.a.id); o.ids.add(x.b.id); o.keys.push(x.key); o.score = Math.max(o.score, x.score); });
+  return [...g.values()].map(o=>{
+    const items = [...o.ids].map(id=>prod.get(id)).sort((u,v)=>u.name.length-v.name.length || u.name.localeCompare(v.name));   // shortest name first = the one we suggest keeping
+    const warns = []; items.slice(1).forEach(p=>mgCompat(items[0], p).forEach(w=>warns.push(`“${p.name}”: ${w}`)));
+    return {items, keys:o.keys, score:o.score, warns};
+  }).sort((u,v)=>(u.warns.length?1:0)-(v.warns.length?1:0) || v.score-u.score);
+}
+
+/* one group → one merge. The kept product's values win; anything it lacks is filled in from the others. */
+async function mergeGroup(keepId, otherIds, batchId){
+  const keepName = (await getOne('products', keepId)).name;
+  for(let i=0;i<otherIds.length;i++) await mergeProducts(keepId, otherIds[i], {batchId, name: keepName, pick:{}});
 }
 
 route('duplicates', async ()=>{
   const [products, mappings, ig, logStore, whs] = await Promise.all([getAll('products'), getAll('mappings'), getOne('sharedSettings','mergeIgnore'), getOne('sharedSettings','mergeLog'), getAll('warehouses')]);
   const ignored = new Set((ig && ig.pairs) || []), whName = new Map(whs.map(w=>[w.id,w.name]));
-  const pairs = await mgDuplicatePairs(products, mappings, ignored);
-  const merged = ((logStore && logStore.entries) || []).filter(e=>!e.undone).slice(0,8);
-  const card = p=>`<div style="flex:1; min-width:0;"><b>${esc(p.name)}</b><div class="subtle">${esc(p.unit||'no unit')} · ${esc(whName.get(p.warehouseId)||'no warehouse')}${mgBlank(p.stockQty)?'':' · stock '+esc(p.stockQty)}</div></div>`;
+  const groups = mgGroups(await mgDuplicatePairs(products, mappings, ignored)).slice(0, 150);
+  const merged = ((logStore && logStore.entries) || []).filter(e=>!e.undone);
+  const recent = [];
+  for(const e of merged){ const last = recent[recent.length-1]; if(e.batchId && last && last.batchId===e.batchId) last.items.push(e); else recent.push({batchId:e.batchId, items:[e]}); }
+  const member = (p, gi, keep)=>`<label class="mg-gl"><input type="radio" name="keep${gi}" value="${p.id}" ${keep?'checked':''}>
+      <span style="flex:1; min-width:0;"><b>${esc(p.name)}</b><span class="subtle" style="display:block;">${esc(p.unit||'no unit')} · ${esc(whName.get(p.warehouseId)||'no warehouse')}${mgBlank(p.stockQty)?'':' · stock '+esc(p.stockQty)}</span></span>
+      <span class="badge ${keep?'b-ok':'b-picked_later'} mg-tag">${keep?'KEEP':'merge in'}</span></label>`;
   $('#main').innerHTML = `
     <div class="topbar"><h1>Possible duplicates</h1><a href="#/products" class="btn btn-ghost btn-sm">← Products</a></div>
-    <p class="subtle" style="margin-top:-8px;">Pairs of products with almost the same name and the same size — usually the same item from a different brand. Nothing changes until you open a pair and confirm the merge.</p>
-    ${pairs.length ? `<div class="card" style="margin-bottom:22px;">${pairs.map(x=>`<div class="list-row mg-pair" data-k="${esc(x.key)}">
-        ${card(x.a)}<span class="subtle" style="padding:0 6px;">≈</span>${card(x.b)}
-        <a class="btn btn-signal btn-sm" href="#/merge/${x.a.id}/${x.b.id}">Merge…</a>
-        <button class="btn btn-ghost btn-sm" data-notdup="${esc(x.key)}" title="Stop suggesting this pair">Not the same</button></div>`).join('')}</div>`
+    <p class="subtle" style="margin-top:-8px;">Each card is one item that exists more than once (usually the same product from different brands). Tick the cards you want to merge, check which product to keep in each, then merge them all with one tap. Each card becomes its own single product.</p>
+    ${groups.length ? `<div class="mg-tools"><button class="btn btn-ghost btn-sm" id="mg_all">Select all</button><button class="btn btn-ghost btn-sm" id="mg_none">Select none</button><span class="subtle">${groups.length} item${groups.length===1?'':'s'} found</span></div>` : ''}
+    ${groups.length ? groups.map((g,i)=>`<div class="card mg-group ${g.warns.length?'mg-flag':''}" data-g="${i}" data-keys="${esc(g.keys.join(','))}" data-ids="${g.items.map(p=>p.id).join(',')}">
+        <label class="mg-sel"><input type="checkbox" data-gsel ${g.warns.length?'disabled':''}><b>Merge these ${g.items.length}</b></label>
+        ${g.items.map((p,j)=>member(p,i,j===0)).join('')}
+        ${g.warns.length ? `<div class="mg-warn"><b>⚠ These may not be the same thing</b>${g.warns.map(w=>`<div class="subtle">${esc(w)}</div>`).join('')}
+          <label style="display:block; margin-top:6px;"><input type="checkbox" data-gok style="width:auto; margin-right:8px;">They are the same product — allow merging</label></div>` : ''}
+        <div style="margin-top:6px;"><button class="btn btn-ghost btn-sm" data-gno title="Stop suggesting this">Not the same</button></div></div>`).join('')
       : '<div class="empty"><div class="ic">✓</div>No likely duplicates found.</div>'}
-    ${merged.length ? `<h3 class="section-title">Recent merges</h3><div class="card">${merged.map(e=>`<div class="list-row">
-        <div style="flex:1; min-width:0;"><b>${esc(e.dropName)}</b> → <b>${esc(e.newName)}</b><div class="subtle">${fmtDate(e.at.slice(0,10))}</div></div>
-        <button class="btn btn-ghost btn-sm" data-undo="${e.id}">Undo</button></div>`).join('')}</div>` : ''}`;
-  $('#main').querySelectorAll('[data-notdup]').forEach(b=>b.onclick=async ()=>{
-    const cur = await getOne('sharedSettings','mergeIgnore') || {id:'mergeIgnore', pairs:[]};
-    if(!cur.pairs.includes(b.dataset.notdup)) cur.pairs.push(b.dataset.notdup);
-    await put('sharedSettings', cur); b.closest('.mg-pair').remove();
+    ${recent.length ? `<h3 class="section-title">Recent merges</h3><div class="card">${recent.map(r=>`<div class="list-row">
+        <div style="flex:1; min-width:0;"><b>${r.items.length>1 ? esc(r.items.map(e=>e.dropName).reverse().slice(0,3).join(', ')) + (r.items.length>3?` +${r.items.length-3} more`:'') : esc(r.items[0].dropName)}</b>${r.items.length===1?` → <b>${esc(r.items[0].newName)}</b>`:''}
+          <div class="subtle">${fmtDate(r.items[0].at.slice(0,10))} · ${r.items.length} product${r.items.length===1?'':'s'} merged in</div></div>
+        <button class="btn btn-ghost btn-sm" data-undo="${r.items.map(e=>e.id).join(',')}">Undo${r.items.length>1?' all':''}</button></div>`).join('')}</div>` : ''}
+    <div class="mg-bar" id="mgBar" hidden><span id="mgCount"></span><button class="btn btn-signal" id="mgGo">Merge selected</button></div>`;
+  const cards = [...$('#main').querySelectorAll('.mg-group')];
+  const picked = ()=>cards.filter(c=>c.querySelector('[data-gsel]').checked);
+  const refresh = ()=>{
+    cards.forEach(c=>{ c.classList.toggle('mg-picked', c.querySelector('[data-gsel]').checked);
+      c.querySelectorAll('.mg-gl').forEach(l=>{ const on = l.querySelector('input').checked; const t = l.querySelector('.mg-tag'); t.textContent = on?'KEEP':'merge in'; t.className = 'badge mg-tag '+(on?'b-ok':'b-picked_later'); }); });
+    const sel = picked(), n = sel.reduce((a,c)=>a+c.dataset.ids.split(',').length,0);
+    $('#mgBar').hidden = !sel.length; $('#mgCount').textContent = `${sel.length} item${sel.length===1?'':'s'} · ${n} products → ${sel.length}`;
+  };
+  $('#main').addEventListener('change', e=>{
+    const ok = e.target.closest('[data-gok]');
+    if(ok){ const c = ok.closest('.mg-group'); const box = c.querySelector('[data-gsel]'); box.disabled = !ok.checked; if(!ok.checked) box.checked = false; }
+    refresh();
   });
-  $('#main').querySelectorAll('[data-undo]').forEach(b=>b.onclick=()=>showConfirm('Undo this merge? Names, past orders, batches and stock go back to the two separate products.', async ()=>{
-    b.disabled = true; await undoMerge(b.dataset.undo); routes['duplicates']([]);
-  }, {yesLabel:'Undo merge'}));
+  const setAll = on=>{ cards.forEach(c=>{ const b = c.querySelector('[data-gsel]'); if(!b.disabled) b.checked = on; }); refresh(); };
+  if($('#mg_all')){ $('#mg_all').onclick = ()=>setAll(true); $('#mg_none').onclick = ()=>setAll(false); }
+  $('#main').querySelectorAll('[data-gno]').forEach(b=>b.onclick=async ()=>{
+    const grp = b.closest('.mg-group'); const cur = await getOne('sharedSettings','mergeIgnore') || {id:'mergeIgnore', pairs:[]};
+    grp.dataset.keys.split(',').forEach(k=>{ if(!cur.pairs.includes(k)) cur.pairs.push(k); });
+    await put('sharedSettings', cur); grp.remove(); cards.splice(cards.indexOf(grp),1); refresh();
+  });
+  $('#main').querySelectorAll('[data-undo]').forEach(b=>b.onclick=()=>showConfirm('Undo this? Names, past orders, batches and stock go back to the separate products.', async ()=>{
+    b.disabled = true; b.textContent = 'Undoing…'; for(const id of b.dataset.undo.split(',')) await undoMerge(id); routes['duplicates']([]);
+  }, {yesLabel:'Undo'}));
+  $('#mgGo').onclick = ()=>{
+    const plan = picked().map(c=>{
+      const ids = c.dataset.ids.split(','), keepId = c.querySelector('input[type=radio]:checked').value;
+      const byId = new Map(products.map(p=>[p.id,p]));
+      return {keep:byId.get(keepId), others:ids.filter(i=>i!==keepId).map(i=>byId.get(i))};
+    });
+    if(!plan.length) return;
+    const total = plan.reduce((a,p)=>a+p.others.length,0);
+    const priceDiff = plan.filter(p=>p.others.some(o=>(!mgBlank(o.costPrice) && !mgBlank(p.keep.costPrice) && !mgSame(o.costPrice,p.keep.costPrice)) || (!mgBlank(o.sellPrice) && !mgBlank(p.keep.sellPrice) && !mgSame(o.sellPrice,p.keep.sellPrice)))).length;
+    showModal(`<h3>Merge ${plan.length} item${plan.length===1?'':'s'}?</h3>
+      <p class="subtle" style="margin-top:0;">${total} product${total===1?'':'s'} will be folded into ${plan.length}. Saved names, orders, history and batches move over, stock is added up, nothing is deleted, and it can all be undone in one tap.${priceDiff?` In ${priceDiff} of them the prices differ: the kept product's price stays and the other price is saved in its price history (nothing is rounded or combined).`:''}</p>
+      <div style="max-height:42vh; overflow:auto; margin:10px 0;">${plan.map(p=>`<div class="list-row" style="display:block;"><b>${esc(p.keep.name)}</b><div class="subtle">← ${p.others.map(o=>esc(o.name)).join(' · ')}</div></div>`).join('')}</div>
+      <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="mgYes" style="flex:1;">Merge ${plan.length}</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+    $('#mgYes').onclick = async ()=>{
+      const batchId = 'batch-'+Date.now(); let done = 0;
+      const yes = $('#mgYes'); yes.disabled = true;
+      try{
+        for(const p of plan){ yes.textContent = `Merging ${done+1} of ${plan.length}…`; await mergeGroup(p.keep.id, p.others.map(o=>o.id), batchId); done++; }
+      }catch(err){ closeModal(); showAlert(`Stopped after ${done} of ${plan.length}: ${err.message||err}\nWhat was merged can be undone from Recent merges.`); routes['duplicates']([]); return; }
+      closeModal(); await routes['duplicates']([]);
+      showAlert(`${done} item${done===1?'':'s'} merged. You can undo them all from Recent merges at the bottom of this page.`, 'Done');
+    };
+  };
 });
 
 /* ------------------------------------------ the screen ------------------------------------------ */
