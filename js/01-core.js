@@ -253,8 +253,8 @@ function replacementsOf(it){
    e.g. '2026-10-11.2'). It's how the update-check below tells a stale cached copy apart from
    the real latest version — see checkForUpdate() near boot() at the bottom of this file. */
 // APP_VERSION now lives inline in index.html (so the update check can read it from the page itself)
-const DB_NAME='dockline_db', DB_VER=12;
-const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts','receivingInvoices','batches','sharedSettings','invoices','historyOrders','historyLines'];
+const DB_NAME='dockline_db', DB_VER=13;
+const STORES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','settings','boxReceipts','boxTypes','productReceipts','receivingInvoices','batches','sharedSettings','invoices','roles','activity','historyOrders','historyLines'];
 // internal-only stores used by the crew-sync layer below — never touched by app screens directly
 const SYNC_STORES=['syncQueue','syncMeta'];
 let dbp = new Promise((resolve,reject)=>{
@@ -354,12 +354,18 @@ async function getOne(store,id){
 async function rawPut(store,obj){ await tx(store,'readwrite',os=>os.put(obj)); return obj; }
 async function rawDel(store,id){ await tx(store,'readwrite',os=>os.delete(id)); }
 async function put(store,obj){
+  const prev = (typeof permGuard==='function' || typeof auditChange==='function') && (typeof AUDITED!=='undefined' && AUDITED.has(store)) ? await getOne(store,obj.id) : null;
+  if(typeof permGuard==='function') permGuard(store, prev, obj);
   await rawPut(store,obj);
+  if(typeof auditChange==='function' && typeof AUDITED!=='undefined' && AUDITED.has(store) && AUTH) auditChange(store, prev, obj).catch(()=>{});
   if(typeof queueSync==='function' && SYNC_TABLES.includes(store)) queueSync(store,obj.id,'put');
   return obj;
 }
 async function del(store,id){
+  const prev = typeof AUDITED!=='undefined' && AUDITED.has(store) ? await getOne(store,id) : null;
+  if(typeof permGuard==='function') permGuard(store, prev, null);
   await rawDel(store,id);
+  if(prev && typeof auditChange==='function' && AUTH) auditChange(store, prev, null).catch(()=>{});
   if(typeof queueSync==='function' && SYNC_TABLES.includes(store)) queueSync(store,id,'del');
 }
 

@@ -40,6 +40,14 @@ function ptPerUnit(sell, ref){
   if(ref.unit==='ml' || ref.unit==='g'){ const b = ptDivide(Dec.mul(s, Dec.parse('1000')), q); if(b) out += ` · ${b.text} /${ref.unit==='ml'?'l':'kg'}`; }
   return out;
 }
+const PT_PRICE_COLS = new Set(['cost','markup','sell','ref','perunit']);
+const ptColOk = c => !PT_PRICE_COLS.has(c.k) || can('prices.view');
+/* may this person change this field here? (fields are locked, not hidden, when they may only look) */
+function ptCanEdit(f){
+  if(f==='costPrice'||f==='sellPrice'||f==='priceRef'||f==='__markup') return can('prices.edit') && can('prices.view');
+  if(f==='stockQty'||f==='lowStockLimit') return can('stock.edit');
+  return can('products.edit');
+}
 function ptWho(){ return (AUTH && AUTH.email) ? AUTH.email.split('@')[0] : 'this device'; }
 
 route('table', async ()=>{
@@ -68,6 +76,7 @@ route('table', async ()=>{
   const markupOf = p=> Dec.markupText(eff(p,'costPrice'), eff(p,'sellPrice'));
   const decOk = t=> t==='' || !!Dec.parse(t);
   const flags = p=>{
+    if(!can('prices.view')) return [];
     const c = Dec.parse(eff(p,'costPrice')), s = Dec.parse(eff(p,'sellPrice')), out = [];
     if(!c && !s) out.push('No price yet'); else if(!c) out.push('No cost price'); else if(!s) out.push('No sell price');
     if(c && s && Dec.cmp(s,c)<0) out.push('Sell price is below cost');
@@ -134,7 +143,7 @@ route('table', async ()=>{
     }
     return '<td></td>';
   }
-  const cols = ()=>PT_COLS.filter(c=>visible.includes(c.k));
+  const cols = ()=>PT_COLS.filter(c=>visible.includes(c.k) && ptColOk(c));
   function rowHtml(p){
     const fl = flags(p);
     return `<tr data-row="${p.id}" class="${fl.length?'pt-warn':''} ${eff(p,'active')===false?'pt-off':''}">
@@ -148,7 +157,7 @@ route('table', async ()=>{
       ${cols().map(c=>`<th>${sortable.has(c.k)?`<button data-sort="${c.k}">${c.label} ${sortK===c.k?(sortDir>0?'▲':'▼'):''}</button>`:c.label}</th>`).join('')}</tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
   }
-  const FILTERS = [['all','All'],['noprice','No price'],['below','Below cost'],['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']];
+  const FILTERS = [['all','All']].concat(can('prices.view') ? [['noprice','No price'],['below','Below cost']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Product Table</h1>
       <div class="tb-actions"><button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button><button class="btn btn-ghost" id="pt_hist">🕘 History</button></div></div>
@@ -168,14 +177,16 @@ route('table', async ()=>{
     const n = pending.size, fields = [...pending.values()].reduce((a,m)=>a+Object.keys(m).length, 0);
     const bar = $('#pt_save'); bar.hidden = !n;
     setHtml(bar, n ? `<span>${fields} change${fields===1?'':'s'} in ${n} product${n===1?'':'s'}</span><button class="btn btn-ghost btn-sm" id="pt_discard">Discard</button><button class="btn btn-signal" id="pt_do_save">Save</button>` : '');
+    const canB = {markup:can('prices.edit')&&can('prices.view'), supplier:can('products.edit'), limit:can('stock.edit')};
     const bulk = $('#pt_bulk'); bulk.hidden = !sel.size;
-    setHtml(bulk, sel.size ? `<span>${sel.size} selected</span><button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button><button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button><button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button><button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
+    setHtml(bulk, sel.size ? `<span>${sel.size} selected</span>${canB.markup?'<button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button>':''}${canB.supplier?'<button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button>':''}${canB.limit?'<button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button>':''}<button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
     document.body.classList.toggle('pt-two-bars', !!n && !!sel.size);
     drawFilters();
   }
   function draw(keepScroll){
     const list = rows(), w = $('#pt_wrap'), st = keepScroll ? [w.scrollLeft, w.scrollTop] : null;
-    w.innerHTML = tableHtml(list); $('#pt_count').textContent = `${list.length} of ${products.length} products`;
+    w.innerHTML = tableHtml(list);
+    w.querySelectorAll('.pt-in, .pt-chk').forEach(el=>{ if(!ptCanEdit(el.dataset.f)) el.disabled = true; }); $('#pt_count').textContent = `${list.length} of ${products.length} products`;
     if(st){ w.scrollLeft = st[0]; w.scrollTop = st[1]; }
     drawBars();
   }
@@ -252,7 +263,7 @@ route('table', async ()=>{
   $('#pt_filters').onclick = e=>{ const b = e.target.closest('[data-f]'); if(!b) return; filter = b.dataset.f; draw(); };
   $('#pt_cols').onclick = ()=>{
     showModal(`<h3>Columns</h3><div class="subtle" style="margin-bottom:8px;">Product name is always shown.</div>
-      ${PT_COLS.map(c=>`<label class="lk-sw"><input type="checkbox" data-col="${c.k}" ${visible.includes(c.k)?'checked':''}><span>${c.label}</span></label>`).join('')}
+      ${PT_COLS.filter(ptColOk).map(c=>`<label class="lk-sw"><input type="checkbox" data-col="${c.k}" ${visible.includes(c.k)?'checked':''}><span>${c.label}</span></label>`).join('')}
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;"><button class="btn btn-ghost btn-sm" id="pt_c_def">Standard</button><button class="btn btn-ghost btn-sm" id="pt_c_cmp">Compact (phone)</button><button class="btn btn-ghost btn-sm" id="pt_c_all">All</button><span style="flex:1"></span><button class="btn btn-signal" onclick="closeModal()">Done</button></div>`);
     const apply = ()=>{ try{ localStorage.setItem('dk_pt_cols', JSON.stringify(visible)); }catch(e){} draw(true); };
     const sync = ()=>document.querySelectorAll('[data-col]').forEach(c=>c.checked = visible.includes(c.dataset.col));

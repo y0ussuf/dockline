@@ -101,7 +101,7 @@ route('settings', async ()=>{
       <p class="subtle">Everything lives on this device, whether or not crew sync (below) is on. Download a backup before updating the app or trying something new, and keep the file somewhere safe.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
         <button class="btn btn-signal btn-sm" id="doBackup">⬇ Download backup</button>
-        ${isAdmin() ? `<label class="btn btn-ghost btn-sm" style="cursor:pointer;">⬆ Restore from backup<input type="file" id="restoreFile" accept=".json" style="display:none;"></label>` : `<span class="subtle">Restoring a backup is admin-only — it overwrites everything on this device.</span>`}
+        ${can('backup') ? `<label class="btn btn-ghost btn-sm" style="cursor:pointer;">⬆ Restore from backup<input type="file" id="restoreFile" accept=".json" style="display:none;"></label>` : `<span class="subtle">Restoring a backup is admin-only — it overwrites everything on this device.</span>`}
       </div>
     </div>
     ${companyCardHtml(company)}
