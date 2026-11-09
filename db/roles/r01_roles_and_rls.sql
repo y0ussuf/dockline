@@ -8,12 +8,13 @@
 
 begin;
 
--- 0. the old blanket policies (names as found by the read-only schema check of 2026-10-18)
-drop policy if exists "anon full access" on public.records;
-drop policy if exists "logged in can read"   on public.records;
-drop policy if exists "logged in can write"  on public.records;
-drop policy if exists "logged in can update" on public.records;
-drop policy if exists crew_all on public.records;          -- only exists in the test stub
+-- 0. remove EVERY existing policy on records (the old blanket ones, e.g. "anon full access"), whatever they are called;
+--    the policies created below are then the only rules. (Emergency way back: r01_rollback.sql.)
+do $$ declare pol record; begin
+  for pol in select policyname from pg_policies where schemaname = 'public' and tablename = 'records' loop
+    execute format('drop policy %I on public.records', pol.policyname);
+  end loop;
+end $$;
 
 -- 1. helpers live in a schema the API does not expose
 create schema if not exists app_auth;
