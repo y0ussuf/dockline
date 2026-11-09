@@ -108,6 +108,8 @@ route('products', async ()=>{
     window.__filterWh = b.dataset.wh;
     routes['products']([]);
   };
+  if(!can('products.edit')){ $('#addProd').style.display='none'; }
+  if(!can('move') && $('#mvToggle')) $('#mvToggle').style.display='none';
   $('#addProd').onclick = ()=>openProductForm(null, warehouses, sections, suppliers);
 
   function attachRowHandlers(){
@@ -261,6 +263,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     sell.oninput = ()=>{ last = 'sell'; mk.value = Dec.markupText(cost.value, sell.value); refreshNote(); };
     refreshNote();
   })();
+  applyProductFormPerms();
   $('#f_cancel').onclick = closeModal;
   $('#f_save').onclick = async ()=>{
     const name = $('#f_name').value.trim();
@@ -478,7 +481,7 @@ route('warehouses', async ()=>{
   }
 
   function render(){
-    const admin = isAdmin();
+    const admin = can('warehouses.edit');
     $('#main').innerHTML = `
       <div class="topbar"><h1>Warehouses</h1>${admin?'<button class="btn btn-signal" id="addWh">+ Add warehouse</button>':''}</div>
       <p class="subtle" style="margin-top:-10px; margin-bottom:18px;">Drag ⠿ to reorder. Warehouse order and section order set the picking sequence.${admin?'':' Adding, renaming or deleting warehouses/sections is admin-only — ask your admin if something here needs to change.'}</p>

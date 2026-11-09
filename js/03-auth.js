@@ -54,7 +54,8 @@ function sessionFromTokenResponse(tok){
     refresh_token: tok.refresh_token,
     expires_at: Date.now() + (tok.expires_in||3600)*1000,
     email: claims.email || (tok.user && tok.user.email) || '',
-    role: appMeta.role==='admin' ? 'admin' : 'staff'
+    role: appMeta.role==='admin' ? 'admin' : 'staff',
+    roleId: appMeta.role_id || ''
   };
 }
 async function getAuthSession(){ return await getOne('settings','authSession'); }
@@ -354,6 +355,7 @@ async function render(){
   setSidebarOpen(false);
   const parts = hash.replace('#/','').split('/').filter(Boolean);
   const key = parts[0] || 'home';
+  if(typeof routeAllowed==='function' && !routeAllowed(key)){ $('#main').innerHTML = noAccessHtml(); window.scrollTo(0,0); return; }
   const handler = routes[key] || routes['home'];
   await handler(parts.slice(1));
   window.scrollTo(0,0);
