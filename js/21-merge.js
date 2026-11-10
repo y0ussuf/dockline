@@ -102,7 +102,7 @@ async function mergeProducts(keepId, dropId, o){
   // 4) the other product's own name keeps working when an order uses it
   const norm = normalize(dropOrig.name), mappings = await getAll('mappings');
   if(norm && normalize(keep.name)!==norm && !mappings.some(m=>m.excelDescNormalized===norm)){
-    const m = {id:uid(), excelDescNormalized:norm, label:dropOrig.name, productId:keepId};
+    const m = mapStamp({id:uid(), excelDescNormalized:norm, label:dropOrig.name, productId:keepId});
     await put('mappings', m); log.addedMappings.push(m.id);
   }
   if(normalize(keepOrig.name)!==normalize(keep.name)){          // renamed → the old name of the kept product keeps working too

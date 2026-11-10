@@ -58,7 +58,7 @@ const ROUTE_PERMS = {
   stock:['stock.view'], deliveries:['receiving'], boxtypes:['receiving'], receiving:['receiving'], batches:['receiving','stock.view'], reliability:['receiving','suppliers.view'],
   suppliers:['suppliers.view'], prices:['prices.view'], invoices:['invoices.view'], invoice:['invoices.view'],
   insights:['reports.view'], forecast:['reports.view'], duplicates:['merge'], merge:['merge'], mergemany:['merge'],
-  activity:['activity.view'], team:['__admin']
+  activity:['activity.view'], mapcheck:['products.edit'], team:['__admin']
 };
 let MY_PERMS = null;           // Set of permission keys for a non-admin account; null = not loaded yet
 function isFullAdmin(){ return !!(AUTH && AUTH.role==='admin'); }
@@ -127,7 +127,7 @@ function applyProductFormPerms(){
 /* ------------------------------------ activity log ------------------------------------ */
 let ACTOR_NAME = '', AUDIT_ON = false;   // switched on once the app has started, so start-up housekeeping isn't logged as someone's work
 const actorName = ()=> ACTOR_NAME || (AUTH && AUTH.email ? AUTH.email.split('@')[0] : '') || 'this device';
-const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles']);
+const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles','mappings']);
 const AUD_TRACK = {stockQty:'stock', costPrice:'price', sellPrice:'price', priceRef:'price', lowStockLimit:'edit', supplierId:'edit', name:'edit', unit:'edit', active:'edit', packSize:'edit', warehouseId:'move', sectionId:'move'};
 const AUD_FIELD = {stockQty:'Stock', costPrice:'Cost price', sellPrice:'Sell price', priceRef:'Prices are for', lowStockLimit:'Low-stock limit', supplierId:'Supplier', name:'Name', unit:'Unit', active:'Active', packSize:'Pack size', warehouseId:'Warehouse', sectionId:'Section'};
 const audShow = v => v==null||v==='' ? '—' : (typeof v==='object' ? (v.qty ? `${v.qty} ${v.unit||''}`.trim() : '—') : String(v));
@@ -172,6 +172,12 @@ async function auditChange(store, prev, next){
     if(!prev) return log({kind:'receive', target:lab, tid, text:`Added ${lab}${cur.qty!=null?' ('+cur.qty+')':''}`});
     if(!next) return log({kind:'delete', target:lab, tid, text:`Deleted ${lab}`});
     if(String(prev.qty)!==String(next.qty)) return log({kind:'stock', target:lab, tid, text:`${lab}: ${audShow(prev.qty)} → ${audShow(next.qty)}`});
+    return;
+  }
+  if(store==='mappings'){
+    if(!prev) return log({kind:'setup', target:cur.label||'', tid, text:`Mapped “${cur.label||''}” → ${cur.productName||'a product'}`});
+    if(!next) return log({kind:'delete', target:cur.label||'', tid, text:`Removed mapping “${cur.label||''}”`});
+    if(prev.productId!==next.productId) return log({kind:'setup', target:next.label||'', tid, text:`Changed mapping “${next.label||''}” to another product`});
     return;
   }
   const noun = {suppliers:'supplier', warehouses:'warehouse', sections:'section', roles:'role'}[store];
