@@ -616,3 +616,12 @@ table.pt thead .pt-name{z-index:4}
 .pt-tools input[type=search]{-webkit-appearance:none;appearance:none;padding-left:38px;background:var(--paper) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px center;}
 .pt-tools select{flex:0 1 200px;width:auto}
 @media(max-width:700px){.pt-tools select{flex:1 1 100%}}
+
+/* first-time data load */
+#firstSync{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--bg,#f6f4ef);padding:24px}
+#firstSync .fs-card{text-align:center;max-width:340px}
+#firstSync h2{margin:16px 0 6px}
+#firstSync .fs-spin{width:44px;height:44px;margin:0 auto;border-radius:50%;border:4px solid rgba(128,128,128,.25);border-top-color:var(--signal,#e8870e);animation:fsspin .9s linear infinite}
+#firstSync.stalled .fs-spin{animation:none;border-top-color:rgba(128,128,128,.25)}
+@keyframes fsspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#firstSync .fs-spin{animation-duration:3s}}
