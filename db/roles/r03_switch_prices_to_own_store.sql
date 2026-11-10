@@ -25,16 +25,15 @@ insert into public.records (store, id, data, deleted, updated_at, updated_by)
 select 'productPrices', id, d, deleted, clock_timestamp() + n * interval '1 millisecond', 'r03-copy' from src
 on conflict (store, id) do update set data = excluded.data, deleted = excluded.deleted, updated_at = excluded.updated_at, updated_by = excluded.updated_by;
 
--- sanity: every product that has prices now has a productPrices record with the same values
+-- sanity: every product that has prices now has a productPrices record holding exactly the same values.
+-- (A price field stored as JSON null counts as "no value" on both sides — that is what the copy does too.)
 do $$ declare bad int; begin
   select count(*) into bad from public.records p
    where p.store = 'products' and (p.data ? 'costPrice' or p.data ? 'sellPrice' or p.data ? 'priceRef' or p.data ? 'priceHistory')
      and not exists (select 1 from public.records q where q.store = 'productPrices' and q.id = p.id
-                     and q.data -> 'costPrice' is not distinct from p.data -> 'costPrice'
-                     and q.data -> 'sellPrice' is not distinct from p.data -> 'sellPrice'
-                     and q.data -> 'priceRef' is not distinct from p.data -> 'priceRef'
-                     and q.data -> 'priceHistory' is not distinct from p.data -> 'priceHistory');
-  if bad > 0 then raise exception 'Stop: % products have prices that did not copy exactly. Nothing was changed.', bad; end if;
+                     and (q.data - 'id') = jsonb_strip_nulls(jsonb_build_object('costPrice', p.data -> 'costPrice', 'sellPrice', p.data -> 'sellPrice',
+                                                                                  'priceRef', p.data -> 'priceRef', 'priceHistory', p.data -> 'priceHistory')));
+  if bad > 0 then raise exception 'Stop: % products have prices that did not copy exactly. Nothing was changed. Run r03_diagnose_readonly.sql and send the result.', bad; end if;
 end $$;
 
 -- c) strip (the update also gives each product record a fresh timestamp so every device re-reads it)
