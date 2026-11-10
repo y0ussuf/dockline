@@ -634,3 +634,11 @@ svg.i{width:1.2em;height:1.2em;vertical-align:-.22em;flex-shrink:0;stroke-width:
 .btn svg.i{margin-right:.15em}
 svg.i-triangle-alert{color:var(--warn,#c98a00)}
 svg.i-circle-check,svg.i-party-popper{color:var(--ok,#2e7d4f)}
+
+/* product table: history button, price history */
+.pt-nm{display:flex;align-items:center;gap:4px;justify-content:space-between}
+.pt-hbtn{border:0;background:none;color:var(--ink-soft,#667);cursor:pointer;padding:4px;border-radius:6px;flex-shrink:0}
+.pt-hbtn:hover{background:var(--paper-dim,#eee);color:var(--ink,#111)}
+table.pt-hist{width:100%;border-collapse:collapse;font-size:.88rem}
+table.pt-hist th,table.pt-hist td{padding:6px 8px;border-bottom:1px solid var(--line,#eee);text-align:left;vertical-align:top}
+.pt-up{color:#2e7d4f;font-size:.7em}.pt-down{color:#c1432e;font-size:.7em}

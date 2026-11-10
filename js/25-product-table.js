@@ -11,6 +11,7 @@ const PT_COLS = [
   {k:'cost',     label:'Cost (EGP)',      f:'costPrice',     kind:'dec'},
   {k:'markup',   label:'Markup %',        kind:'markup'},
   {k:'sell',     label:'Sell (EGP)',      f:'sellPrice',     kind:'dec'},
+  {k:'updated',  label:'Price updated',   kind:'ro'},
   {k:'ref',      label:'Prices are for',  f:'priceRef',      kind:'ref'},
   {k:'perunit',  label:'Per 1 unit',      kind:'ro'},
   {k:'stock',    label:'Stock on hand',   f:'stockQty',      kind:'qty'},
@@ -40,7 +41,10 @@ function ptPerUnit(sell, ref){
   if(ref.unit==='ml' || ref.unit==='g'){ const b = ptDivide(Dec.mul(s, Dec.parse('1000')), q); if(b) out += ` · ${b.text} /${ref.unit==='ml'?'l':'kg'}`; }
   return out;
 }
-const PT_PRICE_COLS = new Set(['cost','markup','sell','ref','perunit']);
+const PT_PRICE_COLS = new Set(['cost','markup','sell','ref','perunit','updated']);
+/* when a product's price last changed: the newest price-history entry (null = it has a price but no recorded change) */
+const ptLastPriceAt = p=>{ const h = p.priceHistory; return h && h.length ? h[h.length-1].at : null; };
+const PT_SOURCE = from=> !from ? '' : from==='edit' ? 'Product form' : from==='product table' ? 'Product Table' : /^sheet /.test(from) ? 'Price sheet · '+from.slice(6) : from;
 const ptColOk = c => !PT_PRICE_COLS.has(c.k) || can('prices.view');
 /* may this person change this field here? (fields are locked, not hidden, when they may only look) */
 function ptCanEdit(f){
@@ -58,6 +62,8 @@ route('table', async ()=>{
   let visible = PT_DEFAULT.slice();
   try{ const v = JSON.parse(localStorage.getItem('dk_pt_cols')||'null'); if(Array.isArray(v) && v.length) visible = v.filter(k=>PT_COLS.some(c=>c.k===k)); }catch(e){}
   let q = '', filter = 'all', supFilter = '', sortK = 'name', sortDir = 1;
+  let staleDays = 30; try{ staleDays = parseInt(localStorage.getItem('dk_pt_stale')) || 30; }catch(e){}
+  const isStale = p=>{ if(!(Dec.parse(eff(p,'costPrice')) || Dec.parse(eff(p,'sellPrice')))) return false; const a = ptLastPriceAt(p); return !a || (Date.now() - new Date(a).getTime()) > staleDays*864e5; };
   const pending = new Map();           // productId -> {field: newValue}
   const last = new Map(), lastMk = new Map();              // productId -> 'markup' | 'sell' : which of the two was typed last
   const sel = new Set();
@@ -95,6 +101,7 @@ route('table', async ()=>{
       if(supFilter && eff(p,'supplierId')!==supFilter) return false;
       if(filter==='noprice'){ const f = flags(p); if(!f.some(x=>/No (cost|sell )?price/.test(x))) return false; }
       else if(filter==='below'){ if(!flags(p).some(x=>/below cost/.test(x))) return false; }
+      else if(filter==='stale'){ if(!isStale(p)) return false; }
       else if(filter==='low'){ if(!isLowStock(stockP(p))) return false; }
       else if(filter==='nostock'){ if(isStockTracked(stockP(p))) return false; }
       else if(filter==='perorder'){ if(!isPerOrderProduct(p, whMap)) return false; }
@@ -110,6 +117,7 @@ route('table', async ()=>{
         case 'stock': { const t = parseFloat(eff(p,'stockQty')); return isNaN(t) ? null : t; }
         case 'limit': { const t = parseFloat(eff(p,'lowStockLimit')); return isNaN(t) ? null : t; }
         case 'pack': { const t = parseFloat(eff(p,'packSize')); return isNaN(t) ? null : t; }
+        case 'updated': return ptLastPriceAt(p) || null;
         case 'unit': return normalize(p.unit||'');
         case 'supplier': return normalize((supById.get(eff(p,'supplierId'))||{}).name||'');
         default: return normalize(p.name);
@@ -133,6 +141,7 @@ route('table', async ()=>{
       case 'markup': return `<td><input class="pt-in ${(isChanged(p,'costPrice')||isChanged(p,'sellPrice'))?'chg':''}" data-p="${p.id}" data-f="__markup" data-kind="markup" inputmode="decimal" placeholder="—" value="${esc(markupOf(p))}"></td>`;
       case 'ref': { const r = eff(p,'priceRef') || {qty:'', unit:''}; const ch = isChanged(p,'priceRef');
         return `<td style="white-space:nowrap;"><input class="pt-in pt-ref ${ch?'chg':''}" style="width:64px;" data-p="${p.id}" data-f="priceRef" data-part="qty" data-kind="ref" inputmode="decimal" placeholder="—" value="${esc(r.qty)}"> <select class="pt-in pt-sel ${ch?'chg':''}" style="width:68px;" data-p="${p.id}" data-f="priceRef" data-part="unit" data-kind="ref">${['','ml','l','g','kg'].map(u=>`<option value="${u}" ${r.unit===u?'selected':''}>${u||'—'}</option>`).join('')}</select></td>`; }
+      case 'updated': { const a = ptLastPriceAt(p), has = Dec.parse(eff(p,'costPrice')) || Dec.parse(eff(p,'sellPrice')); return `<td class="pt-ro">${a ? esc(fmtDate(a.slice(0,10))) : (has ? 'no record' : '')}</td>`; }
       case 'perunit': return `<td class="pt-ro" data-pu="${p.id}">${esc(ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef')))}</td>`;
       case 'stock': return p.trackBatches ? `<td class="pt-ro" title="This product's stock comes from its batches">🔒 ${esc(p.stockQty??'')}</td>` : `<td>${inp(p,'stockQty','qty','placeholder="not tracked"')}</td>`;
       case 'limit': return `<td>${inp(p,'lowStockLimit','qty','placeholder="—"')}</td>`;
@@ -147,30 +156,31 @@ route('table', async ()=>{
   function rowHtml(p){
     const fl = flags(p);
     return `<tr data-row="${p.id}" class="${fl.length?'pt-warn':''} ${eff(p,'active')===false?'pt-off':''}">
-      <td class="pt-name"><label><input type="checkbox" class="pt-sel-r" data-sel="${p.id}" ${sel.has(p.id)?'checked':''}><span>${esc(p.name)}${fl.length?` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>`:''}</span></label></td>
+      <td class="pt-name"><div class="pt-nm"><label><input type="checkbox" class="pt-sel-r" data-sel="${p.id}" ${sel.has(p.id)?'checked':''}><span>${esc(p.name)}${fl.length?` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>`:''}</span></label>${can('prices.view') && (p.priceHistory||[]).length ? `<button class="pt-hbtn" data-hist="${p.id}" title="Price history" aria-label="Price history">🕘</button>` : ''}</div></td>
       ${cols().map(c=>cellHtml(p,c)).join('')}</tr>`;
   }
-  const sortable = new Set(['unit','supplier','cost','markup','sell','stock','limit','pack']);
+  const sortable = new Set(['updated','unit','supplier','cost','markup','sell','stock','limit','pack']);
   function tableHtml(list){
     if(!list.length) return '<div class="empty"><div class="ic">▦</div>No products match.</div>';
     return `<table class="pt"><thead><tr><th class="pt-name"><button data-sort="name">Product ${sortK==='name'?(sortDir>0?'▲':'▼'):''}</button></th>
       ${cols().map(c=>`<th>${sortable.has(c.k)?`<button data-sort="${c.k}">${c.label} ${sortK===c.k?(sortDir>0?'▲':'▼'):''}</button>`:c.label}</th>`).join('')}</tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
   }
-  const FILTERS = [['all','All']].concat(can('prices.view') ? [['noprice','No price'],['below','Below cost']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
+  const FILTERS = [['all','All']].concat(can('prices.view') ? [['noprice','No price'],['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Product Table</h1>
-      <div class="tb-actions"><button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button><button class="btn btn-ghost" id="pt_hist">🕘 History</button></div></div>
+      <div class="tb-actions">${can('prices.edit') ? '<button class="btn btn-ghost" id="pt_import">⬆ Import prices</button>' : ''}<button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button><button class="btn btn-ghost" id="pt_hist">🕘 History</button></div></div>
     <p class="subtle" style="margin-top:-8px;">Every product's facts in one table. Type in a cell and press <b>Enter</b> to go to the next row. Changes are highlighted and only saved when you tap <b>Save</b>. Prices are kept exactly as typed.</p>
     <div class="pt-tools"><input type="search" id="pt_q" placeholder="Search products…" autocomplete="off">
       <select id="pt_sup"><option value="">All suppliers</option>${suppliers.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
     <div class="tag-row" id="pt_filters"></div>
+    <div class="subtle" id="pt_stalenote" hidden style="margin:4px 0;">Products whose price hasn't changed in <select id="pt_stale" style="width:auto; display:inline-block; padding:4px 8px;">${[7,14,30,60,90].map(d=>`<option value="${d}" ${d===staleDays?'selected':''}>${d}</option>`).join('')}</select> days (or has no recorded change).</div>
     <div class="pt-count subtle" id="pt_count"></div>
     <div class="pt-wrap" id="pt_wrap"></div>
     <div class="mg-bar pt-bulk" id="pt_bulk" hidden></div>
     <div class="mg-bar pt-save" id="pt_save" hidden></div>`;
 
-  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
+  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
   function drawFilters(){ const c = counts(); setHtml($('#pt_filters'), FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join('')); }
   const setHtml = (el, h)=>{ if(el.__h!==h){ el.innerHTML = h; el.__h = h; } };   // same content: leave the buttons alone, or a tap that blurs a cell could miss them
   function drawBars(){
@@ -182,6 +192,7 @@ route('table', async ()=>{
     setHtml(bulk, sel.size ? `<span>${sel.size} selected</span>${canB.markup?'<button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button>':''}${canB.supplier?'<button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button>':''}${canB.limit?'<button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button>':''}<button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
     document.body.classList.toggle('pt-two-bars', !!n && !!sel.size);
     drawFilters();
+    const sn = $('#pt_stalenote'); if(sn) sn.hidden = filter!=='stale';
   }
   function draw(keepScroll){
     const list = rows(), w = $('#pt_wrap'), st = keepScroll ? [w.scrollLeft, w.scrollTop] : null;
@@ -202,7 +213,7 @@ route('table', async ()=>{
     tr.querySelectorAll('.pt-in[data-f]').forEach(el=>{ const f = el.dataset.f; el.classList.toggle('chg', f==='__markup' ? (isChanged(p,'costPrice')||isChanged(p,'sellPrice')) : isChanged(p,f)); });
     const pu = tr.querySelector('[data-pu]'); if(pu) pu.textContent = ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef'));
     const fl = flags(p); tr.classList.toggle('pt-warn', !!fl.length);
-    const nm = tr.querySelector('.pt-name span'); if(nm) nm.innerHTML = esc(p.name) + (fl.length ? ` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>` : '');
+    const nm = tr.querySelector('.pt-name label span'); if(nm) nm.innerHTML = esc(p.name) + (fl.length ? ` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>` : '');
   }
   wrap.addEventListener('input', e=>{
     const el = e.target.closest('.pt-in'); if(!el || el.tagName==='SELECT') return;
@@ -255,12 +266,15 @@ route('table', async ()=>{
   });
   wrap.addEventListener('focusin', e=>{ const el = e.target; if(el.matches && el.matches('input.pt-in')) setTimeout(()=>{ try{ el.select(); }catch(_){} }, 0); });
   wrap.addEventListener('click', e=>{
+    const hb = e.target.closest('[data-hist]'); if(hb){ ptHistoryModal(prodById.get(hb.dataset.hist), supById); return; }
     const b = e.target.closest('[data-sort]'); if(!b) return;
     const k = b.dataset.sort; if(sortK===k) sortDir = -sortDir; else { sortK = k; sortDir = 1; } draw(true);
   });
   $('#pt_q').oninput = e=>{ q = e.target.value; draw(); };
+  $('#pt_stale').onchange = e=>{ staleDays = parseInt(e.target.value)||30; try{ localStorage.setItem('dk_pt_stale', String(staleDays)); }catch(_){} draw(true); };
   $('#pt_sup').onchange = e=>{ supFilter = e.target.value; draw(); };
   $('#pt_filters').onclick = e=>{ const b = e.target.closest('[data-f]'); if(!b) return; filter = b.dataset.f; draw(); };
+  const imp = $('#pt_import'); if(imp) imp.onclick = ()=>{ const go = ()=>{ location.hash = '#/prices'; }; pending.size ? showConfirm('You have unsaved changes in this table. Leave without saving them?', go, {yesLabel:'Leave'}) : go(); };
   $('#pt_cols').onclick = ()=>{
     showModal(`<h3>Columns</h3><div class="subtle" style="margin-bottom:8px;">Product name is always shown.</div>
       ${PT_COLS.filter(ptColOk).map(c=>`<label class="lk-sw"><input type="checkbox" data-col="${c.k}" ${visible.includes(c.k)?'checked':''}><span>${c.label}</span></label>`).join('')}
@@ -355,7 +369,7 @@ route('table', async ()=>{
           case 'limit': return eff(p,'lowStockLimit')===''||eff(p,'lowStockLimit')==null ? '' : Number(eff(p,'lowStockLimit'));
           case 'pack': return eff(p,'packSize')===''||eff(p,'packSize')==null ? '' : Number(eff(p,'packSize'));
           case 'expiry': return p.expiryDate||''; case 'perorder': return isPerOrderProduct(p, whMap) ? 'Yes' : '';
-          case 'ref': return ptRefText(eff(p,'priceRef')); case 'perunit': return ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef'));
+          case 'updated': return ptLastPriceAt(p) ? ptLastPriceAt(p).slice(0,10) : ''; case 'ref': return ptRefText(eff(p,'priceRef')); case 'perunit': return ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef'));
           case 'active': return eff(p,'active')===false ? 'No' : 'Yes';
         }
         return '';
@@ -388,4 +402,18 @@ async function ptUndo(entryId){
   }
   en.undone = true; await put('sharedSettings', store);
   return res;
+}
+
+/* a product's price history, newest first: every saved cost/sell price with when, and where the change came from */
+function ptHistoryModal(p, supById){
+  if(!p) return;
+  const f = v=>{ const d = Dec.parse(v); return d ? Dec.fmt(d, 2) : '—'; };
+  const arrow = (o,n)=>{ const a = Dec.parse(o), b = Dec.parse(n); if(!a || !b) return ''; const c = Dec.cmp(b,a); return c>0 ? ' <span class="pt-up">▲</span>' : c<0 ? ' <span class="pt-down">▼</span>' : ''; };
+  const h = p.priceHistory || [];
+  const rows = h.map((e,i)=>{ const prev = h[i-1]; return `<tr><td>${esc(fmtDate(e.at.slice(0,10)))}<div class="subtle">${esc(new Date(e.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}</div></td>
+      <td>${f(e.cost)}${prev?arrow(prev.cost, e.cost):''}</td><td>${f(e.sell)}${prev?arrow(prev.sell, e.sell):''}</td>
+      <td class="subtle">${esc(PT_SOURCE(e.from))}${e.ref?` · per ${esc(e.ref.qty)} ${esc(e.ref.unit)}`:''}</td></tr>`; }).reverse().join('');
+  showModal(`<h3>Price history</h3><p class="subtle" style="margin-top:-6px;">${esc(p.name)} · now ${f(p.costPrice)} cost / ${f(p.sellPrice)} sell</p>
+    <div style="max-height:56vh; overflow:auto;"><table class="pt-hist"><thead><tr><th>When</th><th>Cost</th><th>Sell</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="subtle">No changes recorded yet.</td></tr>'}</tbody></table></div>
+    <button class="btn btn-signal" style="margin-top:12px;" onclick="closeModal()">Close</button>`);
 }
