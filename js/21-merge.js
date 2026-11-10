@@ -12,6 +12,7 @@ const MERGE_REF_STORES = ['mappings','orders','orderItems','boxReceipts','produc
 const MERGE_FIELDS = [ // [field, label] — the ones worth showing when the two products disagree
   ['unit','Unit'], ['supplierId','Supplier'], ['warehouseId','Warehouse'], ['sectionId','Section'], ['packSize','Pack size'], ['packName','Pack name'],
   ['lowStockLimit','Low stock limit'], ['costPrice','Cost price'], ['sellPrice','Sell price'], ['productionDate','Production date'], ['expiryDate','Expiry date'], ['notes','Notes']];
+const mgShow = f=> f==='costPrice' ? seesCost() : f==='sellPrice' ? seesSell() : true;
 const mgBlank = v=> v===''||v==null;
 const mgSame  = (a,b)=> JSON.stringify(a??'')===JSON.stringify(b??'');
 
@@ -292,8 +293,8 @@ route('merge', async ([keepId, dropId])=>{
   const show = (f, v)=> mgBlank(v) ? '<span class="subtle">—</span>' : esc(['warehouseId','supplierId'].includes(f) ? (nameOf.get(v)||v) : (f==='sectionId' ? '(section)' : v));
   const [counts, mappings] = await Promise.all([mgCounts(b.id), getAll('mappings')]);
   const why = mgCompat(a, b);
-  const conflicts = MERGE_FIELDS.filter(([f])=> !mgBlank(a[f]) && !mgBlank(b[f]) && !mgSame(a[f], b[f]));
-  const fills = MERGE_FIELDS.filter(([f])=> mgBlank(a[f]) && !mgBlank(b[f]));
+  const conflicts = MERGE_FIELDS.filter(([f])=> mgShow(f) && !mgBlank(a[f]) && !mgBlank(b[f]) && !mgSame(a[f], b[f]));
+  const fills = MERGE_FIELDS.filter(([f])=> mgShow(f) && mgBlank(a[f]) && !mgBlank(b[f]));
   const bothStock = !mgBlank(a.stockQty) && !mgBlank(b.stockQty);
   const names = mappings.filter(m=>m.productId===b.id).map(m=>m.label||m.excelDescNormalized);
   const prod = (p, tag)=>`<div class="card mg-side"><div class="subtle">${tag}</div><b style="font-size:1.05rem;">${esc(p.name)}</b>
@@ -365,7 +366,7 @@ route('mergemany', async ()=>{
   const warns = []; others.forEach(o=>{ mgCompat(keep, o).forEach(w=>warns.push(`“${o.name}”: ${w}`)); });
   const tracked = items.filter(p=>!mgBlank(p.stockQty));
   const conflicts = [];
-  for(const [f,l] of MERGE_FIELDS){
+  for(const [f,l] of MERGE_FIELDS){ if(!mgShow(f)) continue;
     const opts = []; items.forEach(p=>{ if(!mgBlank(p[f]) && !opts.some(o=>mgSame(o.v,p[f]))) opts.push({v:p[f], by:[p.name]}); else if(!mgBlank(p[f])) opts.find(o=>mgSame(o.v,p[f])).by.push(p.name); });
     if(opts.length>1) conflicts.push({f,l,opts});
   }

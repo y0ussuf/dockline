@@ -49,6 +49,16 @@ function syncBaseUrl(cfg){ return cfg.url.replace(/\/+$/,''); }
 const PRICE_FIELDS = ['costPrice','sellPrice','priceRef','priceHistory'];
 let PRICES_SPLIT = false;
 const seesPricesNow = ()=> typeof MY_PERMS==='undefined' || MY_PERMS===null || (typeof can==='function' && can('prices.view'));
+/* what this person's device may keep: sell-only roles never hold cost figures (also inside the price history), cost-only roles never hold sell */
+function visiblePrices(q){
+  if(!q) return null;
+  if(typeof MY_PERMS==='undefined' || MY_PERMS===null || (seesCost() && seesSell())) return q;
+  const sell = seesSell(), cost = seesCost(), o = Object.assign({}, q);
+  if(!cost) delete o.costPrice;
+  if(!sell) delete o.sellPrice;
+  if(Array.isArray(o.priceHistory)) o.priceHistory = o.priceHistory.map(h=>{ const e = Object.assign({}, h); if(!cost) delete e.cost; if(!sell) delete e.sell; return e; });
+  return o;
+}
 const stripPrices = o=>{ const d = Object.assign({}, o); PRICE_FIELDS.forEach(f=>{ delete d[f]; }); return d; };
 async function loadFeatureFlags(){
   const f = await getOne('sharedSettings','features'), was = PRICES_SPLIT;
@@ -59,13 +69,18 @@ async function loadFeatureFlags(){
 async function applyStashedPrices(id){
   const st = await getOne('settings','pp:'+id), p = await getOne('products', id);
   if(!p || !st || await getOne('syncQueue','products:'+id)) return;
-  const q = seesPricesNow() && !st.deleted ? st.data : null;
+  const q = seesPricesNow() && !st.deleted ? visiblePrices(st.data) : null;
   const next = stripPrices(p); if(q) PRICE_FIELDS.forEach(f=>{ if(q[f]!==undefined) next[f] = q[f]; });
   if(JSON.stringify(next)!==JSON.stringify(p)) await rawPut('products', next);
 }
 async function applyAllStashedPrices(){
   const seen = new Set();
   for(const r of await getAll('settings')){ if(r.id && r.id.startsWith('pp:')){ seen.add(r.id.slice(3)); await applyStashedPrices(r.id.slice(3)); } }
+  if(seesPricesNow() && typeof MY_PERMS!=='undefined' && MY_PERMS!==null && !(seesCost() && seesSell())){   // sell-only / cost-only: drop what they may not see from the device
+    for(const p of await getAll('products')) if(!(await getOne('syncQueue','products:'+p.id))){
+      const v = visiblePrices(p); if(JSON.stringify(v)!==JSON.stringify(p)) await rawPut('products', v);
+    }
+  }
   if(!seesPricesNow()){   // someone who may not see prices keeps none on the device
     for(const p of await getAll('products')) if(PRICE_FIELDS.some(f=>p[f]!==undefined) && !(await getOne('syncQueue','products:'+p.id))) await rawPut('products', stripPrices(p));
   }
