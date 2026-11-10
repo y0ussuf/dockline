@@ -625,3 +625,12 @@ table.pt thead .pt-name{z-index:4}
 #firstSync.stalled .fs-spin{animation:none;border-top-color:rgba(128,128,128,.25)}
 @keyframes fsspin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){#firstSync .fs-spin{animation-duration:3s}}
+
+/* icons (js/00-icons.js) */
+svg.i{width:1.2em;height:1.2em;vertical-align:-.22em;flex-shrink:0;stroke-width:2}
+.navlink .ic{display:inline-flex;align-items:center;justify-content:center}
+.navlink .ic svg.i{width:19px;height:19px;vertical-align:0}
+.empty .ic svg.i{width:2.4rem;height:2.4rem;opacity:.55;stroke-width:1.6}
+.btn svg.i{margin-right:.15em}
+svg.i-triangle-alert{color:var(--warn,#c98a00)}
+svg.i-circle-check,svg.i-party-popper{color:var(--ok,#2e7d4f)}
