@@ -207,6 +207,7 @@ async function pullChanges(cfg){
     for(const s of HISTORY_STORES){ await bulkPut(s, histPut[s]); await bulkDelete(s, histDel[s]); }
     cursor = rows[rows.length-1].updated_at;
     await rawPut('settings', {id:'syncCursor', value:cursor});
+    if(typeof onSyncProgress==='function') onSyncProgress(pulled);
     if(rows.length<500) break;
   }
   return pulled;

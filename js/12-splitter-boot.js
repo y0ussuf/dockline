@@ -359,11 +359,37 @@ function reloadToLatest(){
   location.href = location.pathname + '?_=' + Date.now();
 }
 
+/* A device that has never loaded the shared data would otherwise open on an empty app and only fill in later (needing a reload).
+   So the very first time, show a loading screen with progress and open the app once the data is here. */
+async function firstSyncIfNeeded(){
+  if(DEMO_MODE) return;
+  const cfg = await getSyncConfig(); if(!cfg || !cfg.url || !cfg.key) return;
+  const has = async()=>{ const c = await getOne('settings','syncCursor'), st = await getOne('settings','syncStatus'); return !!(c && c.value) || !!(st && st.ok && st.lastSyncedAt); };
+  if(await has()) return;
+  const ov = document.createElement('div'); ov.id = 'firstSync';
+  ov.innerHTML = `<div class="fs-card"><div class="fs-spin"></div><h2>Getting your data…</h2><p id="fsMsg" class="subtle">Loading from the cloud. This only happens the first time on a new device.</p>
+    <div id="fsActions" style="display:none; gap:10px; justify-content:center; margin-top:14px;"><button class="btn btn-signal" id="fsRetry">Try again</button><button class="btn btn-ghost" id="fsSkip">Open anyway</button></div></div>`;
+  document.body.appendChild(ov);
+  window.onSyncProgress = n=>{ const m = document.getElementById('fsMsg'); if(m) m.textContent = `Loaded ${n.toLocaleString()} records…`; };
+  try{
+    let skip = false;
+    while(!(await has()) && !skip){
+      await syncNow();
+      if(await has()) break;
+      const m = document.getElementById('fsMsg'); if(m) m.textContent = navigator.onLine===false ? 'No connection right now.' : "Couldn't reach the server.";
+      document.getElementById('fsActions').style.display = 'flex'; ov.classList.add('stalled');
+      await new Promise(res=>{ document.getElementById('fsRetry').onclick = ()=>{ ov.classList.remove('stalled'); document.getElementById('fsActions').style.display='none'; if(m) m.textContent='Trying again…'; res(); };
+                               document.getElementById('fsSkip').onclick = ()=>{ skip = true; res(); }; });
+    }
+  } finally { window.onSyncProgress = null; ov.remove(); }
+}
+
 /* ------------------------------- boot ------------------------------- */
 (async function boot(){
   await seedSyncConfigIfEmpty(); // pre-fills the connection from js/config.js (public client settings) when this device has none
   async function startApp(){
     if(DEMO_MODE){ await loadDemoData(); await seedDemoData(); }   // sample data exists only in demo mode
+    await firstSyncIfNeeded();
     await migrateSuppliers();
     await loadAndApplyTheme();
     await loadMyPerms(); applyNavPermissions(); await loadFeatureFlags(); AUDIT_ON = true;
