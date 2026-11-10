@@ -14,7 +14,7 @@ function invoiceLinesFromItems(items, byProd, basis){
     const q = Dec.parse(qty); if(!q || Dec.cmp(q, Dec.ZERO)<=0) return;
     const p = productId ? byProd.get(productId) : null;
     lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
-      cost:(p&&p.costPrice)||'', sell:(p&&p.sellPrice)||'', price:(p ? (basis==='cost'?p.costPrice:p.sellPrice) : '')||'',
+      cost:(p&&seesCost()&&p.costPrice)||'', sell:(p&&seesSell()&&p.sellPrice)||'', price:(p ? (basis==='cost'?(seesCost()&&p.costPrice):(seesSell()&&p.sellPrice)) : '')||'',
       priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
       discType:'', disc:'', include:true, substituted:it.status==='substituted',
       ordered:it.excelDesc||'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : ''});
@@ -195,7 +195,7 @@ async function invoiceOrderScreen(orderId){
   $('#main').querySelectorAll('[data-mk]').forEach(b=>b.onclick=async ()=>{
     const t = b.dataset.mk;
     const inv = {id:uid(), number:'', status:'draft', orderId:order.id, orderType:t, vessel:order.vessel, code:order.imo||'', orderNumber:order.orderNumber,
-      priceBasis:'sell', taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'', roundMode:co.roundMode||'ask',
+      priceBasis:(seesSell()?'sell':'cost'), taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'', roundMode:co.roundMode||'ask',
       lines: invoiceLinesFromItems(items.filter(it=>(it.orderType||'Provision')===t), byProd, 'sell'), createdAt:new Date().toISOString()};
     await put('invoices', inv); location.hash = '#/invoice/'+inv.id;
   });
@@ -241,7 +241,7 @@ async function invoiceScreen(id){
       <p class="subtle" style="margin-top:-10px;">${esc(inv.vessel)} · ${esc(inv.code||inv.orderNumber||'')} — draft, nothing is final until you issue it. Quantities are as picked; prices are exact, never rounded.</p>
       <div class="card" style="margin-bottom:14px;">
         <div class="row2">
-          <div class="field"><label>Price to use</label><div class="tag-row"><button class="chip ${inv.priceBasis==='sell'?'active':''}" data-b="sell">Sell price</button><button class="chip ${inv.priceBasis==='cost'?'active':''}" data-b="cost">Cost price</button></div></div>
+          <div class="field"><label>Price to use</label><div class="tag-row">${seesSell()?`<button class="chip ${inv.priceBasis==='sell'?'active':''}" data-b="sell">Sell price</button>`:''}${seesCost()?`<button class="chip ${inv.priceBasis==='cost'?'active':''}" data-b="cost">Cost price</button>`:''}</div></div>
           <div class="field"><label>Invoice date</label><input type="date" id="iv_date" value="${esc(inv.invoiceDate)}"></div>
         </div>
         <div class="row2">

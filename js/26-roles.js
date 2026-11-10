@@ -27,7 +27,8 @@ const PERM_GROUPS = [
     ['splitter','Order Splitter',''],
     ['qcheck','Quantity Check','']]},
   {g:'Money', items:[
-    ['prices.view','See costs, markup and prices','Everywhere: products, Product Table, price sheets'],
+    ['prices.sell','See sell prices','Products, Product Table, Excel export, invoices'],
+    ['prices.cost','See cost prices and markup','Hidden from this person everywhere when not ticked, including Excel files'],
     ['prices.edit','Change prices',''],
     ['invoices.view','See invoices',''],
     ['invoices.edit','Create & edit invoices',''],
@@ -66,17 +67,21 @@ function can(perm){
   if(!AUTH) return false;
   if(isFullAdmin()) return true;
   if(perm==='__admin') return false;
+  if(perm==='prices.view') return can('prices.sell') || can('prices.cost');     // sees at least some price
   return !!(MY_PERMS && MY_PERMS.has(perm));
 }
 function canAny(list){ return list.some(can); }
 function routeAllowed(key){ const need = ROUTE_PERMS[key]; return !need || canAny(need); }
 
+/* roles saved before sell/cost were separate carry 'prices.view' = both */
+const expandPerms = list=>{ const s = new Set(list); if(s.has('prices.view')){ s.add('prices.sell'); s.add('prices.cost'); } return s; };
+const seesSell = ()=>can('prices.sell'), seesCost = ()=>can('prices.cost'), seesBothPrices = ()=>can('prices.sell') && can('prices.cost');
 async function loadMyPerms(){
   try{ const cfg = await getSyncConfig(); ACTOR_NAME = (cfg && cfg.crewName) || ''; }catch(e){}
   if(!AUTH || isFullAdmin()){ MY_PERMS = null; return; }
-  if(!AUTH.roleId){ MY_PERMS = new Set(LEGACY_STAFF_PERMS); return; }
+  if(!AUTH.roleId){ MY_PERMS = expandPerms(LEGACY_STAFF_PERMS); return; }
   const r = await getOne('roles', AUTH.roleId);
-  MY_PERMS = new Set(r && Array.isArray(r.perms) ? r.perms : []);
+  MY_PERMS = expandPerms(r && Array.isArray(r.perms) ? r.perms : []);
 }
 function applyNavPermissions(){
   document.querySelectorAll('.navlink').forEach(a=>{
@@ -107,7 +112,7 @@ async function refreshPerms(){
   const before = MY_PERMS ? [...MY_PERMS].sort().join() : '';
   await loadMyPerms();
   const after = MY_PERMS ? [...MY_PERMS].sort().join() : '';
-  if(before!==after){ applyNavPermissions(); if(typeof render==='function') render(); }
+  if(before!==after){ if(typeof PRICES_SPLIT!=='undefined' && PRICES_SPLIT) await applyAllStashedPrices(); applyNavPermissions(); if(typeof render==='function') render(); }
 }
 
 /* the product form: prices hidden without "see prices"; fields locked unless the role may change them */
@@ -116,12 +121,15 @@ function applyProductFormPerms(){
   const box = document.querySelector('.pr-box'), saveBtn = document.getElementById('f_save'); if(!saveBtn) return;
   const fields = [...document.querySelectorAll('#f_name, input[id^="f_"], select[id^="f_"], textarea[id^="f_"]')].filter(el=>el.id!=='f_save' && el.id!=='f_cancel');
   const pe = can('products.edit'), se = can('stock.edit'), pre = can('prices.edit');
+  const hide = id=>{ const el = document.getElementById(id); const w = el && el.closest('.field'); if(w) w.style.display = 'none'; };
+  if(!seesCost()){ hide('f_cost'); hide('f_markup'); }
+  if(!seesSell()) hide('f_sell');
   fields.forEach(el=>{
-    const ok = priceIds.includes(el.id) ? (can('prices.view') && pre) : stockIds.includes(el.id) ? se : pe;
+    const ok = priceIds.includes(el.id) ? (can('prices.edit') && seesBothPrices()) : stockIds.includes(el.id) ? se : pe;
     if(!ok){ el.disabled = true; }
   });
   if(box && !can('prices.view')) box.style.display = 'none';
-  if(!(pe || se || (pre && can('prices.view')))) saveBtn.style.display = 'none';
+  if(!(pe || se || (pre && seesBothPrices()))) saveBtn.style.display = 'none';
 }
 
 /* ------------------------------------ activity log ------------------------------------ */
@@ -194,7 +202,7 @@ route('activity', async ()=>{
   const all = (await getAll('activity')).sort((a,b)=>a.at<b.at?1:-1);
   const people = [...new Set(all.map(a=>a.by).filter(Boolean))].sort();
   let kind = '', who = '', q = '', shown = 150;
-  const showMoney = can('prices.view');
+  const showMoney = seesBothPrices();
   $('#main').innerHTML = `<div class="topbar"><h1>Activity</h1></div>
     <p class="subtle" style="margin-top:-8px;">Who did what, newest first. Everything that changes stock, prices, products, orders, invoices and setup is recorded here with the person's name.</p>
     <div class="pt-tools"><input type="search" id="ac_q" placeholder="Search products, orders…" autocomplete="off"><select id="ac_who"><option value="">Everyone</option>${people.map(p=>`<option>${esc(p)}</option>`).join('')}</select></div>
@@ -247,7 +255,7 @@ route('team', async ()=>{
     showModal(`<h3>${isNew?'New role':'Edit role'}</h3>
       <div class="field"><label>Role name</label><input type="text" id="rl_name" placeholder="e.g. Receiving, Invoices, Reports" value="${esc(r.name)}"></div>
       ${isNew ? `<div class="field"><label>Start from</label><select id="rl_tpl"><option value="">Nothing ticked</option>${Object.keys(ROLE_TEMPLATES).map(t=>`<option>${t}</option>`).join('')}</select></div>` : ''}
-      <div id="rl_perms" style="max-height:48vh; overflow:auto; padding-right:4px;">${permPickerHtml(new Set(r.perms))}</div>
+      <div id="rl_perms" style="max-height:48vh; overflow:auto; padding-right:4px;">${permPickerHtml(expandPerms(r.perms))}</div>
       <div style="display:flex; gap:10px; margin-top:12px;"><button class="btn btn-signal" id="rl_save" style="flex:1;">Save role</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
     const boxes = ()=>[...document.querySelectorAll('[data-perm]')];
     if($('#rl_tpl')) $('#rl_tpl').onchange = e=>{ const set = new Set(ROLE_TEMPLATES[e.target.value]||[]); boxes().forEach(b=>b.checked = set.has(b.dataset.perm)); if(e.target.value && !$('#rl_name').value) $('#rl_name').value = e.target.value; };

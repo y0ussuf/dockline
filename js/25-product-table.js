@@ -45,10 +45,10 @@ const PT_PRICE_COLS = new Set(['cost','markup','sell','ref','perunit','updated']
 /* when a product's price last changed: the newest price-history entry (null = it has a price but no recorded change) */
 const ptLastPriceAt = p=>{ const h = p.priceHistory; return h && h.length ? h[h.length-1].at : null; };
 const PT_SOURCE = from=> !from ? '' : from==='edit' ? 'Product form' : from==='product table' ? 'Product Table' : /^sheet /.test(from) ? 'Price sheet · '+from.slice(6) : from;
-const ptColOk = c => !PT_PRICE_COLS.has(c.k) || can('prices.view');
+const ptColOk = c => !PT_PRICE_COLS.has(c.k) || (c.k==='cost' ? seesCost() : c.k==='sell'||c.k==='perunit' ? seesSell() : c.k==='markup' ? seesBothPrices() : can('prices.view'));
 /* may this person change this field here? (fields are locked, not hidden, when they may only look) */
 function ptCanEdit(f){
-  if(f==='costPrice'||f==='sellPrice'||f==='priceRef'||f==='__markup') return can('prices.edit') && can('prices.view');
+  if(f==='costPrice'||f==='sellPrice'||f==='priceRef'||f==='__markup') return can('prices.edit') && seesBothPrices();
   if(f==='stockQty'||f==='lowStockLimit') return can('stock.edit');
   return can('products.edit');
 }
@@ -82,7 +82,7 @@ route('table', async ()=>{
   const markupOf = p=> Dec.markupText(eff(p,'costPrice'), eff(p,'sellPrice'));
   const decOk = t=> t==='' || !!Dec.parse(t);
   const flags = p=>{
-    if(!can('prices.view')) return [];
+    if(!seesBothPrices()) return [];
     const c = Dec.parse(eff(p,'costPrice')), s = Dec.parse(eff(p,'sellPrice')), out = [];
     if(!c && !s) out.push('No price yet'); else if(!c) out.push('No cost price'); else if(!s) out.push('No sell price');
     if(c && s && Dec.cmp(s,c)<0) out.push('Sell price is below cost');
@@ -99,8 +99,8 @@ route('table', async ()=>{
       if(filter==='inactive' && eff(p,'active')!==false) return false;
       if(nq && !normalize(p.name).includes(nq)) return false;
       if(supFilter && eff(p,'supplierId')!==supFilter) return false;
-      if(filter==='noprice'){ const f = flags(p); if(!f.some(x=>/No (cost|sell )?price/.test(x))) return false; }
-      else if(filter==='hasprice'){ if(!(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice')))) return false; }
+      if(filter==='noprice'){ if(seesBothPrices()){ const f = flags(p); if(!f.some(x=>/No (cost|sell )?price/.test(x))) return false; } else if((seesSell() && Dec.parse(eff(p,'sellPrice'))) || (seesCost() && Dec.parse(eff(p,'costPrice')))) return false; }
+      else if(filter==='hasprice'){ if(!((!seesCost() || Dec.parse(eff(p,'costPrice'))) && (!seesSell() || Dec.parse(eff(p,'sellPrice'))))) return false; }
       else if(filter==='below'){ if(!flags(p).some(x=>/below cost/.test(x))) return false; }
       else if(filter==='stale'){ if(!isStale(p)) return false; }
       else if(filter==='low'){ if(!isLowStock(stockP(p))) return false; }
@@ -168,10 +168,10 @@ route('table', async ()=>{
       ${cols().map(c=>`<th>${sortable.has(c.k)?`<button data-sort="${c.k}">${c.label} ${sortK===c.k?ico(sortDir>0?'chevron-up':'chevron-down'):''}</button>`:c.label}</th>`).join('')}</tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
   }
-  const FILTERS = [['all','All']].concat(can('prices.view') ? [['hasprice','Has price'],['noprice','No price'],['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
+  const FILTERS = [['all','All']].concat(can('prices.view') ? [['hasprice','Has price'],['noprice','No price']] : []).concat(seesBothPrices() ? [['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Product Table</h1>
-      <div class="tb-actions">${can('prices.edit') ? '<button class="btn btn-ghost" id="pt_import">⬆ Import prices</button>' : ''}<button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button><button class="btn btn-ghost" id="pt_hist">🕘 History</button></div></div>
+      <div class="tb-actions">${can('prices.edit') ? '<button class="btn btn-ghost" id="pt_import">⬆ Import prices</button>' : ''}<button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button>${seesBothPrices() ? '<button class="btn btn-ghost" id="pt_hist">🕘 History</button>' : ''}</div></div>
     <p class="subtle" style="margin-top:-8px;">Every product's facts in one table. Type in a cell and press <b>Enter</b> to go to the next row. Changes are highlighted and only saved when you tap <b>Save</b>. Prices are kept exactly as typed.</p>
     <div class="pt-tools"><input type="search" id="pt_q" placeholder="Search products…" autocomplete="off">
       <select id="pt_sup"><option value="">All suppliers</option>${suppliers.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
@@ -358,7 +358,7 @@ route('table', async ()=>{
     }catch(err){ showAlert('Saving did not finish: '+(err.message||err)); btn.disabled = false; btn.textContent = 'Save'; }
   };
   const fmtVal = (f,v)=> f==='priceRef' ? (ptRefText(v)||'—') : f==='supplierId' ? ((supById.get(v)||{}).name || '—') : f==='active' ? (v===false?'off':'on') : (v===''||v==null ? '—' : v);
-  $('#pt_hist').onclick = async ()=>{
+  const hb0 = $('#pt_hist'); if(hb0) hb0.onclick = async ()=>{
     const store = await getOne('sharedSettings','tableLog'), entries = (store && store.entries || []).slice(0, 25);
     showModal(`<h3>Recent changes</h3><div style="max-height:60vh; overflow:auto;">${entries.length ? entries.map(en=>`<div class="pt-h ${en.undone?'undone':''}">
       <div style="display:flex; gap:8px; align-items:center;"><b style="flex:1;">${fmtDate(en.at.slice(0,10))} · ${esc(en.by||'')} · ${en.items.length} product${en.items.length===1?'':'s'}${en.undone?' <span class="subtle">(undone)</span>':''}</b>${en.undone?'':`<button class="btn btn-ghost btn-sm" data-pt-undo="${en.id}">Undo</button>`}</div>
