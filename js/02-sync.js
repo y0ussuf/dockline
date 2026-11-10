@@ -42,6 +42,41 @@ function syncHeaders(cfg){
 }
 function syncBaseUrl(cfg){ return cfg.url.replace(/\/+$/,''); }
 
+/* ---- prices live in their own store ('productPrices', one record per product) so the database can show them only to
+   roles that may see prices. Locally the app is unchanged: every product still carries costPrice / sellPrice / priceRef /
+   priceHistory. The switch-over is a flag in the shared data (sharedSettings 'features'.pricesSplit), set by the database
+   step r03 — until then products keep their embedded prices and productPrices is only a mirror, so this is safe to ship first. */
+const PRICE_FIELDS = ['costPrice','sellPrice','priceRef','priceHistory'];
+let PRICES_SPLIT = false;
+const seesPricesNow = ()=> typeof MY_PERMS==='undefined' || MY_PERMS===null || (typeof can==='function' && can('prices.view'));
+const stripPrices = o=>{ const d = Object.assign({}, o); PRICE_FIELDS.forEach(f=>{ delete d[f]; }); return d; };
+async function loadFeatureFlags(){
+  const f = await getOne('sharedSettings','features'), was = PRICES_SPLIT;
+  PRICES_SPLIT = !!(f && f.pricesSplit);
+  if(PRICES_SPLIT && !was) await applyAllStashedPrices();
+}
+/* put the stored prices record of one product onto the local product (never over an edit that hasn't been sent yet) */
+async function applyStashedPrices(id){
+  const st = await getOne('settings','pp:'+id), p = await getOne('products', id);
+  if(!p || !st || await getOne('syncQueue','products:'+id)) return;
+  const q = seesPricesNow() && !st.deleted ? st.data : null;
+  const next = stripPrices(p); if(q) PRICE_FIELDS.forEach(f=>{ if(q[f]!==undefined) next[f] = q[f]; });
+  if(JSON.stringify(next)!==JSON.stringify(p)) await rawPut('products', next);
+}
+async function applyAllStashedPrices(){
+  const seen = new Set();
+  for(const r of await getAll('settings')){ if(r.id && r.id.startsWith('pp:')){ seen.add(r.id.slice(3)); await applyStashedPrices(r.id.slice(3)); } }
+  if(!seesPricesNow()){   // someone who may not see prices keeps none on the device
+    for(const p of await getAll('products')) if(PRICE_FIELDS.some(f=>p[f]!==undefined) && !(await getOne('syncQueue','products:'+p.id))) await rawPut('products', stripPrices(p));
+  }
+}
+async function pushPriceRow(cfg, obj, now){
+  if(!(typeof can==='function' && can('prices.edit') && can('prices.view'))) return;      // only people who may change prices send them
+  if(!PRICE_FIELDS.some(f=>obj[f]!==undefined)) return;
+  const data = {id:obj.id}; PRICE_FIELDS.forEach(f=>{ if(obj[f]!==undefined) data[f] = obj[f]; });
+  try{ await postRecordRows(cfg, [{store:'productPrices', id:obj.id, data, deleted:false, updated_at:now, updated_by:cfg.crewName||''}]); }
+  catch(e){ if(PRICES_SPLIT || (e && e.code==='unauthorized')) throw e; }                   // before the switch-over it is only a mirror: never block the real save
+}
 async function pushChanges(cfg){
   const queued = await getAll('syncQueue');
   let pushed = 0;
@@ -53,7 +88,8 @@ async function pushChanges(cfg){
     } else {
       const obj = await getOne(q.store, q.id);
       if(!obj){ await rawDel('syncQueue', q.key); continue; }
-      body = {store:q.store, id:q.id, data:obj, deleted:false, updated_at:now, updated_by:cfg.crewName||''};
+      if(q.store==='products') await pushPriceRow(cfg, obj, now);
+      body = {store:q.store, id:q.id, data:(q.store==='products' && PRICES_SPLIT) ? stripPrices(obj) : obj, deleted:false, updated_at:now, updated_by:cfg.crewName||''};
     }
     const res = await fetch(syncBaseUrl(cfg)+'/records?on_conflict=store,id', {
       method:'POST', headers:Object.assign(syncHeaders(cfg),{'Prefer':'resolution=merge-duplicates,return=minimal'}),
@@ -143,6 +179,11 @@ async function pullChanges(cfg){
         }
         pulled++; continue;
       }
+      if(row.store==='productPrices'){      // kept aside; applied to the product once the switch-over flag is on
+        await rawPut('settings', {id:'pp:'+row.id, data:row.data, deleted:!!row.deleted, at:row.updated_at});
+        if(PRICES_SPLIT) await applyStashedPrices(row.id);
+        pulled++; continue;
+      }
       const key = row.store+':'+row.id;
       const pendingLocal = await getOne('syncQueue', key);
       if(pendingLocal) continue; // we have our own unpushed edit — let it win when it goes out
@@ -150,7 +191,15 @@ async function pullChanges(cfg){
       if(metaRec && metaRec.updatedAt >= row.updated_at) continue; // already applied this or newer
       if(SYNC_TABLES.includes(row.store)){
         if(row.deleted) await rawDel(row.store, row.id);
-        else { const data = Object.assign({}, row.data, {id:row.id}); await rawPut(row.store, data); }
+        else {
+          const data = Object.assign({}, row.data, {id:row.id});
+          if(row.store==='products' && PRICES_SPLIT){      // after the switch-over a products record carries no prices: keep what this device has, or what productPrices says
+            const ex = await getOne('products', row.id); PRICE_FIELDS.forEach(f=>{ delete data[f]; });
+            if(ex && seesPricesNow()) PRICE_FIELDS.forEach(f=>{ if(ex[f]!==undefined) data[f] = ex[f]; });
+          }
+          await rawPut(row.store, data);
+          if(row.store==='products' && PRICES_SPLIT) await applyStashedPrices(row.id);
+        }
       }
       await rawPut('syncMeta', {key, store:row.store, id:row.id, updatedAt:row.updated_at});
       pulled++;
@@ -176,6 +225,7 @@ async function syncNow(){
     await pushChanges(cfg);
     await pushHistory(cfg);
     await pullChanges(cfg);
+    await loadFeatureFlags();
     if(typeof refreshPerms==='function') await refreshPerms();
     await rawPut('settings', {id:'syncStatus', lastSyncedAt:new Date().toISOString(), ok:true, error:null});
     renderSyncIndicator('ok');
