@@ -155,10 +155,11 @@ route('prices', async ()=>{
       const todo = rows.filter(r=>r.include && r.productId && !same(r));
       const over = todo.filter(r=>{ const p = prodById.get(r.productId); return p && (p.costPrice||p.sellPrice); }).length;
       const btn = $('#pr_apply'); btn.disabled = true; btn.textContent = 'Saving…';
-      const used = new Set(); let saved = 0;
+      const used = new Set(); let saved = 0; const changes = [];
       const keys = new Set((await getAll('mappings')).map(m=>m.excelDescNormalized));
       for(const r of todo){
         const p = await getOne('products', r.productId); if(!p) continue;
+        changes.push({name:p.name, oc:p.costPrice, os:p.sellPrice, nc:r.cost, ns:r.sell});
         p.costPrice = r.cost; p.sellPrice = r.sell; p.priceRef = r.ref || null;
         p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:r.cost, sell:r.sell, ref:r.ref||null, from:'sheet '+state.fileName}].slice(-50);
         await put('products', p); prodById.set(p.id, p); saved++;
@@ -167,9 +168,36 @@ route('prices', async ()=>{
       }
       if(typeof syncNow==='function') syncNow();
       state.rows = null;
-      showAlert(`${saved} price${saved===1?'':'s'} saved${over?` (${over} replaced an earlier price — the old one is kept in the product's price history)`:''}.`, 'Done');
-      draw();
+      priceImportSummary(changes, over, state.fileName);
     };
   }
   draw();
 });
+
+/* what an import just did: how many prices went up / down / are new, the biggest moves and anything now sold below cost (all exact, nothing rounded) */
+function priceImportSummary(changes, replaced, fileName){
+  const D = v=>Dec.parse(v), f = v=>{ const d = D(v); return d ? Dec.fmt(d, 2) : '—'; };
+  const diff = c=>{ const o = D(c.os), n = D(c.ns); return (o && n) ? Dec.sub(n, o) : null; };
+  const isNew = c=>!D(c.oc) && !D(c.os);
+  const ups = [], downs = [], below = []; let same = 0, fresh = 0;
+  for(const c of changes){
+    if(isNew(c)){ fresh++; }
+    else { const d = diff(c); if(!d || d.n===0n){ if(D(c.oc) && D(c.nc) && Dec.cmp(D(c.oc), D(c.nc))!==0) { /* only the cost moved */ } same++; } else (d.n>0n ? ups : downs).push({c, d}); }
+    if(D(c.ns) && D(c.nc) && Dec.cmp(D(c.ns), D(c.nc))<0) below.push(c);
+  }
+  const abs = d=>d.n<0n ? {n:-d.n, s:d.s} : d;
+  ups.sort((a,b)=>Dec.cmp(abs(b.d), abs(a.d))); downs.sort((a,b)=>Dec.cmp(abs(b.d), abs(a.d)));
+  const line = x=>`<div class="subtle" style="padding:3px 0;"><b>${esc(x.c.name)}</b> · sell ${f(x.c.os)} → ${f(x.c.ns)}</div>`;
+  showModal(`<h3>Prices saved</h3>
+    <p style="margin-top:-6px;"><b>${changes.length}</b> price${changes.length===1?'':'s'} saved from ${esc(fileName||'the sheet')}${replaced?` — ${replaced} replaced an earlier price (kept in the product's price history)`:''}.</p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin:10px 0;">
+      <span class="badge">${fresh} new</span><span class="badge">▲ ${ups.length} up</span><span class="badge">▼ ${downs.length} down</span><span class="badge">${same} sell price unchanged</span></div>
+    <div style="max-height:44vh; overflow:auto;">
+      ${ups.length?`<div><b>Biggest increases</b>${ups.slice(0,5).map(line).join('')}</div>`:''}
+      ${downs.length?`<div style="margin-top:8px;"><b>Biggest decreases</b>${downs.slice(0,5).map(line).join('')}</div>`:''}
+      ${below.length?`<div style="margin-top:8px;"><b>⚠ Sold below cost (${below.length})</b>${below.slice(0,8).map(c=>`<div class="subtle" style="padding:3px 0;"><b>${esc(c.name)}</b> · cost ${f(c.nc)}, sell ${f(c.ns)}</div>`).join('')}${below.length>8?`<div class="subtle">…and ${below.length-8} more — see the “Below cost” filter in the Product Table.</div>`:''}</div>`:''}
+    </div>
+    <div style="display:flex; gap:10px; margin-top:14px;"><button class="btn btn-signal" style="flex:1;" id="pi_table">Open Product Table</button><button class="btn btn-ghost" id="pi_more">Import another</button></div>`);
+  $('#pi_table').onclick = ()=>{ closeModal(); location.hash = '#/table'; };
+  $('#pi_more').onclick = ()=>{ closeModal(); routes['prices']([]); };
+}
