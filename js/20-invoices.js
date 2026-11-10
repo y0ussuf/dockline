@@ -16,7 +16,8 @@ function invoiceLinesFromItems(items, byProd, basis){
     lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
       cost:(p&&p.costPrice)||'', sell:(p&&p.sellPrice)||'', price:(p ? (basis==='cost'?p.costPrice:p.sellPrice) : '')||'',
       priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
-      discType:'', disc:'', include:true, substituted:it.status==='substituted'});
+      discType:'', disc:'', include:true, substituted:it.status==='substituted',
+      ordered:it.excelDesc||'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : ''});
   };
   for(const it of items){
     if(it.status==='not_available' || it.status==='pending' || it.status==='unmatched') continue;
@@ -83,6 +84,7 @@ function invoiceTotals(inv){
 function lineIssues(l, inv, calc){
   const w = [];
   if(!l.include) return w;
+  if(l.doubt && !l.doubtOk) w.push('Check match');
   if(l.price==='' || !Dec.parse(l.price)){ w.push('No price'); return w; }
   if(Dec.cmp(dm(l.price), Dec.ZERO)===0) w.push('Price is 0');
   calc = calc || lineCalc(l, l.price, inv.roundMode);
@@ -232,7 +234,7 @@ async function invoiceScreen(id){
     }
     const t = invoiceTotals(inv), co = null;
     const issues = inv.lines.map((l,i)=>lineIssues(l, inv, t.rows[i].calc));
-    const BLOCK = ['No price','Size needed','Unit not comparable','Does not divide exactly'];
+    const BLOCK = ['Check match','No price','Size needed','Unit not comparable','Does not divide exactly'];
     const blocking = inv.lines.some((l,i)=>l.include && issues[i].some(m=>BLOCK.some(b=>m.startsWith(b))));
     $('#main').innerHTML = `
       <div class="topbar"><h1>${esc(inv.orderType)} invoice</h1>${invBadge('draft')}</div>
@@ -250,6 +252,7 @@ async function invoiceScreen(id){
       <div id="iv_lines">${inv.lines.map((l,i)=>`
         <div class="iv-line ${l.include?'':'off'}" data-i="${i}">
           <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)}</span></div>
+          ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : (l.include && l.ordered && normalize(l.ordered)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Ordered as “${esc(l.ordered)}”</div>` : '')}
           ${l.include ? `<div class="iv-grid">
             <div class="field"><label>${l.ref?`Price per ${esc(l.ref.qty)} ${esc(l.ref.unit)}`:'Unit price'}</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
             <div class="field"><label>Discount</label><div style="display:flex; gap:6px;"><select data-dt="${i}" style="width:84px;"><option value="">none</option><option value="pct" ${l.discType==='pct'?'selected':''}>%</option><option value="amt" ${l.discType==='amt'?'selected':''}>EGP</option></select><input type="text" inputmode="decimal" data-d="${i}" value="${esc(l.disc)}" ${l.discType?'':'disabled'}></div></div>
@@ -263,7 +266,7 @@ async function invoiceScreen(id){
         </div>`).join('')}</div>
       <div class="card iv-sum"><div><span>Subtotal</span><b>${money(t.sub)}</b></div><div><span>Discount</span><b>- ${money(t.disc)}</b></div>${inv.taxOn?`<div><span>${esc(inv.taxLabel||'Tax')} (${esc(inv.taxRate)}%)</span><b>${money(t.tax)}</b></div>`:''}<div class="grand"><span>Total (EGP)</span><b>${money(t.total)}</b></div></div>
       <div class="field" style="margin-top:14px;"><label>Notes &amp; terms</label><textarea id="iv_notes" rows="2">${esc(inv.notes)}</textarea></div>
-      <div class="pr-bar"><button class="btn btn-ghost btn-sm" id="iv_del">Delete draft</button><button class="btn btn-signal" id="iv_issue" ${blocking?'disabled':''}>${blocking?'Set every price to issue':'Issue invoice'}</button></div>`;
+      <div class="pr-bar"><button class="btn btn-ghost btn-sm" id="iv_del">Delete draft</button><button class="btn btn-signal" id="iv_issue" ${blocking?'disabled':''}>${blocking?'Fix the flagged lines to issue':'Issue invoice'}</button></div>`;
     $('#main').querySelectorAll('[data-b]').forEach(b=>b.onclick=async ()=>{
       inv.priceBasis = b.dataset.b;
       inv.lines.forEach(l=>{ l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || ''; });
@@ -273,6 +276,7 @@ async function invoiceScreen(id){
       const [act, i] = b.dataset.ok.split(':'), l = inv.lines[+i];
       if(act==='size'){ const v = $(`[data-size="${i}"]`).value.trim(); if(!parseMeasure(v)){ showAlert('Write the size like 350 ml, 500 gm or 1 kg.'); return; } l.sizeOverride = v; }
       if(act==='piece') l.perPiece = true;
+      if(act==='doubt') l.doubtOk = true;
       if(act==='uo'){ const v = $(`[data-uo="${i}"]`).value.trim(); if(!Dec.parse(v)){ showAlert('Enter a plain number, like 116.67.'); return; } l.unitOverride = Dec.str(Dec.parse(v)); }
       if(act==='clear'){ delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; }
       await save(); draw();

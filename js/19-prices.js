@@ -164,7 +164,7 @@ route('prices', async ()=>{
         p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:r.cost, sell:r.sell, ref:r.ref||null, from:'sheet '+state.fileName}].slice(-50);
         await put('products', p); prodById.set(p.id, p); saved++;
         const k = normalize(r.name);
-        if(r.learn && k && !keys.has(k) && normalize(p.name)!==k){ await put('mappings', {id:uid(), excelDescNormalized:k, label:r.name, productId:p.id}); keys.add(k); }
+        if(r.learn && k && !keys.has(k) && normalize(p.name)!==k){ await put('mappings', mapStamp({id:uid(), excelDescNormalized:k, label:r.name, productId:p.id, productName:p.name})); keys.add(k); }
       }
       if(typeof syncNow==='function') syncNow();
       state.rows = null;

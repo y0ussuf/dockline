@@ -388,8 +388,8 @@ async function matchScreen(orderId){
         <button class="btn btn-ghost" id="mp_no">Just this once</button>
       </div>`);
     $('#mp_yes').onclick = async ()=>{
-      await put('mappings', {id:uid(), excelDescNormalized: normalize(it.excelDesc), label: it.excelDesc, productId: it.productId});
-      closeModal(); draw();
+      closeModal();
+      await saveMappingSafe({id:uid(), excelDescNormalized: normalize(it.excelDesc), label: it.excelDesc, productId: it.productId, productName: it.productName}, it.productName, ()=>draw());
     };
     $('#mp_no').onclick = ()=>{ closeModal(); draw(); };
   }

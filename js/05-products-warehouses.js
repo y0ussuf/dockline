@@ -345,14 +345,13 @@ async function openAliasManager(product){
       if(clash){
         const otherProduct = await getOne('products', clash.productId);
         showConfirm(`"${raw}" is currently mapped to "${otherProduct?otherProduct.name:'another product'}". Point it to "${product.name}" instead?`, async ()=>{
-          clash.productId = product.id; clash.label = raw;
-          await put('mappings', clash);
-          draw();
+          clash.productId = product.id; clash.label = raw; clash.productName = product.name; delete clash.reviewedAt;
+          await saveMappingSafe(clash, product.name, ()=>draw());
         }, {onNo: draw});
         return;
       } else {
         const dup = all.find(m=>m.excelDescNormalized===norm && m.productId===product.id);
-        if(!dup) await put('mappings', {id:uid(), excelDescNormalized:norm, label:raw, productId:product.id});
+        if(!dup){ await saveMappingSafe({id:uid(), excelDescNormalized:norm, label:raw, productId:product.id, productName:product.name}, product.name, ()=>draw()); return; }
       }
       draw();
     };

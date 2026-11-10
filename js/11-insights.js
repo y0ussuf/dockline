@@ -826,7 +826,7 @@ async function historyMatchScreen(keep){
     const have = keySet ? keySet.has(key) : (await getAll('mappings')).some(m=>m.excelDescNormalized===key);
     if(!have){
       const g = groups.get(key) || leftOut.get(key);
-      await put('mappings', {id:uid(), excelDescNormalized:key, label:g?g.desc:key, productId:product.id});
+      await put('mappings', mapStamp({id:uid(), excelDescNormalized:key, label:g?g.desc:key, productId:product.id, productName:product.name}));
       if(keySet) keySet.add(key);
     }
     const fresh = await freshLines(key);
