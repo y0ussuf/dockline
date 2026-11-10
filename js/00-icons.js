@@ -32,7 +32,7 @@ function ico(name){ return ICON_PATHS[name] ? `<svg class="i i-${name}" viewBox=
   }
   let queue = new Set(), scheduled = false;
   function flush(){ scheduled = false; const q = queue; queue = new Set(); q.forEach(n=>{ if(n.isConnected) iconize(n); }); }
-  function enqueue(n){ queue.add(n); if(!scheduled){ scheduled = true; (window.requestAnimationFrame||setTimeout)(flush); } }
+  function enqueue(n){ const el = n.nodeType===1 ? n : n.parentElement; if(el && el.closest && el.closest('[data-noicon]')) return; queue.add(n); if(!scheduled){ scheduled = true; (window.requestAnimationFrame||setTimeout)(flush); } }
   new MutationObserver(ms=>{ for(const m of ms){ if(m.type==='characterData') enqueue(m.target); else m.addedNodes.forEach(n=>{ if(n.nodeType===1||n.nodeType===3) enqueue(n); }); } })
     .observe(document.documentElement, {childList:true, subtree:true, characterData:true});
   if(document.body) iconize(document.body); else document.addEventListener('DOMContentLoaded', ()=>iconize(document.body));

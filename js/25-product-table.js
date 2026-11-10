@@ -100,6 +100,7 @@ route('table', async ()=>{
       if(nq && !normalize(p.name).includes(nq)) return false;
       if(supFilter && eff(p,'supplierId')!==supFilter) return false;
       if(filter==='noprice'){ const f = flags(p); if(!f.some(x=>/No (cost|sell )?price/.test(x))) return false; }
+      else if(filter==='hasprice'){ if(!(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice')))) return false; }
       else if(filter==='below'){ if(!flags(p).some(x=>/below cost/.test(x))) return false; }
       else if(filter==='stale'){ if(!isStale(p)) return false; }
       else if(filter==='low'){ if(!isLowStock(stockP(p))) return false; }
@@ -123,8 +124,9 @@ route('table', async ()=>{
         default: return normalize(p.name);
       }
     };
-    list.sort((a,b)=>{ const x = val(a), y = val(b); if(x===y) return normalize(a.name).localeCompare(normalize(b.name)); if(x===null) return 1; if(y===null) return -1; return (x<y?-1:1)*sortDir; });
-    return list;
+    const keyed = list.map(p=>({p, k:val(p), n:normalize(p.name)}));      // work out each sort key once, not on every comparison
+    keyed.sort((a,b)=>{ const x = a.k, y = b.k; if(x===y) return a.n<b.n ? -1 : a.n>b.n ? 1 : 0; if(x===null) return 1; if(y===null) return -1; return (x<y?-1:1)*sortDir; });
+    return keyed.map(o=>o.p);
   }
 
   /* ---- drawing ---- */
@@ -156,17 +158,17 @@ route('table', async ()=>{
   function rowHtml(p){
     const fl = flags(p);
     return `<tr data-row="${p.id}" class="${fl.length?'pt-warn':''} ${eff(p,'active')===false?'pt-off':''}">
-      <td class="pt-name"><div class="pt-nm"><label><input type="checkbox" class="pt-sel-r" data-sel="${p.id}" ${sel.has(p.id)?'checked':''}><span>${esc(p.name)}${fl.length?` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>`:''}</span></label>${can('prices.view') && (p.priceHistory||[]).length ? `<button class="pt-hbtn" data-hist="${p.id}" title="Price history" aria-label="Price history">🕘</button>` : ''}</div></td>
+      <td class="pt-name"><div class="pt-nm"><label><input type="checkbox" class="pt-sel-r" data-sel="${p.id}" ${sel.has(p.id)?'checked':''}><span>${esc(p.name)}${fl.length?` <span class="pt-flag" title="${esc(fl.join(' · '))}">${ico('triangle-alert')}</span>`:''}</span></label>${can('prices.view') && (p.priceHistory||[]).length ? `<button class="pt-hbtn" data-hist="${p.id}" title="Price history" aria-label="Price history">${ico('history')}</button>` : ''}</div></td>
       ${cols().map(c=>cellHtml(p,c)).join('')}</tr>`;
   }
   const sortable = new Set(['updated','unit','supplier','cost','markup','sell','stock','limit','pack']);
   function tableHtml(list){
-    if(!list.length) return '<div class="empty"><div class="ic">▦</div>No products match.</div>';
-    return `<table class="pt"><thead><tr><th class="pt-name"><button data-sort="name">Product ${sortK==='name'?(sortDir>0?'▲':'▼'):''}</button></th>
-      ${cols().map(c=>`<th>${sortable.has(c.k)?`<button data-sort="${c.k}">${c.label} ${sortK===c.k?(sortDir>0?'▲':'▼'):''}</button>`:c.label}</th>`).join('')}</tr></thead>
+    if(!list.length) return `<div class="empty"><div class="ic">${ico('table-2')}</div>No products match.</div>`;
+    return `<table class="pt"><thead><tr><th class="pt-name"><button data-sort="name">Product ${sortK==='name'?ico(sortDir>0?'chevron-up':'chevron-down'):''}</button></th>
+      ${cols().map(c=>`<th>${sortable.has(c.k)?`<button data-sort="${c.k}">${c.label} ${sortK===c.k?ico(sortDir>0?'chevron-up':'chevron-down'):''}</button>`:c.label}</th>`).join('')}</tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
   }
-  const FILTERS = [['all','All']].concat(can('prices.view') ? [['noprice','No price'],['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
+  const FILTERS = [['all','All']].concat(can('prices.view') ? [['hasprice','Has price'],['noprice','No price'],['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Product Table</h1>
       <div class="tb-actions">${can('prices.edit') ? '<button class="btn btn-ghost" id="pt_import">⬆ Import prices</button>' : ''}<button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button><button class="btn btn-ghost" id="pt_hist">🕘 History</button></div></div>
@@ -176,12 +178,14 @@ route('table', async ()=>{
     <div class="tag-row" id="pt_filters"></div>
     <div class="subtle" id="pt_stalenote" hidden style="margin:4px 0;">Products whose price hasn't changed in <select id="pt_stale" style="width:auto; display:inline-block; padding:4px 8px;">${[7,14,30,60,90].map(d=>`<option value="${d}" ${d===staleDays?'selected':''}>${d}</option>`).join('')}</select> days (or has no recorded change).</div>
     <div class="pt-count subtle" id="pt_count"></div>
-    <div class="pt-wrap" id="pt_wrap"></div>
+    <div class="pt-wrap" id="pt_wrap" data-noicon></div>
     <div class="mg-bar pt-bulk" id="pt_bulk" hidden></div>
     <div class="mg-bar pt-save" id="pt_save" hidden></div>`;
 
-  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
-  function drawFilters(){ const c = counts(); setHtml($('#pt_filters'), FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join('')); }
+  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))) c.hasprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
+  let cTimer = null, cDirty = true;
+  function drawFilters(now){ if(!now && !cDirty){ return; } if(!now){ clearTimeout(cTimer); cTimer = setTimeout(()=>drawFilters(true), 150); return; } cDirty = false; const c = counts(); setHtml($('#pt_filters'), FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join('')); }
+  let lastFilterDrawn = null;
   const setHtml = (el, h)=>{ if(el.__h!==h){ el.innerHTML = h; el.__h = h; } };   // same content: leave the buttons alone, or a tap that blurs a cell could miss them
   function drawBars(){
     const n = pending.size, fields = [...pending.values()].reduce((a,m)=>a+Object.keys(m).length, 0);
@@ -191,17 +195,30 @@ route('table', async ()=>{
     const bulk = $('#pt_bulk'); bulk.hidden = !sel.size;
     setHtml(bulk, sel.size ? `<span>${sel.size} selected</span>${canB.markup?'<button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button>':''}${canB.supplier?'<button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button>':''}${canB.limit?'<button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button>':''}<button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
     document.body.classList.toggle('pt-two-bars', !!n && !!sel.size);
-    drawFilters();
+    cDirty = true; drawFilters(filter!==lastFilterDrawn); lastFilterDrawn = filter;
     const sn = $('#pt_stalenote'); if(sn) sn.hidden = filter!=='stale';
   }
-  function draw(keepScroll){
-    const list = rows(), w = $('#pt_wrap'), st = keepScroll ? [w.scrollLeft, w.scrollTop] : null;
-    w.innerHTML = tableHtml(list);
-    w.querySelectorAll('.pt-in, .pt-chk').forEach(el=>{ if(!ptCanEdit(el.dataset.f)) el.disabled = true; }); $('#pt_count').textContent = `${list.length} of ${products.length} products`;
-    if(st){ w.scrollLeft = st[0]; w.scrollTop = st[1]; }
+  /* Only the first rows are drawn; more are added as you scroll (1,300 rows of editable cells is what made the page slow). */
+  const CHUNK = 80; let curList = [], shown = CHUNK;
+  const lockCells = root=>root.querySelectorAll('.pt-in, .pt-chk').forEach(el=>{ if(!ptCanEdit(el.dataset.f)) el.disabled = true; });
+  const countText = ()=>{ $('#pt_count').textContent = `${Math.min(shown, curList.length) < curList.length ? 'Showing '+Math.min(shown, curList.length)+' of ' : ''}${curList.length} product${curList.length===1?'':'s'}${curList.length!==products.length?` (of ${products.length})`:''}`; };
+  function showMore(){
+    if(shown >= curList.length) return false;
+    const tb = $('#pt_wrap tbody'); if(!tb) return false;
+    const from = shown; shown += CHUNK;
+    tb.insertAdjacentHTML('beforeend', curList.slice(from, shown).map(rowHtml).join(''));
+    lockCells(tb); countText(); return true;
+  }
+  function draw(keepScroll, reset){
+    const w = $('#pt_wrap'), st = keepScroll ? [w.scrollLeft, w.scrollTop] : null;
+    curList = rows(); if(reset!==false && !keepScroll) shown = CHUNK;
+    if(keepScroll) shown = Math.max(shown, CHUNK);
+    w.innerHTML = tableHtml(curList.slice(0, shown)); lockCells(w); countText();
+    if(st){ w.scrollLeft = st[0]; w.scrollTop = st[1]; } else { w.scrollTop = 0; }
     drawBars();
   }
   draw();
+  $('#pt_wrap').addEventListener('scroll', ()=>{ const w = $('#pt_wrap'); if(w.scrollHeight - w.scrollTop - w.clientHeight < 600) showMore(); }, {passive:true});
 
   /* ---- editing ---- */
   const wrap = $('#pt_wrap');
@@ -213,7 +230,7 @@ route('table', async ()=>{
     tr.querySelectorAll('.pt-in[data-f]').forEach(el=>{ const f = el.dataset.f; el.classList.toggle('chg', f==='__markup' ? (isChanged(p,'costPrice')||isChanged(p,'sellPrice')) : isChanged(p,f)); });
     const pu = tr.querySelector('[data-pu]'); if(pu) pu.textContent = ptPerUnit(eff(p,'sellPrice'), eff(p,'priceRef'));
     const fl = flags(p); tr.classList.toggle('pt-warn', !!fl.length);
-    const nm = tr.querySelector('.pt-name label span'); if(nm) nm.innerHTML = esc(p.name) + (fl.length ? ` <span class="pt-flag" title="${esc(fl.join(' · '))}">⚠</span>` : '');
+    const nm = tr.querySelector('.pt-name label span'); if(nm) nm.innerHTML = esc(p.name) + (fl.length ? ` <span class="pt-flag" title="${esc(fl.join(' · '))}">${ico('triangle-alert')}</span>` : '');
   }
   wrap.addEventListener('input', e=>{
     const el = e.target.closest('.pt-in'); if(!el || el.tagName==='SELECT') return;
@@ -262,7 +279,8 @@ route('table', async ()=>{
   wrap.addEventListener('keydown', e=>{
     const el = e.target.closest('.pt-in'); if(!el || e.key!=='Enter') return; e.preventDefault();
     const all = [...wrap.querySelectorAll(`.pt-in[data-f="${el.dataset.f}"]${el.dataset.part?`[data-part="${el.dataset.part}"]`:''}`)], i = all.indexOf(el), nx = all[i + (e.shiftKey ? -1 : 1)];
-    if(nx){ nx.focus(); if(nx.select) nx.select(); nx.scrollIntoView({block:'nearest'}); }
+    let n2 = nx; if(!n2 && !e.shiftKey && showMore()){ const all2 = [...wrap.querySelectorAll(`.pt-in[data-f="${el.dataset.f}"]${el.dataset.part?`[data-part="${el.dataset.part}"]`:''}`)]; n2 = all2[all2.indexOf(el)+1]; }
+    if(n2){ n2.focus(); if(n2.select) n2.select(); n2.scrollIntoView({block:'nearest'}); }
   });
   wrap.addEventListener('focusin', e=>{ const el = e.target; if(el.matches && el.matches('input.pt-in')) setTimeout(()=>{ try{ el.select(); }catch(_){} }, 0); });
   wrap.addEventListener('click', e=>{
@@ -270,7 +288,7 @@ route('table', async ()=>{
     const b = e.target.closest('[data-sort]'); if(!b) return;
     const k = b.dataset.sort; if(sortK===k) sortDir = -sortDir; else { sortK = k; sortDir = 1; } draw(true);
   });
-  $('#pt_q').oninput = e=>{ q = e.target.value; draw(); };
+  let qTimer = null; $('#pt_q').oninput = e=>{ q = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(()=>draw(), 180); };
   $('#pt_stale').onchange = e=>{ staleDays = parseInt(e.target.value)||30; try{ localStorage.setItem('dk_pt_stale', String(staleDays)); }catch(_){} draw(true); };
   $('#pt_sup').onchange = e=>{ supFilter = e.target.value; draw(); };
   $('#pt_filters').onclick = e=>{ const b = e.target.closest('[data-f]'); if(!b) return; filter = b.dataset.f; draw(); };
