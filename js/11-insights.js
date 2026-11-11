@@ -593,6 +593,7 @@ async function insightsHome(){
     let res;
     try{ res = await deleteAllHistory(); }
     catch(e){ closeModal(); showAlert('Could not delete: '+(e && e.message || e)+'. Nothing else was changed.', 'Delete failed'); return; }
+    logAction('delete', 'Deleted all imported past orders from Insights', 'Insights');
     await syncNow();                                   // tell the cloud now, and see whether it accepted
     const st = await getSyncStatus();
     const left = (await getAll('historyOrders')).length;
@@ -719,6 +720,7 @@ async function historyImportScreen(){
     }
     await bulkPut('historyOrders', newOrders);
     await bulkPut('historyLines', newLines);
+    logAction('import', `Imported ${newOrders.length} past order${newOrders.length===1?'':'s'} into Insights`, 'Insights');
     if(typeof syncNow==='function') syncNow(); // uploads them to the cloud in batches
     const unmatched = new Set(newLines.filter(l=>!l.productId).map(l=>l.descKey)).size;
     showAlert(`Imported ${newOrders.length} order${newOrders.length===1?'':'s'} (${newLines.length.toLocaleString()} lines).${skippedDup?` ${skippedDup} already imported before were skipped.`:''}${unmatched?` ${unmatched} product name${unmatched===1?'':'s'} still need matching to your products.`:''}`, 'Import complete');

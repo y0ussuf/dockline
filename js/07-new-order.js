@@ -235,6 +235,7 @@ async function newOrderStep1(existing){
       const existingItems = (await getAll('orderItems')).filter(it=>it.orderId===o.id);
       for(const it of existingItems) await del('orderItems', it.id);
       for(const it of newItems) await put('orderItems', it);
+      logAction('import', `Imported order file “${file.name}” as ${orderLabel(o)} (${newItems.length} lines)`, orderLabel(o));
       const target = `#/order/${o.id}/match`;
       if(location.hash===target) render(); else location.hash = target; // (same address → no hashchange, so redraw by hand)
     }catch(err){
