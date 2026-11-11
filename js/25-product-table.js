@@ -18,12 +18,13 @@ const PT_COLS = [
   {k:'limit',    label:'Low-stock limit', f:'lowStockLimit', kind:'qty'},
   {k:'pack',     label:'Pack size',       f:'packSize',      kind:'qty'},
   {k:'expiry',   label:'Expiry',          kind:'ro'},
+  {k:'lump',     label:'Priced as a whole', f:'lumpGroup', kind:'select'},
   {k:'perorder', label:'Bought per order',kind:'ro'},
   {k:'active',   label:'Active',          f:'active',        kind:'bool'}
 ];
 const PT_DEFAULT = ['unit','cost','markup','sell','ref','perunit','stock','limit'];
 const PT_COMPACT = ['cost','sell','stock'];
-const PT_FIELD_LABEL = {priceRef:'prices are for', costPrice:'cost', sellPrice:'sell price', stockQty:'stock', lowStockLimit:'low-stock limit', packSize:'pack size', supplierId:'supplier', active:'active'};
+const PT_FIELD_LABEL = {priceRef:'prices are for', costPrice:'cost', sellPrice:'sell price', stockQty:'stock', lowStockLimit:'low-stock limit', packSize:'pack size', supplierId:'supplier', lumpGroup:'priced as a whole', active:'active'};
 
 const ptEq = (a,b)=> JSON.stringify(a==null||a===''?null:a)===JSON.stringify(b==null||b===''?null:b);
 const ptRefText = r=> r && r.qty ? `${r.qty} ${r.unit||''}`.trim() : '';
@@ -55,7 +56,7 @@ function ptCanEdit(f){
 function ptWho(){ return (AUTH && AUTH.email) ? AUTH.email.split('@')[0] : 'this device'; }
 
 route('table', async ()=>{
-  const [all, suppliers, whs] = await Promise.all([getAll('products'), getAll('suppliers'), getAll('warehouses')]);
+  const [all, suppliers, whs, lumpGroups] = await Promise.all([getAll('products'), getAll('suppliers'), getAll('warehouses'), getLumpGroups()]);
   const products = all.filter(p=>!p.mergedInto);
   const prodById = new Map(products.map(p=>[p.id,p])), supById = new Map(suppliers.map(s=>[s.id,s])), whMap = new Map(whs.map(w=>[w.id,w]));
   suppliers.sort((a,b)=>a.name.localeCompare(b.name));
@@ -106,6 +107,7 @@ route('table', async ()=>{
       else if(filter==='low'){ if(!isLowStock(stockP(p))) return false; }
       else if(filter==='nostock'){ if(isStockTracked(stockP(p))) return false; }
       else if(filter==='perorder'){ if(!isPerOrderProduct(p, whMap)) return false; }
+      else if(filter==='lump'){ if(!eff(p,'lumpGroup')) return false; }
       else if(filter==='changed'){ if(!pending.has(p.id)) return false; }
       return true;
     });
@@ -138,6 +140,7 @@ route('table', async ()=>{
     switch(c.k){
       case 'unit': return `<td class="pt-ro">${esc(p.unit||'')}</td>`;
       case 'supplier': return `<td><select class="pt-in pt-sel ${isChanged(p,'supplierId')?'chg':''}" data-p="${p.id}" data-f="supplierId" data-kind="select"><option value="">—</option>${suppliers.map(s=>`<option value="${s.id}" ${s.id===eff(p,'supplierId')?'selected':''}>${esc(s.name)}</option>`).join('')}</select></td>`;
+      case 'lump': return `<td><select class="pt-in pt-sel ${isChanged(p,'lumpGroup')?'chg':''}" data-p="${p.id}" data-f="lumpGroup" data-kind="select"><option value="">—</option>${[...new Set([...lumpGroups, eff(p,'lumpGroup')].filter(Boolean))].map(n=>`<option value="${esc(n)}" ${n===eff(p,'lumpGroup')?'selected':''}>${esc(n)}</option>`).join('')}</select></td>`;
       case 'cost': return `<td>${inp(p,'costPrice','dec','placeholder="—"')}</td>`;
       case 'sell': return `<td>${inp(p,'sellPrice','dec','placeholder="—"')}</td>`;
       case 'markup': return `<td><input class="pt-in ${(isChanged(p,'costPrice')||isChanged(p,'sellPrice'))?'chg':''}" data-p="${p.id}" data-f="__markup" data-kind="markup" inputmode="decimal" placeholder="—" value="${esc(markupOf(p))}"></td>`;
@@ -168,7 +171,7 @@ route('table', async ()=>{
       ${cols().map(c=>`<th>${sortable.has(c.k)?`<button data-sort="${c.k}">${c.label} ${sortK===c.k?ico(sortDir>0?'chevron-up':'chevron-down'):''}</button>`:c.label}</th>`).join('')}</tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
   }
-  const FILTERS = [['all','All']].concat(can('prices.view') ? [['hasprice','Has price'],['noprice','No price']] : []).concat(seesBothPrices() ? [['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['inactive','Inactive'],['changed','Changed']]);
+  const FILTERS = [['all','All']].concat(can('prices.view') ? [['hasprice','Has price'],['noprice','No price']] : []).concat(seesBothPrices() ? [['below','Below cost'],['stale','Not updated lately']] : []).concat([['low','Low stock'],['nostock','No stock count'],['perorder','Bought per order'],['lump','Priced as a whole'],['inactive','Inactive'],['changed','Changed']]);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Product Table</h1>
       <div class="tb-actions">${can('prices.edit') ? '<button class="btn btn-ghost" id="pt_import">⬆ Import prices</button>' : ''}<button class="btn btn-ghost" id="pt_cols">▥ Columns</button><button class="btn btn-ghost" id="pt_export">⬇ Export</button>${seesBothPrices() ? '<button class="btn btn-ghost" id="pt_hist">🕘 History</button>' : ''}</div></div>
@@ -182,7 +185,7 @@ route('table', async ()=>{
     <div class="mg-bar pt-bulk" id="pt_bulk" hidden></div>
     <div class="mg-bar pt-save" id="pt_save" hidden></div>`;
 
-  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))) c.hasprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
+  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.lumpGroup) c.lump++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))) c.hasprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
   let cTimer = null, cDirty = true;
   function drawFilters(now){ if(!now && !cDirty){ return; } if(!now){ clearTimeout(cTimer); cTimer = setTimeout(()=>drawFilters(true), 150); return; } cDirty = false; const c = counts(); setHtml($('#pt_filters'), FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join('')); }
   let lastFilterDrawn = null;
@@ -191,9 +194,9 @@ route('table', async ()=>{
     const n = pending.size, fields = [...pending.values()].reduce((a,m)=>a+Object.keys(m).length, 0);
     const bar = $('#pt_save'); bar.hidden = !n;
     setHtml(bar, n ? `<span>${fields} change${fields===1?'':'s'} in ${n} product${n===1?'':'s'}</span><button class="btn btn-ghost btn-sm" id="pt_discard">Discard</button><button class="btn btn-signal" id="pt_do_save">Save</button>` : '');
-    const canB = {markup:can('prices.edit')&&can('prices.view'), supplier:can('products.edit'), limit:can('stock.edit')};
+    const canB = {markup:can('prices.edit')&&can('prices.view'), supplier:can('products.edit'), limit:can('stock.edit'), lump:can('products.edit')};
     const bulk = $('#pt_bulk'); bulk.hidden = !sel.size;
-    setHtml(bulk, sel.size ? `<span>${sel.size} selected</span>${canB.markup?'<button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button>':''}${canB.supplier?'<button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button>':''}${canB.limit?'<button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button>':''}<button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
+    setHtml(bulk, sel.size ? `<span>${sel.size} selected</span>${canB.markup?'<button class="btn btn-ghost btn-sm" data-bulk="markup">Set markup %</button>':''}${canB.supplier?'<button class="btn btn-ghost btn-sm" data-bulk="supplier">Set supplier</button>':''}${canB.limit?'<button class="btn btn-ghost btn-sm" data-bulk="limit">Set low-stock limit</button>':''}${canB.lump?'<button class="btn btn-ghost btn-sm" data-bulk="lump">Priced as a whole…</button>':''}<button class="btn btn-ghost btn-sm" data-bulk="clear">Clear</button>` : '');
     document.body.classList.toggle('pt-two-bars', !!n && !!sel.size);
     cDirty = true; drawFilters(filter!==lastFilterDrawn); lastFilterDrawn = filter;
     const sn = $('#pt_stalenote'); if(sn) sn.hidden = filter!=='stale';
@@ -325,6 +328,12 @@ route('table', async ()=>{
         <div class="field"><label>Supplier</label><select id="pt_b_val"><option value="">— none —</option>${suppliers.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
         <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="pt_b_go" style="flex:1;">Apply</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
       $('#pt_b_go').onclick = ()=>{ const v = $('#pt_b_val').value; picked.forEach(p=>setPending(p,'supplierId',v)); closeModal(); draw(true); };
+    } else if(kind==='lump'){
+      showModal(`<h3>Priced as a whole — ${picked.length} product${picked.length===1?'':'s'}</h3><p class="subtle">These products get no price of their own: each invoice shows one line for the group, with the supplier invoice total.</p>
+        <div class="field"><label>Group</label><select id="pt_b_val"><option value="">— none (price item by item) —</option>${lumpGroups.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>
+        <div class="field"><input type="text" id="pt_b_new" placeholder="…or a new group name"></div>
+        <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="pt_b_go" style="flex:1;">Apply</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+      $('#pt_b_go').onclick = async ()=>{ let v = $('#pt_b_new').value.trim() || $('#pt_b_val').value; if(v && !lumpGroups.includes(v)){ lumpGroups.push(v); await saveLumpGroups(lumpGroups); } picked.forEach(p=>setPending(p,'lumpGroup',v)); closeModal(); draw(true); };
     } else if(kind==='limit'){
       showModal(`<h3>Set low-stock limit on ${picked.length} product${picked.length===1?'':'s'}</h3>
         <div class="field"><label>Low-stock limit</label><input type="text" inputmode="decimal" id="pt_b_val" placeholder="e.g. 5"></div>
@@ -380,7 +389,7 @@ route('table', async ()=>{
     for(const p of list){
       const vals = cs.map(c=>{
         switch(c.k){
-          case 'unit': return p.unit||''; case 'supplier': return (supById.get(eff(p,'supplierId'))||{}).name || '';
+          case 'lump': return eff(p,'lumpGroup')||''; case 'unit': return p.unit||''; case 'supplier': return (supById.get(eff(p,'supplierId'))||{}).name || '';
           case 'cost': { const d = Dec.parse(eff(p,'costPrice')); return d ? Number(Dec.str(d)) : ''; }
           case 'sell': { const d = Dec.parse(eff(p,'sellPrice')); return d ? Number(Dec.str(d)) : ''; }
           case 'markup': return markupOf(p); case 'stock': return eff(p,'stockQty')===''||eff(p,'stockQty')==null ? '' : Number(eff(p,'stockQty'));

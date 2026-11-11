@@ -16,7 +16,7 @@ function invoiceLinesFromItems(items, byProd, basis){
     lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
       cost:(p&&seesCost()&&p.costPrice)||'', sell:(p&&seesSell()&&p.sellPrice)||'', price:(p ? (basis==='cost'?(seesCost()&&p.costPrice):(seesSell()&&p.sellPrice)) : '')||'',
       priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
-      discType:'', disc:'', include:true, substituted:it.status==='substituted',
+      lump:(p&&p.lumpGroup)||'', discType:'', disc:'', include:true, substituted:it.status==='substituted',
       ordered:it.excelDesc||'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : ''});
   };
   for(const it of items){
@@ -69,7 +69,7 @@ function lineCalc(l, priceText, roundMode){
 function invoiceTotals(inv){
   let sub = Dec.ZERO, disc = Dec.ZERO;
   const rows = inv.lines.map(l=>{
-    if(!l.include) return {gross:Dec.ZERO, disc:Dec.ZERO, net:Dec.ZERO, calc:{}};
+    if(!l.include || l.lump) return {gross:Dec.ZERO, disc:Dec.ZERO, net:Dec.ZERO, calc:{}};    // group lines are priced by their group below
     const calc = lineCalc(l, l.price, inv.roundMode), gross = calc.gross;
     let d = Dec.ZERO;
     if(l.discType==='pct' && Dec.parse(l.disc)) d = Dec.pct(gross, dm(l.disc));
@@ -77,14 +77,19 @@ function invoiceTotals(inv){
     sub = Dec.add(sub, gross); disc = Dec.add(disc, d);
     return {gross, disc:d, net:Dec.sub(gross, d), calc};
   });
+  const lumpRows = (inv.lumps||[]).map(g=>{
+    if(!g.include) return {gross:Dec.ZERO, disc:Dec.ZERO, net:Dec.ZERO};
+    const c = lumpCalc(g); sub = Dec.add(sub, c.gross); disc = Dec.add(disc, c.disc); return c;
+  });
   const taxable = Dec.sub(sub, disc);
   const tax = inv.taxOn ? Dec.pct(taxable, dm(inv.taxRate)) : Dec.ZERO;
-  return {rows, sub, disc, taxable, tax, total:Dec.add(taxable, tax)};
+  return {rows, lumpRows, sub, disc, taxable, tax, total:Dec.add(taxable, tax)};
 }
 function lineIssues(l, inv, calc){
   const w = [];
   if(!l.include) return w;
   if(l.doubt && !l.doubtOk) w.push('Check match');
+  if(l.lump) return w;
   if(l.price==='' || !Dec.parse(l.price)){ w.push('No price'); return w; }
   if(Dec.cmp(dm(l.price), Dec.ZERO)===0) w.push('Price is 0');
   calc = calc || lineCalc(l, l.price, inv.roundMode);
@@ -115,7 +120,9 @@ const invBadge = s=> `<span class="badge inv-${s}">${INV_STATUS[s]||s}</span>`;
 /* ---------- the printed document ---------- */
 function invoiceDocHtml(inv){
   const co = inv.company || {}, t = invoiceTotals(inv), lines = inv.lines.map((l,i)=>({l,r:t.rows[i]})).filter(x=>x.l.include);
-  const anyDisc = lines.some(x=>Dec.cmp(x.r.disc,Dec.ZERO)!==0);
+  const lines0 = lines; const lineRows = lines0.filter(x=>!x.l.lump);
+  const lumps = (inv.lumps||[]).map((g,i)=>({g, r:t.lumpRows[i]})).filter(x=>x.g.include);
+  const anyDisc = lines.some(x=>Dec.cmp(x.r.disc,Dec.ZERO)!==0) || lumps.some(x=>Dec.cmp(x.r.disc,Dec.ZERO)!==0);
   return `<div class="inv-doc ${inv.status==='cancelled'?'is-cancelled':''}" id="inv_doc">
     ${inv.status==='cancelled' ? '<div class="inv-stamp">CANCELLED</div>' : ''}
     <div class="inv-head">
@@ -131,7 +138,8 @@ function invoiceDocHtml(inv){
       <div><div class="inv-k">Invoice date</div><div class="inv-v">${fmtDate(inv.invoiceDate)}</div></div>
     </div>
     <div class="inv-tw"><table class="inv-table"><thead><tr><th>#</th><th>Description</th><th class="n">Qty</th><th>Unit</th><th class="n">Unit price</th>${anyDisc?'<th class="n">Discount</th>':''}<th class="n">Total</th></tr></thead><tbody>
-      ${lines.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b></td><td class="n">${Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.l.unit)}</td><td class="n">${money(x.r.calc.unit || dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
+      ${lineRows.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b></td><td class="n">${Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.l.unit)}</td><td class="n">${money(x.r.calc.unit || dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
+      ${lumps.map((x,i)=>`<tr><td class="subtle">${String(lineRows.length+i+1).padStart(2,'0')}</td><td><b>${esc(x.g.group)}</b></td><td class="n">1</td><td>lot</td><td class="n">${money(x.r.gross)}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
     </tbody></table></div>
     <div class="inv-foot">
       <div class="inv-notes"><div class="inv-k">Notes &amp; terms</div><div>${esc(inv.notes||'').replace(/\n/g,'<br>')}</div></div>
@@ -197,6 +205,7 @@ async function invoiceOrderScreen(orderId){
     const inv = {id:uid(), number:'', status:'draft', orderId:order.id, orderType:t, vessel:order.vessel, code:order.imo||'', orderNumber:order.orderNumber,
       priceBasis:(seesSell()?'sell':'cost'), taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'', roundMode:co.roundMode||'ask',
       lines: invoiceLinesFromItems(items.filter(it=>(it.orderType||'Provision')===t), byProd, 'sell'), createdAt:new Date().toISOString()};
+    inv.lumps = [...new Set(inv.lines.filter(l=>l.lump).map(l=>l.lump))].map(g=>({id:uid(), group:g, amount:'', markup:'', ref:'', discType:'', disc:'', include:true}));
     await put('invoices', inv); location.hash = '#/invoice/'+inv.id;
   });
 }
@@ -227,15 +236,16 @@ async function invoiceScreen(id){
         $('#cx_go').onclick = async ()=>{ inv.status='cancelled'; inv.cancelledAt = new Date().toISOString(); inv.cancelReason = $('#cx_reason').value.trim(); await save(); closeModal(); if(typeof syncNow==='function') syncNow(); draw(); };
       };
       if($('#iv_redo')) $('#iv_redo').onclick = async ()=>{
-        const n = Object.assign({}, inv, {id:uid(), number:'', status:'draft', createdAt:new Date().toISOString(), issuedAt:undefined, cancelledAt:undefined, cancelReason:undefined, invoiceDate:todayISO(), lines:inv.lines.map(l=>Object.assign({}, l, {id:uid()}))});
+        const n = Object.assign({}, inv, {id:uid(), number:'', status:'draft', createdAt:new Date().toISOString(), issuedAt:undefined, cancelledAt:undefined, cancelReason:undefined, invoiceDate:todayISO(), lines:inv.lines.map(l=>Object.assign({}, l, {id:uid()})), lumps:(inv.lumps||[]).map(g=>Object.assign({}, g, {id:uid()}))});
         await put('invoices', n); location.hash = '#/invoice/'+n.id;
       };
       return;
     }
     const t = invoiceTotals(inv), co = null;
     const issues = inv.lines.map((l,i)=>lineIssues(l, inv, t.rows[i].calc));
-    const BLOCK = ['Check match','No price','Size needed','Unit not comparable','Does not divide exactly'];
-    const blocking = inv.lines.some((l,i)=>l.include && issues[i].some(m=>BLOCK.some(b=>m.startsWith(b))));
+    const BLOCK = ['Check match','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
+    const lumpBad = (inv.lumps||[]).some(g=>g.include && !Dec.parse(g.amount));
+    const blocking = lumpBad || inv.lines.some((l,i)=>l.include && issues[i].some(m=>BLOCK.some(b=>m.startsWith(b))));
     $('#main').innerHTML = `
       <div class="topbar"><h1>${esc(inv.orderType)} invoice</h1>${invBadge('draft')}</div>
       <p class="subtle" style="margin-top:-10px;">${esc(inv.vessel)} · ${esc(inv.code||inv.orderNumber||'')} — draft, nothing is final until you issue it. Quantities are as picked; prices are exact, never rounded.</p>
@@ -249,7 +259,24 @@ async function invoiceScreen(id){
           <div class="field"><label>${esc(inv.taxLabel||'Tax')} rate %</label><input type="text" inputmode="decimal" id="iv_rate" value="${esc(inv.taxRate)}" ${inv.taxOn?'':'disabled'}></div>
         </div>
       </div>
-      <div id="iv_lines">${inv.lines.map((l,i)=>`
+      ${(inv.lumps||[]).map((g,gi)=>{ const c = t.lumpRows[gi], n = inv.lines.filter(l=>l.lump===g.group && l.include).length; return `
+        <div class="card iv-lump" style="margin-bottom:14px; border-color:var(--signal);">
+          <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-ginc="${gi}" ${g.include?'checked':''}><b>${esc(g.group)}</b></label><span class="iv-q">${n} item${n===1?'':'s'} · one line</span></div>
+          ${g.include ? `<p class="subtle" style="margin:6px 0;">Priced as a whole: type the supplier's invoice total for these items. The items below are listed without prices.</p>
+          <div class="iv-grid">
+            <div class="field"><label>Supplier invoice total (EGP)</label><input type="text" inputmode="decimal" data-gf="amount:${gi}" value="${esc(g.amount)}" placeholder="e.g. 48250.75"></div>
+            <div class="field"><label>Markup % (optional)</label><input type="text" inputmode="decimal" data-gf="markup:${gi}" value="${esc(g.markup)}" placeholder="0"></div>
+            <div class="field"><label>Supplier invoice no. (for your records)</label><input type="text" data-gf="ref:${gi}" value="${esc(g.ref)}"></div>
+            <div class="field"><label>Discount</label><div style="display:flex; gap:6px;"><select data-gdt="${gi}" style="width:84px;"><option value="">none</option><option value="pct" ${g.discType==='pct'?'selected':''}>%</option><option value="amt" ${g.discType==='amt'?'selected':''}>EGP</option></select><input type="text" inputmode="decimal" data-gf="disc:${gi}" value="${esc(g.disc)}" ${g.discType?'':'disabled'}></div></div>
+            <div class="iv-tot"><span class="subtle">Line total</span><b>${money(c.net)}</b></div>
+          </div>
+          ${Dec.parse(g.markup) ? `<div class="iv-work">${esc(money(dm(g.amount)))} + ${esc(g.markup)}% = ${esc(money(c.gross))}</div>` : ''}
+          ${Dec.parse(g.amount) ? '' : '<div class="pr-warn">⚠ No amount</div>'}` : ''}
+        </div>`; }).join('')}
+      <div id="iv_lines">${inv.lines.map((l,i)=> l.lump ? `
+        <div class="iv-line ${l.include?'':'off'}" data-i="${i}" style="padding:8px 12px;"><div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)} <span class="subtle">· in ${esc(l.lump)}</span></span></div>
+          ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : ''}
+        </div>` : `
         <div class="iv-line ${l.include?'':'off'}" data-i="${i}">
           <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)}</span></div>
           ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : (l.include && l.ordered && normalize(l.ordered)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Ordered as “${esc(l.ordered)}”</div>` : '')}
@@ -281,6 +308,14 @@ async function invoiceScreen(id){
       if(act==='clear'){ delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; }
       await save(); draw();
     });
+    $('#main').querySelectorAll('[data-ginc]').forEach(cb=>cb.onchange=async ()=>{ inv.lumps[+cb.dataset.ginc].include = cb.checked; await save(); draw(); });
+    $('#main').querySelectorAll('[data-gdt]').forEach(el=>el.onchange=async ()=>{ const g = inv.lumps[+el.dataset.gdt]; g.discType = el.value; if(!el.value) g.disc = ''; await save(); draw(); });
+    $('#main').querySelectorAll('[data-gf]').forEach(el=>el.onchange=async ()=>{
+      const [f, gi] = el.dataset.gf.split(':'), g = inv.lumps[+gi], v = el.value.trim();
+      if(f==='ref'){ g.ref = v; await save(); return; }
+      if(v!=='' && !Dec.parse(v)){ showAlert('Enter a plain number, like 48250.75.'); el.focus(); return; }
+      g[f] = v===''?'':Dec.str(Dec.parse(v)); await save(); draw();
+    });
     $('#iv_date').onchange = async e=>{ inv.invoiceDate = e.target.value; await save(); };
     $('#iv_tax').onchange = async e=>{ inv.taxOn = e.target.value==='1'; await save(); draw(); };
     $('#iv_rate').onchange = async e=>{ if(e.target.value.trim()!=='' && !Dec.parse(e.target.value)){ showAlert('Tax rate must be a plain number.'); e.target.value = inv.taxRate; return; } inv.taxRate = e.target.value.trim()||'0'; await save(); draw(); };
@@ -294,7 +329,7 @@ async function invoiceScreen(id){
     $('#iv_issue').onclick = async ()=>{
       const co = await getCompany();
       if(!co.name){ showAlert('Add your company name in Settings → Company & invoices first, so it prints on the invoice.', 'Company details missing'); return; }
-      if(!inv.lines.some(l=>l.include)){ showAlert('Tick at least one line.'); return; }
+      if(!inv.lines.some(l=>l.include && !l.lump) && !(inv.lumps||[]).some(g=>g.include)){ showAlert('Tick at least one line.'); return; }
       showConfirm(`Issue this invoice? It gets its number and can no longer be edited. Total ${money(invoiceTotals(inv).total)} EGP.`, async ()=>{
         inv.company = {name:co.name, address:co.address, phone:co.phone, email:co.email, logo:co.logo};
         inv.number = await nextInvoiceNumber(co.prefix||'INV'); inv.status = 'issued'; inv.issuedAt = new Date().toISOString();
@@ -317,9 +352,11 @@ async function exportInvoiceExcel(inv){
   ws.addRow([]);
   const h = ws.addRow(['#','Description','Qty','Unit','Unit price','Discount','Total']); h.font = {bold:true};
   const fmtc = '#,##0.00##############';
-  inv.lines.forEach((l,i)=>{ if(!l.include) return; const r = t.rows[i];
+  inv.lines.forEach((l,i)=>{ if(!l.include || l.lump) return; const r = t.rows[i];
     const row = ws.addRow([ws.rowCount-9, l.desc, Number(l.qty), l.unit, Number(Dec.str(r.calc.unit || dm(l.price))), Number(Dec.str(r.disc)), Number(Dec.str(r.net))]);
     [5,6,7].forEach(c=>row.getCell(c).numFmt = fmtc); });
+  (inv.lumps||[]).forEach((g,gi)=>{ if(!g.include) return; const c = t.lumpRows[gi];
+    const row = ws.addRow([ws.rowCount-9, g.group, 1, 'lot', Number(Dec.str(c.gross)), Number(Dec.str(c.disc)), Number(Dec.str(c.net))]); [5,6,7].forEach(k=>row.getCell(k).numFmt = fmtc); });
   ws.addRow([]);
   [['Subtotal',t.sub],['Total discount',t.disc],[`${inv.taxLabel||'Tax'} (${inv.taxOn?inv.taxRate:'0'}%)`,t.tax],['Total (EGP)',t.total]].forEach(([k,v])=>{ const r = ws.addRow(['','','','','',k,Number(Dec.str(v))]); r.getCell(7).numFmt = fmtc; r.font = {bold:k.startsWith('Total (')}; });
   ws.columns = [{width:5},{width:42},{width:10},{width:14},{width:14},{width:18},{width:16}];

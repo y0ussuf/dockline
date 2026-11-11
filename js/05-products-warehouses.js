@@ -183,6 +183,9 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     <div class="field"><label>Production date</label><input type="date" id="f_pdate" value="${p.productionDate||''}"></div>
     ${expiryFieldHtml('f', {expiryDate:p.expiryDate, mode:p.expiryMode, shelfAmount:p.expiryShelfAmount, shelfUnit:p.expiryShelfUnit})}
     <div class="field"><label>Notes</label><textarea id="f_notes">${esc(p.notes)}</textarea></div>
+    <div class="field"><label>Priced as a whole?</label>
+      <select id="f_lump"><option value="">No — priced item by item</option>${p.lumpGroup?`<option value="${esc(p.lumpGroup)}" selected>${esc(p.lumpGroup)}</option>`:''}</select>
+      <div class="subtle" style="margin-top:4px;">For meat, fish… the invoice gets one line per group (the supplier invoice total). <a href="javascript:void(0)" id="f_lumpmg">Manage groups</a></div></div>
     <div class="field"><label>Bought per order?</label>
       <select id="f_perorder"><option value="">Same as its warehouse</option><option value="yes" ${p.perOrder==='yes'?'selected':''}>Yes — leave out of Insights</option><option value="no" ${p.perOrder==='no'?'selected':''}>No — always show in Insights</option></select></div>
     <div class="field"><label><input type="checkbox" id="f_active" ${p.active?'checked':''} style="width:auto; margin-right:8px;">Active</label></div>
@@ -263,6 +266,9 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     sell.oninput = ()=>{ last = 'sell'; mk.value = Dec.markupText(cost.value, sell.value); refreshNote(); };
     refreshNote();
   })();
+  { const fillLump = async ()=>{ const cur = ($('#f_lump')||{}).value || p.lumpGroup || '', names = await getLumpGroups(); const sel = $('#f_lump'); if(!sel) return;
+      sel.innerHTML = '<option value="">No — priced item by item</option>' + [...new Set([...names, cur].filter(Boolean))].map(n=>`<option value="${esc(n)}" ${n===cur?'selected':''}>${esc(n)}</option>`).join(''); };
+    fillLump(); const mg = $('#f_lumpmg'); if(mg) mg.onclick = ()=>{ const keep = Object.assign({}, p); lumpGroupManager(()=>{ fillLump(); }); }; }
   applyProductFormPerms();
   $('#f_cancel').onclick = closeModal;
   $('#f_save').onclick = async ()=>{
@@ -291,6 +297,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     p.notes = $('#f_notes').value.trim();
     p.active = $('#f_active').checked;
     p.perOrder = $('#f_perorder').value;
+    p.lumpGroup = $('#f_lump').value;
     p.image = newImage;
     p.stockQty = $('#f_stockqty').value.trim()==='' ? '' : parseFloat($('#f_stockqty').value);
     p.lowStockLimit = $('#f_stocklimit').value.trim()==='' ? '' : parseFloat($('#f_stocklimit').value);
