@@ -396,8 +396,9 @@ async function firstSyncIfNeeded(){
     if(DEMO_MODE){ await loadDemoData(); await seedDemoData(); }   // sample data exists only in demo mode
     await firstSyncIfNeeded();
     await migrateSuppliers();
+    await loadMyPerms();
     await loadAndApplyTheme();
-    await loadMyPerms(); applyNavPermissions(); await loadFeatureFlags(); AUDIT_ON = true;
+    applyNavPermissions(); await loadFeatureFlags(); AUDIT_ON = true;
     if(!location.hash) location.hash = '#/';
     render();
     compressExistingImages(); // background, non-blocking — shrinks any oversized photos already stored

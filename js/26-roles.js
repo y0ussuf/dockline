@@ -39,6 +39,7 @@ const PERM_GROUPS = [
     ['history.view','Order history',''],
     ['activity.view','Activity log (who did what)','']]},
   {g:'Settings', items:[
+    ['themes','Colour themes & theme button','Without it the app keeps the default look (the accent colour is always allowed)'],
     ['settings.edit','Company & app settings',''],
     ['backup','Backup & restore','']]}
 ];
@@ -112,7 +113,7 @@ async function refreshPerms(){
   const before = MY_PERMS ? [...MY_PERMS].sort().join() : '';
   await loadMyPerms();
   const after = MY_PERMS ? [...MY_PERMS].sort().join() : '';
-  if(before!==after){ if(typeof PRICES_SPLIT!=='undefined' && PRICES_SPLIT) await applyAllStashedPrices(); applyNavPermissions(); if(typeof render==='function') render(); }
+  if(before!==after){ if(typeof applyLook==='function') applyLook(); if(typeof PRICES_SPLIT!=='undefined' && PRICES_SPLIT) await applyAllStashedPrices(); applyNavPermissions(); if(typeof render==='function') render(); }
 }
 
 /* the product form: prices hidden without "see prices"; fields locked unless the role may change them */
