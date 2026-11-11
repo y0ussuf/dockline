@@ -550,14 +550,11 @@ async function insightsHome(){
         <span class="badge ${ANALYSIS_BADGE[a.status].cls}">${ANALYSIS_BADGE[a.status].label}</span></a>`;}).join('')}</div>` : ''}
     <h3 class="section-title">Products — demand by what vessels asked for</h3>
     <p class="subtle" style="margin-top:-8px;">Quantities are in each product's own measure. Trend compares the 90 days up to ${fmtDate(anchor)} with the 90 days before.</p>
+    <div class="pt-tools" style="margin-bottom:10px;"><input type="search" id="ip_q" placeholder="Search a product to see its report…" autocomplete="off"></div>
     <div class="card tbl-wrap"><table class="tbl">
       <thead><tr><th>Product</th><th class="num">Total asked</th><th class="num">Last 90 days</th><th class="num">Before that</th><th>Trend</th><th>Status</th><th class="num">Vessels</th></tr></thead>
-      <tbody>${prodRows.slice(0,60).map(p=>`<tr>
-        <td><a href="#/insights/product/${p.id}" style="font-weight:700; text-decoration:none; color:inherit;">${esc((byId.get(p.id)||{}).name||'?')} <span class="subtle">›</span></a></td>
-        <td class="num">${fmtQ(p.total)} ${esc(p.unit)}</td>
-        <td class="num">${fmtQ(p.recent)}</td><td class="num">${fmtQ(p.prior)}</td>
-        <td>${trendHtml(p)}</td><td>${analyses.get(p.id) ? `<span class="badge ${ANALYSIS_BADGE[analyses.get(p.id).status].cls}">${ANALYSIS_BADGE[analyses.get(p.id).status].label}</span>` : ''}</td><td class="num">${p.vessels.size}</td></tr>`).join('') || '<tr><td colspan="7" class="subtle">Nothing matched yet.</td></tr>'}</tbody>
-    </table>${prodRows.length>60?`<p class="subtle" style="padding:8px 10px;">Showing the 60 biggest of ${prodRows.length} products.</p>`:''}</div>
+      <tbody id="pt_body"></tbody>
+    </table><div id="pt_foot"></div></div>
     <h3 class="section-title" style="margin-top:28px;">Vessels</h3>
     <div class="card tbl-wrap"><table class="tbl">
       <thead><tr><th>Vessel</th><th class="num">Orders</th><th>First</th><th>Last</th><th class="num">Usually every</th><th>Status</th></tr></thead>
@@ -565,6 +562,24 @@ async function insightsHome(){
         <td class="num">${v.orders}</td><td>${fmtDate(v.first)}</td><td>${fmtDate(v.last)}</td><td class="num">${v.gap!=null?v.gap+' days':'—'}</td><td><span class="badge ${VESSEL_BADGE[v.status].cls}">${VESSEL_BADGE[v.status].label}</span></td></tr>`).join('')}</tbody>
     </table></div>
     ${importedOrders ? `<div style="margin-top:24px;"><button class="btn btn-ghost btn-sm" id="histClear">🗑 Delete all imported past orders</button></div>` : ''}`;
+  {
+    const rowHtml = p=>`<tr>
+        <td><a href="#/insights/product/${p.id}" style="font-weight:700; text-decoration:none; color:inherit;">${esc((byId.get(p.id)||{}).name||'?')} <span class="subtle">›</span></a></td>
+        <td class="num">${fmtQ(p.total)} ${esc(p.unit)}</td>
+        <td class="num">${fmtQ(p.recent)}</td><td class="num">${fmtQ(p.prior)}</td>
+        <td>${trendHtml(p)}</td><td>${analyses.get(p.id) ? `<span class="badge ${ANALYSIS_BADGE[analyses.get(p.id).status].cls}">${ANALYSIS_BADGE[analyses.get(p.id).status].label}</span>` : ''}</td><td class="num">${p.vessels.size}</td></tr>`;
+    let shown = 60, ipq = '', ipT;
+    const drawProducts = ()=>{
+      const nq = normalize(ipq);
+      const nm = p=>normalize((byId.get(p.id)||{}).name||''), rank = p=>nm(p)===nq?0:nm(p).startsWith(nq)?1:2;
+      const list = nq ? prodRows.filter(p=>nm(p).includes(nq)).sort((a,b)=>rank(a)-rank(b) || b.total-a.total) : prodRows;
+      $('#pt_body').innerHTML = list.slice(0, shown).map(rowHtml).join('') || `<tr><td colspan="7" class="subtle">${nq ? 'No product with past orders matches “'+esc(ipq.trim())+'”.' : 'Nothing matched yet.'}</td></tr>`;
+      $('#pt_foot').innerHTML = list.length>shown ? `<div style="padding:8px 10px;"><span class="subtle">Showing ${shown} of ${list.length} products${nq?'':', biggest first'}.</span> <button class="btn btn-ghost btn-sm" id="ip_more">Show more</button></div>` : (nq ? `<p class="subtle" style="padding:8px 10px;">${list.length} found.</p>` : '');
+      const more = $('#ip_more'); if(more) more.onclick = ()=>{ shown += 100; drawProducts(); };
+    };
+    $('#ip_q').oninput = ()=>{ clearTimeout(ipT); ipT = setTimeout(()=>{ ipq = $('#ip_q').value; shown = 60; drawProducts(); }, 120); };
+    drawProducts();
+  }
   if(tidy) $('#histTidy').onclick = ()=>{
     const rows = tidy.merges.slice(0,12).map(m=>`<div class="list-row"><div style="flex:1;"><span class="subtle">${esc(m.from)}</span><br><b>→ ${esc(m.to)}</b></div><span class="subtle">${m.n} order${m.n===1?'':'s'}</span></div>`).join('');
     showModal(`<h3>Tidy vessel names</h3>
