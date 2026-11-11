@@ -31,8 +31,12 @@ const LOOK_DEFAULTS = {theme:'harbor', mode:'auto', rotate:false, motion:true, c
 let _look = Object.assign({}, LOOK_DEFAULTS);
 let _lookCustomAccent = null;   // an accent picked by hand wins over the theme's own accent
 
+/* colour themes are optional per person (the 'Themes' permission); the accent colour always stays available */
+const lookMayTheme = ()=> typeof can!=='function' || can('themes');
+const lookCls = k=> k==='themeBtn' ? 'lk-showthemebtn' : 'lk-'+k.toLowerCase();
 function lookResolvedThemeId(){
-  if(_look.rotate){ const d = new Date(), doy = Math.floor((d - new Date(d.getFullYear(),0,0))/864e5); return LOOK_THEMES[doy % LOOK_THEMES.length].id; }
+  if(_look.rotate && lookMayTheme()){ const d = new Date(), doy = Math.floor((d - new Date(d.getFullYear(),0,0))/864e5); return LOOK_THEMES[doy % LOOK_THEMES.length].id; }
+  if(!lookMayTheme()) return 'harbor';
   return LOOK_THEMES.some(t=>t.id===_look.theme) ? _look.theme : 'harbor';
 }
 function lookResolvedMode(){
@@ -44,10 +48,11 @@ function applyLook(){
   root.setAttribute('data-look', id); root.setAttribute('data-theme', mode);
   const accent = _lookCustomAccent || (mode==='dark' ? th.accentDark : th.accent);
   root.style.setProperty('--signal', accent); root.style.setProperty('--signal-text', pickTextColor(accent));
-  const on = k=>!!_look[k];
-  ['motion','whColors','emptyArt','gradient','themeBtn'].forEach(k=>root.classList.toggle('lk-'+k.toLowerCase(), on(k)));
+  const may = lookMayTheme(), on = k=> k==='themeBtn' ? (!!_look[k] && may) : !!_look[k];
+  root.classList.remove('lk-themebtn');   // old name — it also styled the whole page (big text) because it sat on <html>
+  ['motion','whColors','emptyArt','gradient','themeBtn'].forEach(k=>root.classList.toggle(lookCls(k), on(k)));
   const meta = document.querySelector('meta[name="theme-color"]'); if(meta) meta.setAttribute('content', getComputedStyle(root).getPropertyValue('--paper').trim() || '#0F1720');
-  try{ localStorage.setItem('dk_look', JSON.stringify({id, mode, accent, text:pickTextColor(accent), cls:['motion','whColors','emptyArt','gradient','themeBtn'].filter(on).map(k=>'lk-'+k.toLowerCase())})); }catch(e){}
+  try{ localStorage.setItem('dk_look', JSON.stringify({id, mode, accent, text:pickTextColor(accent), cls:['motion','whColors','emptyArt','gradient','themeBtn'].filter(on).map(lookCls)})); }catch(e){}
 }
 async function loadLook(){
   const [rec, theme] = await Promise.all([getOne('settings','look'), getOne('settings','theme')]);
