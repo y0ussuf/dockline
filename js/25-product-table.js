@@ -107,7 +107,7 @@ route('table', async ()=>{
       else if(filter==='low'){ if(!isLowStock(stockP(p))) return false; }
       else if(filter==='nostock'){ if(isStockTracked(stockP(p))) return false; }
       else if(filter==='perorder'){ if(!isPerOrderProduct(p, whMap)) return false; }
-      else if(filter==='lump'){ if(!eff(p,'lumpGroup')) return false; }
+      else if(filter==='lump'){ if(!lumpOf(Object.assign({}, p, {lumpGroup:eff(p,'lumpGroup')}), whMap)) return false; }
       else if(filter==='changed'){ if(!pending.has(p.id)) return false; }
       return true;
     });
@@ -140,7 +140,7 @@ route('table', async ()=>{
     switch(c.k){
       case 'unit': return `<td class="pt-ro">${esc(p.unit||'')}</td>`;
       case 'supplier': return `<td><select class="pt-in pt-sel ${isChanged(p,'supplierId')?'chg':''}" data-p="${p.id}" data-f="supplierId" data-kind="select"><option value="">—</option>${suppliers.map(s=>`<option value="${s.id}" ${s.id===eff(p,'supplierId')?'selected':''}>${esc(s.name)}</option>`).join('')}</select></td>`;
-      case 'lump': return `<td><select class="pt-in pt-sel ${isChanged(p,'lumpGroup')?'chg':''}" data-p="${p.id}" data-f="lumpGroup" data-kind="select"><option value="">—</option>${[...new Set([...lumpGroups, eff(p,'lumpGroup')].filter(Boolean))].map(n=>`<option value="${esc(n)}" ${n===eff(p,'lumpGroup')?'selected':''}>${esc(n)}</option>`).join('')}</select></td>`;
+      case 'lump': return `<td><select class="pt-in pt-sel ${isChanged(p,'lumpGroup')?'chg':''}" data-p="${p.id}" data-f="lumpGroup" data-kind="select"><option value="">${(whMap.get(p.warehouseId)||{}).lumpGroup ? 'Warehouse: '+esc(whMap.get(p.warehouseId).lumpGroup) : '—'}</option><option value="-" ${eff(p,'lumpGroup')==='-'?'selected':''}>None</option>${[...new Set([...lumpGroups, eff(p,'lumpGroup')].filter(x=>x && x!=='-'))].map(n=>`<option value="${esc(n)}" ${n===eff(p,'lumpGroup')?'selected':''}>${esc(n)}</option>`).join('')}</select></td>`;
       case 'cost': return `<td>${inp(p,'costPrice','dec','placeholder="—"')}</td>`;
       case 'sell': return `<td>${inp(p,'sellPrice','dec','placeholder="—"')}</td>`;
       case 'markup': return `<td><input class="pt-in ${(isChanged(p,'costPrice')||isChanged(p,'sellPrice'))?'chg':''}" data-p="${p.id}" data-f="__markup" data-kind="markup" inputmode="decimal" placeholder="—" value="${esc(markupOf(p))}"></td>`;
@@ -185,7 +185,7 @@ route('table', async ()=>{
     <div class="mg-bar pt-bulk" id="pt_bulk" hidden></div>
     <div class="mg-bar pt-save" id="pt_save" hidden></div>`;
 
-  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(p.lumpGroup) c.lump++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))) c.hasprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
+  function counts(){ const c = {}; for(const [k] of FILTERS) c[k] = 0; products.forEach(p=>{ c.all++; if(lumpOf(p, whMap)) c.lump++; if(p.active===false) c.inactive++; const fl = flags(p); if(fl.some(x=>/No (cost|sell )?price/.test(x))) c.noprice++; if(Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))) c.hasprice++; if(fl.some(x=>/below cost/.test(x))) c.below++; if(can('prices.view') && isStale(p)) c.stale++; if(isLowStock(stockP(p))) c.low++; if(!isStockTracked(stockP(p))) c.nostock++; if(isPerOrderProduct(p, whMap)) c.perorder++; if(pending.has(p.id)) c.changed++; }); c.all = products.filter(p=>p.active!==false).length; return c; }
   let cTimer = null, cDirty = true;
   function drawFilters(now){ if(!now && !cDirty){ return; } if(!now){ clearTimeout(cTimer); cTimer = setTimeout(()=>drawFilters(true), 150); return; } cDirty = false; const c = counts(); setHtml($('#pt_filters'), FILTERS.map(([k,l])=>`<button class="chip ${filter===k?'active':''}" data-f="${k}">${l}${k==='all'?'':` (${c[k]})`}</button>`).join('')); }
   let lastFilterDrawn = null;
@@ -330,7 +330,7 @@ route('table', async ()=>{
       $('#pt_b_go').onclick = ()=>{ const v = $('#pt_b_val').value; picked.forEach(p=>setPending(p,'supplierId',v)); closeModal(); draw(true); };
     } else if(kind==='lump'){
       showModal(`<h3>Priced as a whole — ${picked.length} product${picked.length===1?'':'s'}</h3><p class="subtle">These products get no price of their own: each invoice shows one line for the group, with the supplier invoice total.</p>
-        <div class="field"><label>Group</label><select id="pt_b_val"><option value="">— none (price item by item) —</option>${lumpGroups.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>
+        <div class="field"><label>Group</label><select id="pt_b_val"><option value="">— same as its warehouse —</option><option value="-">— none (price item by item) —</option>${lumpGroups.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>
         <div class="field"><input type="text" id="pt_b_new" placeholder="…or a new group name"></div>
         <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="pt_b_go" style="flex:1;">Apply</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
       $('#pt_b_go').onclick = async ()=>{ let v = $('#pt_b_new').value.trim() || $('#pt_b_val').value; if(v && !lumpGroups.includes(v)){ lumpGroups.push(v); await saveLumpGroups(lumpGroups); } picked.forEach(p=>setPending(p,'lumpGroup',v)); closeModal(); draw(true); };
@@ -389,7 +389,7 @@ route('table', async ()=>{
     for(const p of list){
       const vals = cs.map(c=>{
         switch(c.k){
-          case 'lump': return eff(p,'lumpGroup')||''; case 'unit': return p.unit||''; case 'supplier': return (supById.get(eff(p,'supplierId'))||{}).name || '';
+          case 'lump': return lumpOf(Object.assign({}, p, {lumpGroup:eff(p,'lumpGroup')}), whMap); case 'unit': return p.unit||''; case 'supplier': return (supById.get(eff(p,'supplierId'))||{}).name || '';
           case 'cost': { const d = Dec.parse(eff(p,'costPrice')); return d ? Number(Dec.str(d)) : ''; }
           case 'sell': { const d = Dec.parse(eff(p,'sellPrice')); return d ? Number(Dec.str(d)) : ''; }
           case 'markup': return markupOf(p); case 'stock': return eff(p,'stockQty')===''||eff(p,'stockQty')==null ? '' : Number(eff(p,'stockQty'));

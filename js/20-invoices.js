@@ -8,7 +8,7 @@ const dm = v=> Dec.parse(v) || Dec.ZERO;
 const money = d=> Dec.fmt(d, 2);
 
 /* the picked lines of one order type, ready to price */
-function invoiceLinesFromItems(items, byProd, basis){
+function invoiceLinesFromItems(items, byProd, basis, whMap){
   const lines = [];
   const push = (it, productId, desc, qty, unit)=>{
     const q = Dec.parse(qty); if(!q || Dec.cmp(q, Dec.ZERO)<=0) return;
@@ -16,7 +16,7 @@ function invoiceLinesFromItems(items, byProd, basis){
     lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
       cost:(p&&seesCost()&&p.costPrice)||'', sell:(p&&seesSell()&&p.sellPrice)||'', price:(p ? (basis==='cost'?(seesCost()&&p.costPrice):(seesSell()&&p.sellPrice)) : '')||'',
       priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
-      lump:(p&&p.lumpGroup)||'', discType:'', disc:'', include:true, substituted:it.status==='substituted',
+      lump:lumpOf(p, whMap), discType:'', disc:'', include:true, substituted:it.status==='substituted',
       ordered:it.excelDesc||'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : ''});
   };
   for(const it of items){
@@ -182,7 +182,8 @@ route('invoice', async (parts)=>{
   return invoiceScreen(parts[0]);
 });
 async function invoiceOrderScreen(orderId){
-  const [order, allItems, invs, products, co] = await Promise.all([getOne('orders', orderId), getAll('orderItems'), getAll('invoices'), getAll('products'), getCompany()]);
+  const [order, allItems, invs, products, co, whs] = await Promise.all([getOne('orders', orderId), getAll('orderItems'), getAll('invoices'), getAll('products'), getCompany(), getAll('warehouses')]);
+  const whMap = new Map(whs.map(w=>[w.id,w]));
   if(!order){ location.hash = '#/invoices'; return; }
   const items = allItems.filter(it=>it.orderId===orderId).sort((a,b)=>(a.importIndex||0)-(b.importIndex||0));
   const byProd = new Map(products.map(p=>[p.id,p]));
@@ -193,7 +194,7 @@ async function invoiceOrderScreen(orderId){
     <p class="subtle" style="margin-top:-10px;">${esc(order.vessel)} · ${esc(order.imo||order.orderNumber)} — one invoice for each type of order in this sheet, built from what was picked.</p>
     ${order.status!=='completed' ? '<div class="bt-warn" style="margin-bottom:14px;"><b>This order is not finished yet.</b><div class="subtle">Only lines already picked are included. Finish the order first so the quantities are final.</div></div>' : ''}
     ${types.map(t=>{
-      const its = items.filter(it=>(it.orderType||'Provision')===t), lines = invoiceLinesFromItems(its, byProd, 'sell');
+      const its = items.filter(it=>(it.orderType||'Provision')===t), lines = invoiceLinesFromItems(its, byProd, 'sell', whMap);
       const have = mine.filter(i=>i.orderType===t).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
       const live = have.find(i=>i.status!=='cancelled');
       return `<div class="card" style="margin-bottom:14px;"><div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -204,7 +205,7 @@ async function invoiceOrderScreen(orderId){
     const t = b.dataset.mk;
     const inv = {id:uid(), number:'', status:'draft', orderId:order.id, orderType:t, vessel:order.vessel, code:order.imo||'', orderNumber:order.orderNumber,
       priceBasis:(seesSell()?'sell':'cost'), taxOn:!!co.taxOn, taxRate:co.taxRate, taxLabel:co.taxLabel, invoiceDate:todayISO(), notes:co.notes||'', roundMode:co.roundMode||'ask',
-      lines: invoiceLinesFromItems(items.filter(it=>(it.orderType||'Provision')===t), byProd, 'sell'), createdAt:new Date().toISOString()};
+      lines: invoiceLinesFromItems(items.filter(it=>(it.orderType||'Provision')===t), byProd, 'sell', whMap), createdAt:new Date().toISOString()};
     inv.lumps = [...new Set(inv.lines.filter(l=>l.lump).map(l=>l.lump))].map(g=>({id:uid(), group:g, amount:'', markup:'', ref:'', discType:'', disc:'', include:true}));
     await put('invoices', inv); location.hash = '#/invoice/'+inv.id;
   });
