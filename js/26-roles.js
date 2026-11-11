@@ -137,8 +137,8 @@ function applyProductFormPerms(){
 let ACTOR_NAME = '', AUDIT_ON = false;   // switched on once the app has started, so start-up housekeeping isn't logged as someone's work
 const actorName = ()=> ACTOR_NAME || (AUTH && AUTH.email ? AUTH.email.split('@')[0] : '') || 'this device';
 const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles','mappings','orderItems']);
-const AUD_TRACK = {stockQty:'stock', costPrice:'price', sellPrice:'price', priceRef:'price', lowStockLimit:'edit', supplierId:'edit', name:'edit', unit:'edit', active:'edit', packSize:'edit', warehouseId:'move', sectionId:'move'};
-const AUD_FIELD = {stockQty:'Stock', costPrice:'Cost price', sellPrice:'Sell price', priceRef:'Prices are for', lowStockLimit:'Low-stock limit', supplierId:'Supplier', name:'Name', unit:'Unit', active:'Active', packSize:'Pack size', warehouseId:'Warehouse', sectionId:'Section'};
+const AUD_TRACK = {stockQty:'stock', costPrice:'price', sellPrice:'price', priceRef:'price', lowStockLimit:'edit', supplierId:'edit', lumpGroup:'edit', name:'edit', unit:'edit', active:'edit', packSize:'edit', warehouseId:'move', sectionId:'move'};
+const AUD_FIELD = {stockQty:'Stock', costPrice:'Cost price', sellPrice:'Sell price', priceRef:'Prices are for', lowStockLimit:'Low-stock limit', supplierId:'Supplier', lumpGroup:'Priced as a whole', name:'Name', unit:'Unit', active:'Active', packSize:'Pack size', warehouseId:'Warehouse', sectionId:'Section'};
 const audShow = v => v==null||v==='' ? '—' : (typeof v==='object' ? (v.qty ? `${v.qty} ${v.unit||''}`.trim() : '—') : String(v));
 function orderLabel(o){ return [o.vessel, o.orderNumber && ('#'+o.orderNumber)].filter(Boolean).join(' ') || 'order'; }
 /* one line in the activity log for something that isn't a plain record change (a download, an import…) */
