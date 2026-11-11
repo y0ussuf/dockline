@@ -135,11 +135,18 @@ function applyProductFormPerms(){
 /* ------------------------------------ activity log ------------------------------------ */
 let ACTOR_NAME = '', AUDIT_ON = false;   // switched on once the app has started, so start-up housekeeping isn't logged as someone's work
 const actorName = ()=> ACTOR_NAME || (AUTH && AUTH.email ? AUTH.email.split('@')[0] : '') || 'this device';
-const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles','mappings']);
+const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles','mappings','orderItems']);
 const AUD_TRACK = {stockQty:'stock', costPrice:'price', sellPrice:'price', priceRef:'price', lowStockLimit:'edit', supplierId:'edit', name:'edit', unit:'edit', active:'edit', packSize:'edit', warehouseId:'move', sectionId:'move'};
 const AUD_FIELD = {stockQty:'Stock', costPrice:'Cost price', sellPrice:'Sell price', priceRef:'Prices are for', lowStockLimit:'Low-stock limit', supplierId:'Supplier', name:'Name', unit:'Unit', active:'Active', packSize:'Pack size', warehouseId:'Warehouse', sectionId:'Section'};
 const audShow = v => v==null||v==='' ? '—' : (typeof v==='object' ? (v.qty ? `${v.qty} ${v.unit||''}`.trim() : '—') : String(v));
 function orderLabel(o){ return [o.vessel, o.orderNumber && ('#'+o.orderNumber)].filter(Boolean).join(' ') || 'order'; }
+/* one line in the activity log for something that isn't a plain record change (a download, an import…) */
+async function logAction(kind, text, target){
+  if(!AUDIT_ON || !AUTH) return;
+  try{ await put('activity', {id:'ac-'+uid(), at:new Date().toISOString(), by:actorName(), email:AUTH.email||'', store:'', page:(location.hash||'#/').split('/')[1]||'home', kind, target:target||'', text}); }catch(_){}
+}
+const ORD_FIELDS = {vessel:'Vessel', imo:'IMO', orderNumber:'Order number', orderDate:'Order date', destination:'Destination', driverName:'Driver', carLicense:'Car licence'};
+const ITEM_VERB = {completed:'Picked', substituted:'Substituted', from_supplier:'Marked picked from supplier:', not_available:'Cancelled', cancelled:'Cancelled', unmatched:'Un-matched', pending:'Reopened'};
 async function auditChange(store, prev, next){
   if(!AUDIT_ON) return;
   const here = (location.hash||'#/').split('/')[1] || 'home';
@@ -159,8 +166,22 @@ async function auditChange(store, prev, next){
   if(store==='orders'){
     if(!prev) return log({kind:'order', target:orderLabel(next), tid, text:`Created order ${orderLabel(next)}`});
     if(!next) return log({kind:'delete', target:orderLabel(prev), tid, text:`Deleted order ${orderLabel(prev)}`});
+    const ch = Object.keys(ORD_FIELDS).filter(f=>String(prev[f]??'')!==String(next[f]??''));
+    if(ch.length) await log({kind:'order', target:orderLabel(next), tid, text:`Order ${orderLabel(next)}: ${ch.map(f=>`${ORD_FIELDS[f]} ${audShow(prev[f])} → ${audShow(next[f])}`).join(' · ')}`});
     if(prev.status!==next.status) return log({kind:'order', target:orderLabel(next), tid, text:`Order ${orderLabel(next)}: ${prev.status||'—'} → ${next.status||'—'}`});
     return;
+  }
+  if(store==='orderItems'){
+    if(!prev || !next) return;                       // lines are created / cleared by an import, which is logged as one line
+    const stChanged = prev.status!==next.status, qtyChanged = String(prev.actualQty??'')!==String(next.actualQty??'');
+    if(!stChanged && !qtyChanged) return;
+    if(stChanged && (next.status==='matched' || prev.status==='unmatched')) return;   // matching steps are not picking
+    const o = await getOne('orders', next.orderId), ord = o ? orderLabel(o) : 'an order';
+    const name = next.productName || next.excelDesc || 'item';
+    const q = next.actualQty!=null && next.actualQty!=='' ? `${next.actualQty} ${next.actualUnit||''} `.replace(/ +/g,' ') : '';
+    const verb = stChanged ? (ITEM_VERB[next.status] || ('Set to '+next.status)) : 'Changed picked quantity of';
+    const extra = !stChanged ? `: ${audShow(prev.actualQty)} → ${audShow(next.actualQty)}` : next.status==='substituted' && next.replacementName ? ` with ${next.replacementName}` : '';
+    return log({kind:'pick', target:name, tid:next.orderId, text:`${verb} ${stChanged && next.status==='completed' ? q : ''}${name}${extra} (${ord})`});
   }
   if(store==='invoices'){
     const lab = c=>`invoice ${c.number||'(draft)'}${c.vessel?' · '+c.vessel:''}`;
@@ -197,14 +218,14 @@ async function auditChange(store, prev, next){
 }
 
 /* --------------------------------------- Activity page --------------------------------------- */
-const ACT_KINDS = [['','Everything'],['stock','Stock'],['price','Prices'],['receive','Receiving'],['order','Orders'],['invoice','Invoices'],['add','Added'],['delete','Deleted'],['move','Moved'],['edit','Edits'],['setup','Setup']];
+const ACT_KINDS = [['','Everything'],['stock','Stock'],['price','Prices'],['receive','Receiving'],['order','Orders'],['pick','Picking'],['import','Imports'],['download','Downloads'],['invoice','Invoices'],['add','Added'],['delete','Deleted'],['move','Moved'],['edit','Edits'],['setup','Setup']];
 route('activity', async ()=>{
   const all = (await getAll('activity')).sort((a,b)=>a.at<b.at?1:-1);
   const people = [...new Set(all.map(a=>a.by).filter(Boolean))].sort();
   let kind = '', who = '', q = '', shown = 150;
   const showMoney = seesBothPrices();
   $('#main').innerHTML = `<div class="topbar"><h1>Activity</h1></div>
-    <p class="subtle" style="margin-top:-8px;">Who did what, newest first. Everything that changes stock, prices, products, orders, invoices and setup is recorded here with the person's name.</p>
+    <p class="subtle" style="margin-top:-8px;">Who did what, newest first. Stock, prices, products, picking, order details (driver, car, vessel…), imports, downloads, invoices and setup are recorded here with the person’s name.</p>
     <div class="pt-tools"><input type="search" id="ac_q" placeholder="Search products, orders…" autocomplete="off"><select id="ac_who"><option value="">Everyone</option>${people.map(p=>`<option>${esc(p)}</option>`).join('')}</select></div>
     <div class="tag-row" id="ac_kinds">${ACT_KINDS.map(([k,l])=>`<button class="chip ${k===''?'active':''}" data-k="${k}">${l}</button>`).join('')}</div>
     <div id="ac_list"></div>`;

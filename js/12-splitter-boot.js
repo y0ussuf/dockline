@@ -274,6 +274,11 @@ route('splitter', async ()=>{
    downloads capability) or as a plain installed app / regular browser tab
    (falls back to a normal Blob download link, which works offline too). */
 async function saveFile(filename, data, mimeType){
+  const ok = await saveFile0(filename, data, mimeType);
+  if(ok!==false && typeof logAction==='function') logAction('download', `Downloaded “${filename}”`, filename);
+  return ok;
+}
+async function saveFile0(filename, data, mimeType){
   if(window.claude && typeof window.claude.use === 'function'){
     const dl = await window.claude.use('downloads');
     if(dl){
