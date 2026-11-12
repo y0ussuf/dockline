@@ -51,6 +51,10 @@ async function saveDelivery(header, lines){
             const b = {id:uid(), productId:p.id, productName:p.name, batchNo:l.batchNo||'', productionDate:l.productionDate||'', expiryDate:l.expiryDate||'',
               qtyReceived:d.delta, qtyRemaining:d.delta, supplierId:header.supplierId, supplierName:header.supplierName, invoiceId:header.id,
               receivedAt:header.receivedAt, kind:'delivery', createdAt:header.createdAt, packSize:l.packSize===''||l.packSize==null?'':parseFloat(l.packSize)};
+            if(l.packLabel){
+              b.packLabel = l.packLabel;
+              if(l.packCost || l.packSell){ p.packPrices = Object.assign({}, p.packPrices); const e = Object.assign({}, p.packPrices[l.packLabel]||{}); if(l.packCost) e.cost = l.packCost; if(l.packSell) e.sell = l.packSell; p.packPrices[l.packLabel] = e; pending.set(p.id,p); }
+            }
             t.objectStore('batches').put(b); newBatches.push(b); l.batchId = b.id;
           }
         }
@@ -496,10 +500,35 @@ async function newDeliveryScreen(){
       l.expiryDate = addDuration(l.productionDate, parseFloat(p.expiryShelfAmount), p.expiryShelfUnit||'months');
   }
 
+  /* a different measure of the same product (1 KG product, received as 400 GM): offer to keep it as its own size */
+  const mayPrice = ()=> can('prices.edit') && seesBothPrices();
+  function sizeDefaults(l, p){
+    const ns = newSizeOf(l, p); if(!ns || l.sizeOff) return;
+    if(!l.packCostTouched && mayPrice()){ const s = scaledPackPrice(p,'cost',ns.label); l.packCost = s && s.text ? s.text : (packPriceOf(p,ns.label,'cost') || ''); }
+    if(!l.packSellTouched && mayPrice()){ const s = scaledPackPrice(p,'sell',ns.label); l.packSell = s && s.text ? s.text : (packPriceOf(p,ns.label,'sell') || ''); }
+    ['Cost','Sell'].forEach(W=>{ const have = packPriceOf(p,ns.label,W.toLowerCase()); if(have && !l['pack'+W+'Touched']) l['pack'+W] = have; });
+  }
+  function sizeBoxHtml(l, p){
+    const ns = newSizeOf(l, p); if(!ns) return '';
+    const canKeep = p.trackBatches && isStockTracked(p);
+    const head = `<label style="display:flex; gap:8px; align-items:flex-start; font-weight:600;"><input type="checkbox" data-szon style="width:auto; margin-top:3px;" ${l.sizeOff||!canKeep?'':'checked'} ${canKeep?'':'disabled'}><span>New size: <b>${esc(ns.label)}</b> packs of ${round2(ns.size)} ${esc(p.unit||'')} each — keep as its own size</span></label>`;
+    if(!canKeep) return `<div class="rcv-size" style="margin-top:10px; padding:10px 12px; border:1.5px dashed var(--line); border-radius:12px;">${head}
+      <div class="subtle" style="margin-top:6px;">${isStockTracked(p) ? 'Sizes are kept as batches. Turn on batch tracking for this product to give each size its own expiry and price.' : 'Turn on stock tracking (and batch tracking) for this product to keep sizes separate.'}
+      ${isStockTracked(p) ? '<button class="btn btn-ghost btn-sm" data-act="trackon" style="margin-left:6px;">Turn on batch tracking</button>' : ''}</div></div>`;
+    if(l.sizeOff) return `<div class="rcv-size" style="margin-top:10px; padding:10px 12px; border:1.5px dashed var(--line); border-radius:12px;">${head}<div class="subtle" style="margin-top:4px;">It will only be added to the stock total (${round2(parseFloat(l.qty||0)*ns.size)} ${esc(p.unit||'')}).</div></div>`;
+    const sc = scaledPackPrice(p,'cost',ns.label), ss = scaledPackPrice(p,'sell',ns.label);
+    return `<div class="rcv-size" style="margin-top:10px; padding:10px 12px; border:1.5px solid var(--signal); border-radius:12px;">${head}
+      <div class="subtle" style="margin:4px 0 8px;">Stock goes up by ${round2((parseFloat(l.qty)||0)*ns.size)} ${esc(p.unit||'')}. This size has its own expiry date (below) and its own price. Stock is still taken earliest-expiry first across all sizes.</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        ${mayPrice()?`<div class="field" style="margin:0;"><label>Cost per ${esc(ns.label)} pack</label><input type="text" inputmode="decimal" data-szf="packCost" value="${esc(l.packCost||'')}" placeholder="${sc&&sc.approx?esc(sc.approx):''}"></div>`:''}
+        ${mayPrice()?`<div class="field" style="margin:0;"><label>Sell price per ${esc(ns.label)} pack</label><input type="text" inputmode="decimal" data-szf="packSell" value="${esc(l.packSell||'')}" placeholder="${ss&&ss.approx?esc(ss.approx):''}"></div>`:''}
+      </div>${(mayPrice()||mayPrice())?`<div class="subtle" style="font-size:12px; margin-top:4px;">Worked out from the product's price — change them if the accountant says so. Blank = no price yet.</div>`:''}</div>`;
+  }
   function lineHtml(l, i){
     const p = prodMap.get(l.productId);
     const loc = p && (p.sectionId || p.warehouseId) ? `📍 ${whMap[p.warehouseId]?.name || ''}${secMap[p.sectionId] ? ' / '+secMap[p.sectionId].name : ''}` : '';
     const hasBatchTracking = p && p.trackBatches;
+    sizeDefaults(l, p);
 
     return `
       <div class="rcv-item-card" data-k="${l.key}">
@@ -536,6 +565,7 @@ async function newDeliveryScreen(){
           </div>
         </div>
 
+        <div data-sizebox>${sizeBoxHtml(l, p)}</div>
         <div class="rcv-batch-grid">
           <div class="field" style="margin-bottom:0;">
             <label>Production Date</label>
@@ -580,9 +610,11 @@ async function newDeliveryScreen(){
           const e = card.querySelector('[data-f=expiryDate]');
           if(e && !l.expiryTouched) e.value = l.expiryDate||'';
         }
+        if(f==='unit' || f==='qty'){ if(f==='unit'){ l.packCostTouched = l.packSellTouched = false; sizeDefaults(l, prodMap.get(l.productId)); } if(f==='unit' || card.querySelector('[data-sizebox] .rcv-size')) refreshSize(card, l, f==='unit'); }
         card.querySelector('[data-hint]').innerHTML = stockHint(l);
         persist();
       }));
+      bindSize(card, l);
       card.querySelector('[data-act=rm]').onclick = ()=>{
         S.lines = S.lines.filter(x=>x!==l);
         persist();
@@ -597,10 +629,25 @@ async function newDeliveryScreen(){
     updateSummary();
   }
 
+  function refreshSize(card, l, full){
+    const box = card.querySelector('[data-sizebox]'); if(!box) return;
+    const p = prodMap.get(l.productId), act = document.activeElement;
+    if(!full && act && box.contains(act)) return;
+    box.innerHTML = sizeBoxHtml(l, p); bindSize(card, l);
+  }
+  function bindSize(card, l){
+    const box = card.querySelector('[data-sizebox]'); if(!box) return; const p = prodMap.get(l.productId);
+    const on = box.querySelector('[data-szon]'); if(on) on.onchange = ()=>{ l.sizeOff = !on.checked; if(!l.sizeOff) sizeDefaults(l, p); refreshSize(card, l, true); persist(); };
+    box.querySelectorAll('[data-szf]').forEach(el=>el.addEventListener('input', ()=>{ l[el.dataset.szf] = el.value; l[el.dataset.szf+'Touched'] = true; persist(); }));
+    const tr = box.querySelector('[data-act=trackon]'); if(tr) tr.onclick = async ()=>{
+      const pr = await getOne('products', l.productId); pr.trackBatches = true; await put('products', pr); await reconcileBatches([pr.id]);
+      p.trackBatches = true; sizeDefaults(l, p); refreshSize(card, l, true); persist(); };
+  }
   function applyProduct(l,p){
     l.productId = p.id;
     l.productName = p.name;
     l.unit = p.unit || '';
+    l.sizeOff = false; l.packCostTouched = l.packSellTouched = false; l.packCost = l.packSell = '';
     autoExpiry(l);
   }
 
@@ -728,6 +775,7 @@ async function newDeliveryScreen(){
         return showAlert(`Line ${n} (${l.productName}): Expiry date cannot be earlier than the production date.`);
       const d = stockDeltaFor(prodMap.get(l.productId), q, l.unit);
       if(d.error) return showAlert(`Line ${n}: ${d.error}`);
+      for(const k of ['packCost','packSell']) if(l[k] && l[k].trim()!=='' && !Dec.parse(l[k])) return showAlert(`Line ${n} (${l.productName}): the price per pack must be a plain number, like 113.75.`);
     }
 
     saving = true;
@@ -759,7 +807,9 @@ async function newDeliveryScreen(){
       productionDate: l.productionDate||'',
       expiryDate: l.expiryDate||'',
       batchNo: (l.batchNo||'').trim(),
-      packSize: l.packSize===''||l.packSize==null ? '' : parseFloat(l.packSize)
+      packSize: l.packSize===''||l.packSize==null ? '' : parseFloat(l.packSize),
+      ...(()=>{ const p = prodMap.get(l.productId), ns = (!l.sizeOff && p && p.trackBatches && isStockTracked(p)) ? newSizeOf(l, p) : null;
+        return ns ? {packLabel:ns.label, packSize:ns.size, packCost:Dec.parse(l.packCost)?Dec.str(Dec.parse(l.packCost)):'', packSell:Dec.parse(l.packSell)?Dec.str(Dec.parse(l.packSell)):''} : {}; })()
     }));
 
     try{
