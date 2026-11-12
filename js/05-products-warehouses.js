@@ -248,6 +248,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
   (function(){
     const cost = $('#f_cost'), mk = $('#f_markup'), sell = $('#f_sell'), note = $('#f_pr_note');
     let last = 'sell';   // which of markup / sell was typed last — a changed cost keeps that one
+    let autoCost = false; // the cost was worked out from sell + markup (not typed): it follows them
     const bad = el=> el.value.trim()!=='' && !Dec.parse(el.value);
     const refreshNote = ()=>{
       const msgs = [];
@@ -257,13 +258,23 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
       if((c && Dec.cmp(c,Dec.ZERO)===0) || (s && Dec.cmp(s,Dec.ZERO)===0)) msgs.push('⚠ A price of 0 is saved as 0.');
       note.innerHTML = msgs.join(' ');
     };
+    /* no cost given, but a sell price and a markup: the cost is sell × 100 ÷ (100 + markup), exactly */
+    const deriveCost = ()=>{
+      if(!(autoCost || cost.value.trim()==='') || !Dec.parse(sell.value) || !Dec.parse(mk.value)) return false;
+      const r = costFromMarkup(sell.value, mk.value);
+      if(r && r.text!==undefined){ cost.value = r.text; autoCost = true; note.innerHTML = 'Cost worked out from the sell price and markup — change it if you know the real cost.'; return true; }
+      if(r){ cost.value = ''; autoCost = false; note.innerHTML = `⚠ The cost does not divide exactly (≈ ${esc(r.approx)}). Type the real cost yourself.`; return true; }
+      return false;
+    };
+    const refreshNote0 = ()=>{ const keep = note.innerHTML; refreshNote(); if(keep && !note.innerHTML) note.innerHTML = keep; else if(keep && /worked out|divide/.test(keep)) note.innerHTML = keep + (note.innerHTML ? ' '+note.innerHTML : ''); };
     cost.oninput = ()=>{
+      autoCost = false;
       if(last==='markup' && Dec.parse(mk.value) && Dec.parse(cost.value)){ sell.value = Dec.sellFromMarkup(cost.value, mk.value) || ''; }
       else mk.value = Dec.markupText(cost.value, sell.value);
       refreshNote();
     };
-    mk.oninput = ()=>{ last = 'markup'; const v = Dec.sellFromMarkup(cost.value, mk.value); if(v!==null) sell.value = v; refreshNote(); };
-    sell.oninput = ()=>{ last = 'sell'; mk.value = Dec.markupText(cost.value, sell.value); refreshNote(); };
+    mk.oninput = ()=>{ last = 'markup'; if(deriveCost()){ refreshNote0(); return; } const v = Dec.sellFromMarkup(cost.value, mk.value); if(v!==null) sell.value = v; refreshNote(); };
+    sell.oninput = ()=>{ last = 'sell'; if((autoCost || cost.value.trim()==='') && Dec.parse(mk.value) && deriveCost()){ refreshNote0(); return; } mk.value = Dec.markupText(cost.value, sell.value); refreshNote(); };
     refreshNote();
   })();
   { const fillLump = async ()=>{ const cur = ($('#f_lump')||{}).value || p.lumpGroup || '', names = await getLumpGroups(); const sel = $('#f_lump'); if(!sel) return;
