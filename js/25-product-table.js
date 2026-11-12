@@ -249,7 +249,12 @@ route('table', async ()=>{
       }
     } else if(kind==='markup'){
       ok = decOk(t); el.classList.toggle('bad', !ok);
-      if(ok && t!==''){ last.set(p.id,'markup'); lastMk.set(p.id,t); const sv = Dec.sellFromMarkup(eff(p,'costPrice'), t); if(sv!==null) setPending(p,'sellPrice',sv); }
+      if(ok && t!==''){ last.set(p.id,'markup'); lastMk.set(p.id,t);
+        if(!Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))){      // no cost yet: work it out from the sell price
+          const r = costFromMarkup(eff(p,'sellPrice'), t);
+          if(r && r.text!==undefined){ setPending(p,'costPrice', r.text); el.title = ''; el.classList.remove('bad'); }
+          else if(r){ el.classList.add('bad'); el.title = 'The cost does not divide exactly (≈ '+r.approx+'). Type the cost yourself.'; showAlert(`The cost does not divide exactly (≈ ${r.approx}). Nothing is rounded, so type the real cost yourself.`); }
+        } else { const sv = Dec.sellFromMarkup(eff(p,'costPrice'), t); if(sv!==null) setPending(p,'sellPrice',sv); } }
     } else if(kind==='ref'){
       const tr = rowEl(p.id), qEl = tr.querySelector('[data-part=qty]'), uEl = tr.querySelector('[data-part=unit]');
       const qt = qEl.value.trim().replace(/,/g,''); ok = qt==='' || (!!Dec.parse(qt) && Dec.cmp(Dec.parse(qt), Dec.ZERO)>0 && /^\d*\.?\d+$/.test(qt));
@@ -260,7 +265,7 @@ route('table', async ()=>{
       if(ok) setPending(p, f, t==='' ? '' : parseFloat(t.replace(/,/g,'')));
     }
     if(ok){
-      if(kind==='markup'){ const tr = rowEl(p.id); const s = tr.querySelector('[data-f="sellPrice"]'); if(s) s.value = eff(p,'sellPrice')??''; }
+      if(kind==='markup'){ const tr = rowEl(p.id); const s = tr.querySelector('[data-f="sellPrice"]'); if(s) s.value = eff(p,'sellPrice')??''; const c = tr.querySelector('[data-f="costPrice"]'); if(c) c.value = eff(p,'costPrice')??''; }
       refreshRow(p); if(kind==='markup') { /* keep what was typed in the markup cell */ }
       drawBars();
     }
@@ -320,7 +325,7 @@ route('table', async ()=>{
       $('#pt_b_go').onclick = ()=>{
         const m = $('#pt_b_val').value.trim(); if(!Dec.parse(m)){ showAlert('Type the markup as a plain number, like 5 or 7.5.'); return; }
         let done = 0, skipped = 0;
-        picked.forEach(p=>{ const sv = Dec.sellFromMarkup(eff(p,'costPrice'), m); if(sv===null){ skipped++; return; } setPending(p,'sellPrice',sv); last.set(p.id,'markup'); lastMk.set(p.id,m); done++; });
+        picked.forEach(p=>{ if(!Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))){ const r = costFromMarkup(eff(p,'sellPrice'), m); if(r && r.text!==undefined){ setPending(p,'costPrice',r.text); last.set(p.id,'markup'); lastMk.set(p.id,m); done++; } else skipped++; return; } const sv = Dec.sellFromMarkup(eff(p,'costPrice'), m); if(sv===null){ skipped++; return; } setPending(p,'sellPrice',sv); last.set(p.id,'markup'); lastMk.set(p.id,m); done++; });
         closeModal(); draw(true); if(skipped) showAlert(`${done} updated. ${skipped} skipped because they have no cost price.`, 'Markup applied');
       };
     } else if(kind==='supplier'){
