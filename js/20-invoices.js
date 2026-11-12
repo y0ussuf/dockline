@@ -10,22 +10,39 @@ const money = d=> Dec.fmt(d, 2);
 /* the picked lines of one order type, ready to price */
 function invoiceLinesFromItems(items, byProd, basis, whMap){
   const lines = [];
-  const push = (it, productId, desc, qty, unit)=>{
+  const push = (it, productId, desc, qty, unit, allocs)=>{
     const q = Dec.parse(qty); if(!q || Dec.cmp(q, Dec.ZERO)<=0) return;
     const p = productId ? byProd.get(productId) : null;
-    lines.push({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(q), unit:unit||'',
+    const mk = (qq, uu, over)=>({id:uid(), itemId:it.id, productId:productId||'', desc, qty:Dec.str(qq), unit:uu||'',
       cost:(p&&seesCost()&&p.costPrice)||'', sell:(p&&seesSell()&&p.sellPrice)||'', price:(p ? (basis==='cost'?(seesCost()&&p.costPrice):(seesSell()&&p.sellPrice)) : '')||'',
       priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
       lump:lumpOf(p, whMap), discType:'', disc:'', include:true, substituted:it.status==='substituted',
-      ordered:it.excelDesc||'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : ''});
+      ordered:it.excelDesc||'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : '', ...(over||{})});
+    /* stock taken from a different pack size (400 GM packs of a KG product) is billed per pack at that size's own price */
+    let rest = q; const packs = new Map(), packLines = [];
+    for(const a of (allocs||[])){
+      if(!a.packLabel || !a.packSize) continue;
+      const sz = Dec.parse(String(+(+a.packSize).toFixed(6))), aq = Dec.parse(String(+(+a.qty).toFixed(6)));
+      if(!sz || !aq || Dec.cmp(sz, Dec.ZERO)<=0) continue;
+      const k = sizeKey(a.packLabel), e = packs.get(k) || {label:k, sz, qty:Dec.ZERO}; e.qty = Dec.add(e.qty, aq); packs.set(k, e);
+    }
+    for(const e of packs.values()){
+      const r = Rat.div(Rat.fromDec(e.qty), Rat.fromDec(e.sz));
+      if(r.d!==1n) continue;                                        // not a whole number of packs: billed at the product's own price below
+      const sell = (p&&seesSell()&&packPriceOf(p, e.label,'sell'))||'', cost = (p&&seesCost()&&packPriceOf(p, e.label,'cost'))||'';
+      packLines.push(mk({n:r.n, s:0}, e.label, {desc:`${desc} — ${e.label} packs`, cost, sell, price:(basis==='cost'?cost:sell), priceUnit:e.label, ref:null, nameSize:null}));
+      rest = Dec.sub(rest, e.qty);
+    }
+    if(Dec.cmp(rest, Dec.ZERO)>0) lines.push(mk(rest, unit));
+    lines.push(...packLines);
   };
   for(const it of items){
     if(it.status==='not_available' || it.status==='pending' || it.status==='unmatched') continue;
     if(it.status==='substituted'){
       const reps = replacementsOf(it);
-      if(reps.length){ reps.forEach(r=>push(it, r.productId, r.name || it.replacementName || it.excelDesc, r.qty, r.unit)); continue; }
+      if(reps.length){ reps.forEach(r=>push(it, r.productId, r.name || it.replacementName || it.excelDesc, r.qty, r.unit, r.batchAllocs)); continue; }
     }
-    push(it, it.productId, it.productName || it.excelDesc, it.actualQty, it.actualUnit || it.requestedUnit);
+    push(it, it.productId, it.productName || it.excelDesc, it.actualQty, it.actualUnit || it.requestedUnit, it.batchAllocs);
   }
   return lines;
 }

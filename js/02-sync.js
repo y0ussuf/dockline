@@ -46,7 +46,7 @@ function syncBaseUrl(cfg){ return cfg.url.replace(/\/+$/,''); }
    roles that may see prices. Locally the app is unchanged: every product still carries costPrice / sellPrice / priceRef /
    priceHistory. The switch-over is a flag in the shared data (sharedSettings 'features'.pricesSplit), set by the database
    step r03 — until then products keep their embedded prices and productPrices is only a mirror, so this is safe to ship first. */
-const PRICE_FIELDS = ['costPrice','sellPrice','priceRef','priceHistory'];
+const PRICE_FIELDS = ['costPrice','sellPrice','priceRef','priceHistory','packPrices'];
 let PRICES_SPLIT = false;
 const seesPricesNow = ()=> typeof MY_PERMS==='undefined' || MY_PERMS===null || (typeof can==='function' && can('prices.view'));
 /* what this person's device may keep: sell-only roles never hold cost figures (also inside the price history), cost-only roles never hold sell */
@@ -56,6 +56,7 @@ function visiblePrices(q){
   const sell = seesSell(), cost = seesCost(), o = Object.assign({}, q);
   if(!cost) delete o.costPrice;
   if(!sell) delete o.sellPrice;
+  if(o.packPrices) o.packPrices = Object.fromEntries(Object.entries(o.packPrices).map(([k,e])=>{ e = Object.assign({}, e); if(!cost) delete e.cost; if(!sell) delete e.sell; return [k,e]; }));
   if(Array.isArray(o.priceHistory)) o.priceHistory = o.priceHistory.map(h=>{ const e = Object.assign({}, h); if(!cost) delete e.cost; if(!sell) delete e.sell; return e; });
   return o;
 }
