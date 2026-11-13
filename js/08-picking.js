@@ -1,3 +1,5 @@
+const QI = {'check': '<path d="M20 6 9 17l-5-5"/>', 'edit': '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>', 'truck': '<path d="M1 3h15v13H1zM16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/>', 'skip': '<path d="m5 4 10 8-10 8zM19 5v14"/>', 'swap': '<path d="M17 3l4 4-4 4M21 7H8M7 21l-4-4 4-4M3 17h13"/>', 'swap2': '<path d="M17 3l4 4-4 4M21 7H8a5 5 0 0 0-5 5M7 21l-4-4 4-4M3 17h13a5 5 0 0 0 5-5"/>', 'cal': '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', 'box': '<path d="M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/>', 'go': '<path d="m9 6 6 6-6 6"/>'};
+const qIc = k=>`<svg class="qi" viewBox="0 0 24 24">${QI[k]}</svg>`;
 /* ==================================== PICKING ==================================== */
 /* Some items (fish, poultry…) never pass through the warehouse — the driver collects
    them straight from the supplier. They count as handled for the order, but are NOT
@@ -324,21 +326,23 @@ async function openItemActionModal(orderId, itemId, onDone){
       <p style="font-size:1.4rem; font-weight:700; color:var(--signal); margin-bottom:0;">${round2(conv.convertedQty)} × ${esc(product.unit)}</p>
       <p class="subtle" style="margin-top:2px;">Ordered as: ${it.requestedQty} × ${esc(it.requestedUnit)}</p>
     ` : `<p style="font-size:1.4rem; font-weight:700; margin-bottom:10px;">${it.requestedQty} × ${esc(it.requestedUnit||'')}</p>`}
-    <p class="subtle">${esc(it.warehouseName||'Unassigned')}${it.sectionName?' / '+esc(it.sectionName):''}${supplier?' · '+esc(supplier.name):''}</p>
-    <p class="subtle">Expiry: ${expiryToShow}</p>
+    <div class="qa-meta"><span class="qa-chip">${esc(it.warehouseName||'Unassigned')}${it.sectionName?' / '+esc(it.sectionName):''}</span>${supplier?`<span class="qa-chip">${esc(supplier.name)}</span>`:''}<span class="qa-chip">Exp ${expiryToShow}</span></div>
     ${product && !product.warehouseId ? `<p style="margin:8px 0;"><span class="badge b-unmatched">needs setup</span></p>` : ''}
     ${resolvedOutcomeHtml(it, st)}
-    <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-      <button class="btn btn-success" id="qa_add">✓ Product Added</button>
-      <button class="btn btn-ghost" id="qa_modify">✎ Modify</button>
-      <button class="btn btn-ghost" id="qa_supplier">🚚 From Supplier</button>
-      <button class="btn btn-ghost" id="qa_later">⏭ Pick Later</button>
-      <button class="btn btn-ghost btn-sm" id="qa_dates">📅 Set production / expiry date</button>
-      ${product ? `<button class="btn btn-ghost btn-sm" id="qa_complete">✎ Edit product details</button>` : ''}
-      <button class="btn btn-ghost btn-sm" id="qa_editline">✎ Customer changed this line</button>
-      ${it.productId && order.status!=='completed' ? `<button class="btn btn-ghost btn-sm" id="qa_relink">⇄ Change product (wrong match)</button>` : ''}
-      <button class="btn btn-ghost" onclick="closeModal()">Close without changes</button>
-    </div>`);
+    <button class="qa-primary" id="qa_add">${qIc('check')}Product Added</button>
+    <div class="qa-tiles">
+      <button class="qa-tile" id="qa_modify">${qIc('edit')}Modify</button>
+      <button class="qa-tile" id="qa_supplier">${qIc('truck')}From supplier</button>
+      <button class="qa-tile" id="qa_later">${qIc('skip')}Pick later</button>
+    </div>
+    <div class="qa-lbl">This line</div>
+    <div class="qa-list">
+      <button class="qa-row warn" id="qa_editline">${qIc('swap2')}<span>Customer changed this line<small>Quantity, unit or a different product</small></span>${qIc('go')}</button>
+      ${it.productId && order.status!=='completed' ? `<button class="qa-row" id="qa_relink">${qIc('swap')}<span>Wrong match? Change product</span>${qIc('go')}</button>` : ''}
+      <button class="qa-row" id="qa_dates">${qIc('cal')}<span>Production / expiry date</span>${qIc('go')}</button>
+      ${product ? `<button class="qa-row" id="qa_complete">${qIc('box')}<span>Edit product details</span>${qIc('go')}</button>` : ''}
+    </div>
+    <button class="qa-close" onclick="closeModal()">Close</button>`);
   function finish(){ closeModal(); onDone(); }
   $('#qa_add').onclick = async ()=>{
     const vals = resolveAddedValues(it, product);
