@@ -31,6 +31,8 @@ async function lastYearWatch(days){
   const cov = {orders:winOrders.length, vessels:new Set(winOrders.map(o=>o.vesselKey)).size, lines:winLines.length,
     counted: winLines.filter(l=>l.productId && l.baseOk && byId.has(l.productId) && !perOrder.has(l.productId)).length,
     unmatched: winLines.filter(l=>!l.productId && !l.skipped).length, unit: winLines.filter(l=>l.productId && !l.baseOk).length,
+    total: hOrders.length, first: hOrders.map(o=>o.orderDate).filter(Boolean).sort()[0]||'', last: hOrders.map(o=>o.orderDate).filter(Boolean).sort().pop()||'',
+    perMonth: (()=>{ const m = new Map(); for(const o of hOrders){ const k = String(o.orderDate||'').slice(0,7); if(k) m.set(k,(m.get(k)||0)+1); } return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0])); })(),
     topUnmatched: [...unm.values()].sort((a,b)=>b.n-a.n).slice(0,6), badDates: (badOrders||[]).length};
   const rows = [];
   for(const [pid,a] of agg){
@@ -67,6 +69,8 @@ route('lastyear', async ()=>{
       ${r.cov.unmatched ? `<p style="margin:6px 0;">⚠ <b>${r.cov.unmatched}</b> line${r.cov.unmatched===1?'':'s'} are <b>not linked to a product</b>, so they are left out${r.cov.topUnmatched.length?`: ${r.cov.topUnmatched.map(u=>`${esc(u.desc)} (${u.n})`).join(', ')}`:''}. <a href="#/insights/match">Link them</a> and the numbers will grow.</p>` : ''}
       ${r.cov.unit ? `<p style="margin:6px 0;">⚠ <b>${r.cov.unit}</b> line${r.cov.unit===1?'':'s'} have a unit that cannot be converted to the product's unit, so they are left out too. They are listed on the Insights page under the lines to review.</p>` : ''}
       ${r.cov.badDates ? `<p style="margin:6px 0;">⚠ <b>${r.cov.badDates}</b> past order${r.cov.badDates===1?' has':'s have'} a date that looks wrong and is left out of every Insights figure until it is fixed (Insights home shows which).</p>` : ''}
+      <p class="subtle" style="margin:10px 0 4px;">All imported past orders: <b>${r.cov.total}</b>, dated ${r.cov.first?fmtDate(r.cov.first):'—'} → ${r.cov.last?fmtDate(r.cov.last):'—'}. Per month:</p>
+      <div class="tag-row" style="gap:6px;">${r.cov.perMonth.map(([k,n])=>`<span class="chip ${k===r.w.start.slice(0,7)||k===r.w.end.slice(0,7)?'active':''}" style="cursor:default;">${k} · ${n}</span>`).join('')||'<span class="subtle">none</span>'}</div>
       ${!(r.cov.unmatched||r.cov.unit||r.cov.badDates) ? '<p class="subtle" style="margin:6px 0;">Every line in that period is counted.</p>' : ''}
     </div>
     <div class="grid-stats">
