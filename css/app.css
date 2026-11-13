@@ -642,3 +642,20 @@ svg.i-circle-check,svg.i-party-popper{color:var(--ok,#2e7d4f)}
 table.pt-hist{width:100%;border-collapse:collapse;font-size:.88rem}
 table.pt-hist th,table.pt-hist td{padding:6px 8px;border-bottom:1px solid var(--line,#eee);text-align:left;vertical-align:top}
 .pt-up{color:#2e7d4f;font-size:.7em}.pt-down{color:#c1432e;font-size:.7em}
+
+/* item action popup */
+.qa-meta{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 16px}
+.qa-chip{background:var(--bg-soft,rgba(127,127,160,.16));border-radius:999px;padding:5px 11px;font-size:.82rem;color:var(--muted,inherit)}
+.qi{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.qa-primary{width:100%;height:58px;border-radius:14px;border:0;background:var(--success);color:#fff;font:inherit;font-weight:800;font-size:1.1rem;display:flex;gap:10px;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.18)}
+.qa-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 18px}
+.qa-tile{height:76px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:inherit;font:inherit;font-weight:700;font-size:.85rem;display:flex;flex-direction:column;gap:7px;align-items:center;justify-content:center;cursor:pointer}
+.qa-tile .qi{width:22px;height:22px;color:var(--signal)}
+.qa-lbl{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;opacity:.7;font-weight:700;margin:0 4px 8px}
+.qa-list{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}
+.qa-row{width:100%;display:flex;gap:12px;align-items:center;padding:13px 14px;border:0;border-top:1px solid var(--line);background:transparent;color:inherit;font:inherit;font-weight:600;font-size:.95rem;text-align:left;cursor:pointer}
+.qa-row:first-child{border-top:0}
+.qa-row .qi:first-child{color:var(--signal)}.qa-row.warn .qi:first-child{color:#f5b84b}
+.qa-row small{display:block;opacity:.7;font-weight:500;font-size:.78rem}
+.qa-row .qi:last-child{margin-left:auto;width:18px;opacity:.5}
+.qa-close{display:block;width:100%;background:none;border:0;color:inherit;opacity:.7;font:inherit;font-weight:700;padding:16px 0 2px;cursor:pointer}
