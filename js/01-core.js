@@ -266,12 +266,23 @@ let dbp = new Promise((resolve,reject)=>{
   };
   req.onsuccess = ()=>{
     const db = req.result;
+    try{ const n = document.getElementById('dbBlocked'); if(n) n.remove(); }catch(_){}
     // another tab/window of the app opened a NEWER version of the database: step aside instead of blocking it
     db.onversionchange = ()=>{ db.close(); };
     resolve(db);
   };
   req.onerror = ()=>reject(req.error);
-  req.onblocked = ()=>{ console.warn('Dockline: close the other open Dockline tabs/windows so the database can update'); };
+  req.onblocked = ()=>{
+    console.warn('Dockline: close the other open Dockline tabs/windows so the database can update');
+    // an app update that changes the database cannot finish while another tab still holds the old one: say so instead of showing a blank page
+    try{
+      if(document.getElementById('dbBlocked')) return;
+      const d = document.createElement('div'); d.id = 'dbBlocked';
+      d.style.cssText = 'position:fixed;left:12px;right:12px;top:12px;z-index:99999;background:#FBF0DB;color:#3a2c0c;border:1px solid #B8860B;border-radius:12px;padding:14px 16px;font:600 15px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.3)';
+      d.innerHTML = 'Dockline is updating, but another Dockline tab is still open. Close all other Dockline tabs (or close the browser completely), then open the app again.';
+      document.body.appendChild(d);
+    }catch(_){}
+  };
 });
 /* Read cache for the heavy screens (Insights). Every write bumps its store's version — at the start AND at
    the end of the write, so nothing read mid-write is ever trusted — and a cached read is only reused while
