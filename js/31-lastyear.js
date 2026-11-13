@@ -5,7 +5,7 @@
    amber = under last year's demand, green = covered.  It is a hint, not a promise — demand this year can differ.
    Only products whose stock is tracked can be compared; quantities are in the product's own measure (kg / L / count). */
 window.__lyDays = window.__lyDays || 30;
-window.__lyAll = window.__lyAll || false;
+window.__lyMode = window.__lyMode || 'warn';   // warn | top | all
 
 function lyWindow(days){
   const t = new Date(todayISO()+'T00:00:00Z'), D = 86400000;
@@ -29,23 +29,25 @@ async function lastYearWatch(days){
     const p = byId.get(pid); if(!(a.qty>0)) continue;
     const tracked = isStockTracked(p), stock = tracked ? parseFloat(p.stockQty) : null;
     const sameUnit = !tracked || canonicalUnitOf(p)===a.unit;
-    let level = 'none';                                  // none = cannot be compared
+    let level = tracked ? 'none' : 'nostock';            // nostock = the product has no stock record at all; none = cannot be compared (unit mismatch)
     if(tracked && sameUnit && isFinite(stock)) level = stock < a.qty*0.5 ? 'red' : stock < a.qty ? 'amber' : 'green';
     rows.push({pid, name:p.name, unit:a.unit, qty:a.qty, vessels:a.vessels.size, orders:a.orders.size, tracked, stock, level, gap: (level==='red'||level==='amber') ? a.qty-stock : 0});
   }
-  const rank = {red:0, amber:1, green:2, none:3};
+  const rank = {red:0, amber:1, nostock:2, green:3, none:4};
   rows.sort((a,b)=> rank[a.level]-rank[b.level] || b.gap-a.gap || b.qty-a.qty);
   return {rows, w, haveOrders, red: rows.filter(r=>r.level==='red').length, amber: rows.filter(r=>r.level==='amber').length};
 }
 
 route('lastyear', async ()=>{
-  const days = window.__lyDays, all = window.__lyAll;
+  const days = window.__lyDays, mode = window.__lyMode;
   const [{hOrders}] = await Promise.all([insightsData()]);
   if(!hOrders.length){ location.hash = '#/insights'; return; }
   const r = await lastYearWatch(days), fq = _fmtQty;
   const chip = d=>`<button class="chip ${days===d?'active':''}" data-days="${d}">${d} days</button>`;
-  const badge = {red:['b-not_available','Well below'], amber:['b-modified','Below'], green:['b-completed','Covered'], none:['b-pending','Not compared']};
-  const shown = (all ? r.rows : r.rows.filter(x=>x.level==='red'||x.level==='amber')).slice(0,60);
+  const badge = {red:['b-not_available','Well below'], amber:['b-modified','Below'], green:['b-completed','Covered'], nostock:['b-pending','No stock record'], none:['b-pending','Not compared']};
+  const warnSet = r.rows.filter(x=>x.level==='red'||x.level==='amber'||x.level==='nostock');
+  const list = mode==='all' ? r.rows : mode==='top' ? r.rows.slice().sort((a,b)=>b.qty-a.qty).slice(0,20) : warnSet;
+  const shown = list.slice(0,60);
   $('#main').innerHTML = `
     <div class="topbar"><h1>Last year at this time</h1><a href="#/insights" class="btn btn-ghost btn-sm">← Insights</a></div>
     <p class="subtle" style="margin-top:-10px;">What vessels asked for between <b>${fmtDate(r.w.start)}</b> and <b>${fmtDate(r.w.end)}</b>, held against the stock you have now for the coming ${days} days (${fmtDate(r.w.from)} → ${fmtDate(r.w.to)}). A hint, not a promise.</p>
@@ -54,20 +56,22 @@ route('lastyear', async ()=>{
     <div class="grid-stats">
       <div class="stat"><b style="color:var(--danger)">${r.red}</b><div class="lbl">Well below last year</div></div>
       <div class="stat"><b style="color:var(--warn)">${r.amber}</b><div class="lbl">Below last year</div></div>
+      <div class="stat"><b>${r.rows.filter(x=>x.level==='nostock').length}</b><div class="lbl">With no stock record</div></div>
       <div class="stat"><b>${r.rows.length}</b><div class="lbl">Products ordered then</div></div>
     </div>
-    <div class="tag-row" style="margin:14px 0 10px;"><button class="chip ${all?'':'active'}" id="ly_w">Only warnings</button><button class="chip ${all?'active':''}" id="ly_a">All products</button></div>
+    <div class="tag-row" style="margin:14px 0 10px;"><button class="chip ${mode==='warn'?'active':''}" id="ly_w">Warnings</button><button class="chip ${mode==='top'?'active':''}" id="ly_t">Most in demand</button><button class="chip ${mode==='all'?'active':''}" id="ly_a">All products</button></div>
     <div class="card tbl-wrap" style="margin-bottom:26px;"><table class="tbl">
       <thead><tr><th>Product</th><th class="num">Last year</th><th class="num">Vessels</th><th class="num">In stock now</th><th></th></tr></thead>
       <tbody>${shown.map(x=>`<tr>
         <td><a href="#/insights/product/${x.pid}" style="text-decoration:none; color:inherit;"><b>${esc(x.name)}</b> <span class="subtle">›</span></a></td>
         <td class="num"><b>${fq(x.qty)}</b> ${esc(x.unit)}</td><td class="num">${x.vessels}</td>
-        <td class="num">${x.tracked ? fq(x.stock) : '<span class="subtle">not tracked</span>'}</td>
-        <td style="white-space:nowrap;"><span class="badge ${badge[x.level][0]}">${badge[x.level][1]}</span>${x.gap>0?`<div class="subtle" style="font-size:.78rem; margin-top:3px;">short ~${fq(x.gap)} ${esc(x.unit)}</div>`:''}</td></tr>`).join('') || `<tr><td colspan="5" class="subtle">${all?'Nothing to show.':'No warnings — your stock covers what was ordered at this time last year.'}</td></tr>`}</tbody>
-    </table>${(all?r.rows:r.rows.filter(x=>x.level==='red'||x.level==='amber')).length>60?'<p class="subtle" style="padding:8px 10px;">Showing the first 60.</p>':''}</div>`;
+        <td class="num">${x.tracked ? fq(x.stock) : '<span class="subtle">none recorded</span>'}</td>
+        <td style="white-space:nowrap;"><span class="badge ${badge[x.level][0]}">${badge[x.level][1]}</span>${x.gap>0?`<div class="subtle" style="font-size:.78rem; margin-top:3px;">short ~${fq(x.gap)} ${esc(x.unit)}</div>`:''}</td></tr>`).join('') || `<tr><td colspan="5" class="subtle">${mode!=='warn'?'Nothing to show.':'No warnings — your stock covers what was ordered at this time last year.'}</td></tr>`}</tbody>
+    </table>${list.length>60?'<p class="subtle" style="padding:8px 10px;">Showing the first 60.</p>':''}</div>`;
   $('#ly_days').querySelectorAll('[data-days]').forEach(b=>b.onclick=()=>{ window.__lyDays = +b.dataset.days; routes['lastyear'](); });
-  $('#ly_w').onclick = ()=>{ window.__lyAll = false; routes['lastyear'](); };
-  $('#ly_a').onclick = ()=>{ window.__lyAll = true; routes['lastyear'](); };
+  $('#ly_w').onclick = ()=>{ window.__lyMode = 'warn'; routes['lastyear'](); };
+  $('#ly_t').onclick = ()=>{ window.__lyMode = 'top'; routes['lastyear'](); };
+  $('#ly_a').onclick = ()=>{ window.__lyMode = 'all'; routes['lastyear'](); };
 });
 
 /* home page notice: filled in after the page is drawn so Home never waits for it */
