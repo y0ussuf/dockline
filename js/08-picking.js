@@ -317,6 +317,7 @@ async function openItemActionModal(orderId, itemId, onDone){
   const st = itemStatusLabel(it, order);
   showModal(`
     <h3>${esc(it.excelDesc)}</h3>
+    ${lineChangedHtml(it)}
     <p style="margin-top:-8px;">${it.sr?`<span class="subtle">Sr. ${esc(it.sr)} · </span>`:''}<span class="badge ${st.cls}">${st.label}</span></p>
     ${matchNote(it) ? `<p class="subtle" style="margin-top:-4px;">${esc(matchNote(it))}</p>` : ''}
     ${conv ? `
@@ -334,6 +335,7 @@ async function openItemActionModal(orderId, itemId, onDone){
       <button class="btn btn-ghost" id="qa_later">⏭ Pick Later</button>
       <button class="btn btn-ghost btn-sm" id="qa_dates">📅 Set production / expiry date</button>
       ${product ? `<button class="btn btn-ghost btn-sm" id="qa_complete">✎ Edit product details</button>` : ''}
+      <button class="btn btn-ghost btn-sm" id="qa_editline">✎ Customer changed this line</button>
       ${it.productId && order.status!=='completed' ? `<button class="btn btn-ghost btn-sm" id="qa_relink">⇄ Change product (wrong match)</button>` : ''}
       <button class="btn btn-ghost" onclick="closeModal()">Close without changes</button>
     </div>`);
@@ -360,6 +362,7 @@ async function openItemActionModal(orderId, itemId, onDone){
     await unpostpone(orderId, it.id);
     finish();
   };
+  $('#qa_editline').onclick = ()=>{ closeModal(); openEditLineModal(it, onDone); };
   if($('#qa_relink')) $('#qa_relink').onclick = ()=>{ closeModal(); changeItemProduct(itemId, onDone); };
   $('#qa_dates').onclick = ()=> openDateModal(it, ()=> openItemActionModal(orderId, itemId, onDone));
   if($('#qa_complete')) $('#qa_complete').onclick = async ()=>{
@@ -435,6 +438,7 @@ async function pickingItemScreen(orderId, warehouseId){
       <div class="pick-card">
         <div class="pick-thumb">${product&&product.image?`<img src="${product.image}" decoding="async">`:'📦'}</div>
         <h2 class="pick-name">${esc(it.excelDesc)}</h2>
+        ${lineChangedHtml(it)}
         ${matchNote(it) ? `<p class="subtle" style="margin-top:-8px;">${esc(matchNote(it))}</p>` : ''}
         ${conv ? `
           <div class="pick-qty">${round2(conv.convertedQty)} × ${esc(product.unit)}</div>
@@ -453,6 +457,7 @@ async function pickingItemScreen(orderId, warehouseId){
           ${product && !product.warehouseId ? `<span class="badge b-unmatched">needs setup</span>` : ''}
           ${product ? `<button class="btn btn-ghost btn-sm" id="pk_complete">✎ Edit product details</button>` : ''}
         </div>
+        <button class="btn btn-ghost btn-sm" id="pk_editline" style="margin-bottom:6px;">✎ Customer changed this line</button>
         <button class="btn btn-ghost btn-sm" id="pk_dates" style="margin-bottom:6px;">📅 Set production / expiry date</button>
         <div class="pick-actions">
           <button class="btn btn-success btn-lg" id="pk_added">✓ Product Added</button>
@@ -471,6 +476,7 @@ async function pickingItemScreen(orderId, warehouseId){
   $('#pk_batchmode').onclick = async ()=>{ await setPickingMode('batch'); location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); };
   if($('#pk_prev')) $('#pk_prev').onclick = ()=> openItemActionModal(orderId, prevItem.id, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
   if(product) bindPickBatch(it, product, batchInfo, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
+  $('#pk_editline').onclick = ()=> openEditLineModal(it, ()=>{ render(); });
   $('#pk_dates').onclick = ()=> openDateModal(it, ()=>{ location.hash = `#/order/${orderId}/pick/${warehouseId||'all'}`; render(); });
   if($('#pk_complete')) $('#pk_complete').onclick = async ()=>{
     const [warehouses, sections, suppliers] = await Promise.all([getAll('warehouses'), getAll('sections'), getAll('suppliers')]);
@@ -723,3 +729,55 @@ function openModifyModal(it, product, onDone){
   };
 }
 
+
+/* ---- the customer changed an order line after the sheet was imported (other product, other quantity…) ----
+   The line itself is edited and keeps a note of what the sheet originally said, so nobody has to remember it. */
+function lineChangedHtml(it){
+  if(!it.origDesc && it.origQty==null) return '';
+  const was = [it.origDesc, it.origQty!=null && it.origQty!=='' ? `${it.origQty} ${it.origUnit||''}`.trim() : ''].filter(Boolean).join(' · ');
+  return `<div class="pr-warn" style="margin:-4px 0 10px;">✎ Changed by the customer — the sheet said: <b>${esc(was)}</b>${it.changeNote?' · '+esc(it.changeNote):''}</div>`;
+}
+async function openEditLineModal(it, onDone){
+  const order = await getOne('orders', it.orderId);
+  let newProduct = null;   // chosen in this dialog
+  const finished = order && order.stockApplied && (it.status==='completed' || it.status==='modified');
+  const unitList = [...new Set([it.requestedUnit, 'KG','GM','LTR','ML','PCS','PKT','BOX','CTN','BTL','TIN','BAG'].filter(Boolean))];
+  showModal(`<h3>Customer changed this line</h3>
+    <p class="subtle" style="margin-top:-8px;">Now: <b>${esc(it.excelDesc)}</b> — ${esc(String(it.requestedQty))} ${esc(it.requestedUnit||'')}. The original line is remembered on the item.</p>
+    <div class="field"><label>Different product?</label>
+      <button type="button" class="btn btn-ghost" id="el_pick" style="width:100%; justify-content:flex-start; text-align:left;">Keep ${esc(it.productName||it.excelDesc)} — tap to choose another product</button></div>
+    <div class="row2"><div class="field"><label>Quantity</label><input type="text" inputmode="decimal" id="el_qty" value="${esc(String(it.requestedQty))}"></div>
+    <div class="field"><label>Unit</label><input type="text" id="el_unit" list="el_units" value="${esc(it.requestedUnit||'')}"><datalist id="el_units">${unitList.map(u=>`<option value="${esc(u)}">`).join('')}</datalist></div></div>
+    <div class="field"><label>Note (optional)</label><input type="text" id="el_note" placeholder="e.g. asked by the chief cook" value="${esc(it.changeNote||'')}"></div>
+    ${finished ? '<p class="subtle">This order is already finished. Changing the product moves the picked stock to the new product; changing the quantity here does not change what was picked.</p>' : ''}
+    <div style="display:flex; gap:10px; margin-top:10px;"><button class="btn btn-signal" id="el_save" style="flex:1;">Save change</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+  $('#el_pick').onclick = async ()=>{
+    const [products, warehouses, sections] = await Promise.all([getAll('products'), getAll('warehouses'), getAll('sections')]);
+    const whMap = Object.fromEntries(warehouses.map(w=>[w.id,w])), secMap = Object.fromEntries(sections.map(s=>[s.id,s]));
+    const keepQty = $('#el_qty').value, keepUnit = $('#el_unit').value, keepNote = $('#el_note').value;
+    openProductPicker(it, products, whMap, secMap, picked=>{
+      newProduct = picked; openEditLineModal(Object.assign({}, it, {requestedQty:keepQty, requestedUnit:keepUnit, changeNote:keepNote, __pre:picked}), onDone);
+    });
+  };
+  if(it.__pre){ newProduct = it.__pre; const b = $('#el_pick'); b.innerHTML = `Now: <b>${esc(newProduct.name)}</b> — tap to choose another`; }
+  $('#el_save').onclick = async ()=>{
+    const q = $('#el_qty').value.trim().replace(/,/g,''), unit = $('#el_unit').value.trim();
+    if(!/^\d*\.?\d+$/.test(q) || !(parseFloat(q)>0)) return showAlert('Type the new quantity as a plain number, like 12 or 2.5.');
+    const cur = await getOne('orderItems', it.id);
+    const p = newProduct && newProduct.id!==cur.productId ? newProduct : null;
+    const qtyChanged = parseFloat(q)!==parseFloat(cur.requestedQty) || unit!==(cur.requestedUnit||'');
+    if(!p && !qtyChanged && $('#el_note').value.trim()===(cur.changeNote||'')){ closeModal(); onDone(); return; }
+    const go = async ()=>{
+      if(cur.origDesc==null){ cur.origDesc = cur.excelDesc; cur.origQty = cur.requestedQty; cur.origUnit = cur.requestedUnit||''; }
+      cur.requestedQty = parseFloat(q); cur.requestedUnit = unit; cur.changeNote = $('#el_note').value.trim(); cur.changedAt = new Date().toISOString(); cur.changedBy = (typeof actorName==='function' ? actorName() : '') || '';
+      if(p){
+        cur.excelDesc = p.name;
+        await put('orderItems', cur);
+        const r = await relinkOrderItem(cur.id, p);
+        if(r.moved) showAlert(`Moved ${r.qty} from “${r.oldName}” to “${r.newName}” in stock.`, 'Stock corrected');
+      } else await put('orderItems', cur);
+      closeModal(); onDone();
+    };
+    if(p && finished) showConfirm(`This order is already finished. Switch this line to “${p.name}” and move ${cur.actualQty} of stock across?`, go); else go();
+  };
+}
