@@ -14,7 +14,7 @@ function lyWindow(days){
   return {start: iso(start), end: iso(start + days*D), from: todayISO(), to: iso(t.getTime() + days*D)};   // [start, end) a year ago ↔ [from, to) coming up
 }
 async function lastYearWatch(days){
-  const [{hOrders, hLines}, products, perOrder] = await Promise.all([insightsData(), slimProducts(), perOrderIds()]);
+  const [{hOrders, hLines, badOrders}, products, perOrder] = await Promise.all([insightsData(), slimProducts(), perOrderIds()]);
   const w = lyWindow(days), byId = new Map(products.map(p=>[p.id,p]));
   const inWin = d=> d >= w.start && d < w.end;
   const haveOrders = hOrders.some(o=>inWin(o.orderDate));
@@ -24,6 +24,14 @@ async function lastYearWatch(days){
     const a = agg.get(l.productId) || {qty:0, vessels:new Set(), orders:new Set(), unit:l.baseUnit};
     a.qty += l.baseQty; a.vessels.add(l.vesselKey); a.orders.add(l.historyOrderId); agg.set(l.productId, a);
   }
+  // how much of that period the numbers really cover — lines not linked to a product, or whose unit cannot be converted, cannot be counted
+  const winOrders = hOrders.filter(o=>inWin(o.orderDate)), winIds = new Set(winOrders.map(o=>o.id)), winLines = hLines.filter(l=>winIds.has(l.historyOrderId));
+  const unm = new Map();
+  for(const l of winLines){ if(!l.productId && !l.skipped){ const k = l.descKey||l.excelDesc; const u = unm.get(k) || {desc:l.excelDesc, n:0}; u.n++; unm.set(k,u); } }
+  const cov = {orders:winOrders.length, vessels:new Set(winOrders.map(o=>o.vesselKey)).size, lines:winLines.length,
+    counted: winLines.filter(l=>l.productId && l.baseOk && byId.has(l.productId) && !perOrder.has(l.productId)).length,
+    unmatched: winLines.filter(l=>!l.productId && !l.skipped).length, unit: winLines.filter(l=>l.productId && !l.baseOk).length,
+    topUnmatched: [...unm.values()].sort((a,b)=>b.n-a.n).slice(0,6), badDates: (badOrders||[]).length};
   const rows = [];
   for(const [pid,a] of agg){
     const p = byId.get(pid); if(!(a.qty>0)) continue;
@@ -35,7 +43,7 @@ async function lastYearWatch(days){
   }
   const rank = {red:0, amber:1, nostock:2, green:3, none:4};
   rows.sort((a,b)=> rank[a.level]-rank[b.level] || b.gap-a.gap || b.qty-a.qty);
-  return {rows, w, haveOrders, red: rows.filter(r=>r.level==='red').length, amber: rows.filter(r=>r.level==='amber').length};
+  return {rows, w, haveOrders, cov, red: rows.filter(r=>r.level==='red').length, amber: rows.filter(r=>r.level==='amber').length};
 }
 
 route('lastyear', async ()=>{
@@ -53,6 +61,14 @@ route('lastyear', async ()=>{
     <p class="subtle" style="margin-top:-10px;">What vessels asked for between <b>${fmtDate(r.w.start)}</b> and <b>${fmtDate(r.w.end)}</b>, held against the stock you have now for the coming ${days} days (${fmtDate(r.w.from)} → ${fmtDate(r.w.to)}). A hint, not a promise.</p>
     <div class="tag-row" id="ly_days" style="margin-bottom:14px;">${chip(30)}${chip(60)}${chip(90)}</div>
     ${r.haveOrders ? '' : `<div class="bt-warn" style="margin-bottom:12px;">No orders were imported for that period last year, so there is nothing to compare. Import the old order sheets for ${esc(r.w.start.slice(0,7))} to see it.</div>`}
+    <div class="card" style="margin-bottom:14px; ${r.cov.unmatched||r.cov.unit||r.cov.badDates?'border-color:var(--warn);':''}">
+      <div class="section-title">What this is built from</div>
+      <p style="margin:6px 0;"><b>${r.cov.orders}</b> past order${r.cov.orders===1?'':'s'} from <b>${r.cov.vessels}</b> vessel${r.cov.vessels===1?'':'s'} fall in that period, with <b>${r.cov.lines}</b> lines. <b>${r.cov.counted}</b> of them are counted below.</p>
+      ${r.cov.unmatched ? `<p style="margin:6px 0;">⚠ <b>${r.cov.unmatched}</b> line${r.cov.unmatched===1?'':'s'} are <b>not linked to a product</b>, so they are left out${r.cov.topUnmatched.length?`: ${r.cov.topUnmatched.map(u=>`${esc(u.desc)} (${u.n})`).join(', ')}`:''}. <a href="#/insights/match">Link them</a> and the numbers will grow.</p>` : ''}
+      ${r.cov.unit ? `<p style="margin:6px 0;">⚠ <b>${r.cov.unit}</b> line${r.cov.unit===1?'':'s'} have a unit that cannot be converted to the product's unit, so they are left out too. They are listed on the Insights page under the lines to review.</p>` : ''}
+      ${r.cov.badDates ? `<p style="margin:6px 0;">⚠ <b>${r.cov.badDates}</b> past order${r.cov.badDates===1?' has':'s have'} a date that looks wrong and is left out of every Insights figure until it is fixed (Insights home shows which).</p>` : ''}
+      ${!(r.cov.unmatched||r.cov.unit||r.cov.badDates) ? '<p class="subtle" style="margin:6px 0;">Every line in that period is counted.</p>' : ''}
+    </div>
     <div class="grid-stats">
       <div class="stat"><b style="color:var(--danger)">${r.red}</b><div class="lbl">Well below last year</div></div>
       <div class="stat"><b style="color:var(--warn)">${r.amber}</b><div class="lbl">Below last year</div></div>
