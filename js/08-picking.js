@@ -1,4 +1,5 @@
 const QI = {'check': '<path d="M20 6 9 17l-5-5"/>', 'edit': '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>', 'truck': '<path d="M1 3h15v13H1zM16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/>', 'skip': '<path d="m5 4 10 8-10 8zM19 5v14"/>', 'swap': '<path d="M17 3l4 4-4 4M21 7H8M7 21l-4-4 4-4M3 17h13"/>', 'swap2': '<path d="M17 3l4 4-4 4M21 7H8a5 5 0 0 0-5 5M7 21l-4-4 4-4M3 17h13a5 5 0 0 0 5-5"/>', 'cal': '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', 'box': '<path d="M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/>', 'go': '<path d="m9 6 6 6-6 6"/>'};
+QI.info='<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'; QI.minus='<path d="M5 12h14"/>'; QI.plus='<path d="M12 5v14M5 12h14"/>';
 const qIc = k=>`<svg class="qi" viewBox="0 0 24 24">${QI[k]}</svg>`;
 /* ==================================== PICKING ==================================== */
 /* Some items (fish, poultry…) never pass through the warehouse — the driver collects
@@ -627,26 +628,33 @@ function openModifyModal(it, product, onDone){
   const conv = product ? computeUnitConversion(it.requestedUnit, product.unit, it.requestedQty) : null;
   const prefillQty = conv ? round2(conv.convertedQty) : it.requestedQty;
   const prefillUnit = conv ? (product.unit||'') : it.requestedUnit;
-  showModal(`<h3>Modify — ${esc(it.excelDesc)}</h3>
-    ${matchNote(it) ? `<p class="subtle" style="margin-top:-10px;">${esc(matchNote(it))}</p>` : ''}
-    ${conv ? `<p class="subtle">Ordered as ${it.requestedQty} × ${esc(it.requestedUnit)} — converted to ${prefillQty} × ${esc(prefillUnit)} based on the product's database unit. Adjust below if needed.</p>` : ''}
-    <div class="row2" id="m_normalqty" style="display:${it.status==='substituted'?'none':''};">
-      <div class="field"><label>Actual quantity</label><input type="number" id="m_qty" value="${prefillQty}" step="any"></div>
-      <div class="field"><label>Unit</label><input type="text" id="m_unit" value="${esc(prefillUnit)}"></div>
+  showModal(`<div class="mod-pop"><h3>Modify</h3>
+    <p class="mod-sub">${esc(it.excelDesc)}${matchNote(it) ? ' · '+esc(matchNote(it)).replace(/^Matched to:\s*/i,'matched to ') : ''}</p>
+    ${conv ? `<div class="mod-info">${qIc('info')}<div>Ordered as <b>${it.requestedQty} × ${esc(it.requestedUnit)}</b>, converted to <b>${prefillQty} × ${esc(prefillUnit)}</b>. Adjust below if needed.</div></div>` : ''}
+    <div id="m_normalqty" style="display:${it.status==='substituted'?'none':''};">
+      <div class="qa-lbl">What you picked</div>
+      <div class="mod-grid">
+        <div class="mod-qty"><button type="button" class="mod-step" id="m_minus" aria-label="Less">${qIc('minus')}</button><input type="number" id="m_qty" value="${prefillQty}" step="any" inputmode="decimal"><button type="button" class="mod-step" id="m_plus" aria-label="More">${qIc('plus')}</button></div>
+        <input type="text" id="m_unit" value="${esc(prefillUnit)}" class="mod-unit" aria-label="Unit">
+      </div>
     </div>
-    <div class="field"><label><input type="checkbox" id="m_sub" style="width:auto; margin-right:8px;" ${it.status==='substituted'?'checked':''}>Substitute with a different product</label></div>
+    <label class="mod-toggle" for="m_sub">${qIc('swap2')}<span>Substitute with a different product<small>Customer got something else instead</small></span><input type="checkbox" id="m_sub" ${it.status==='substituted'?'checked':''}><i class="mod-sw"></i></label>
     <div id="m_subwrap" style="display:${it.status==='substituted'?'block':'none'};">
-      <label>Replacement products — each with its own quantity</label>
+      <div class="qa-lbl">Replacement products — each with its own quantity</div>
       <div id="m_subrows"></div>
       <button type="button" class="btn btn-ghost btn-sm" id="m_subadd" style="margin-bottom:12px;">+ Add another product</button>
     </div>
+    <div class="qa-lbl">Dates</div>
     <div class="field"><label>Production date (optional)</label><input type="date" id="m_prod" value="${it.actualProductionDate||''}"></div>
     ${expiryFieldHtml('m', {expiryDate: it.actualExpiryDate || '', mode: it.actualExpiryMode, shelfAmount: it.actualExpiryShelfAmount, shelfUnit: it.actualExpiryShelfUnit})}
-    <div class="field"><label>Notes</label><textarea id="m_notes"></textarea></div>
-    <div style="display:flex; gap:10px; margin-top:10px;">
-      <button class="btn btn-signal" id="m_save" style="flex:1;">Save &amp; continue</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-    </div>`);
+    <div class="qa-lbl">Notes</div>
+    <div class="field"><textarea id="m_notes" rows="2" placeholder="Optional"></textarea></div>
+    <div class="mod-bar">
+      <button class="qa-primary mod-save" id="m_save">${qIc('check')}Save &amp; continue</button>
+      <button class="mod-cancel" onclick="closeModal()">Cancel</button>
+    </div></div>`);
+  $('#m_minus').onclick = ()=>{ const v=parseFloat($('#m_qty').value)||0; $('#m_qty').value = Math.max(0, +(v-1).toFixed(6)); };
+  $('#m_plus').onclick = ()=>{ const v=parseFloat($('#m_qty').value)||0; $('#m_qty').value = +(v+1).toFixed(6); };
   wireExpiryField('m', 'm_prod');
   // one row per replacement product: {productId, name, qty, unit}
   let subs = replacementsOf(it).map(r=>({productId:r.productId, name:r.name, qty:r.qty, unit:r.unit}));
