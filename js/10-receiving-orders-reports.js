@@ -218,7 +218,7 @@ async function allItemsScreen(orderId){
       return `<div class="list-row" data-open="${it.id}" style="cursor:pointer;">
         <div style="width:38px;" class="subtle">${esc(it.sr||'—')}</div>
         <div style="flex:1; min-width:0;">
-          <b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}
+          <b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}${it.origDesc?'<span class="badge b-modified">changed by customer</span>':''}
           <div class="subtle">${it.requestedQty} ${esc(it.requestedUnit)}${note?' · '+esc(note):''}</div>
           ${outcome ? `<div class="subtle">${outcome}</div>` : ''}
         </div>

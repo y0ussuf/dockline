@@ -174,6 +174,10 @@ async function auditChange(store, prev, next){
   }
   if(store==='orderItems'){
     if(!prev || !next) return;                       // lines are created / cleared by an import, which is logged as one line
+    if(prev.excelDesc!==next.excelDesc || String(prev.requestedQty)!==String(next.requestedQty) || (prev.requestedUnit||'')!==(next.requestedUnit||'')){
+      const o0 = await getOne('orders', next.orderId);
+      await log({kind:'pick', target:next.excelDesc, tid:next.orderId, text:`Customer changed a line: “${prev.excelDesc}” ${prev.requestedQty} ${prev.requestedUnit||''} → “${next.excelDesc}” ${next.requestedQty} ${next.requestedUnit||''} (${o0 ? orderLabel(o0) : 'an order'})`.replace(/ +/g,' ')});
+    }
     const stChanged = prev.status!==next.status, qtyChanged = String(prev.actualQty??'')!==String(next.actualQty??'');
     if(!stChanged && !qtyChanged) return;
     if(stChanged && (next.status==='matched' || prev.status==='unmatched')) return;   // matching steps are not picking
