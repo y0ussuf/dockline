@@ -319,7 +319,7 @@ async function orderSummary(orderId){
   const counts = {};
   items.forEach(it=>{ counts[it.status]=(counts[it.status]||0)+1; });
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Order summary</h1><div style="display:flex; gap:8px; flex-wrap:wrap;">${order.status==='completed' ? `<a class="btn btn-ghost btn-sm" href="#/invoice/order/${order.id}">🧾 Invoices</a>` : ''}<button class="btn btn-signal btn-sm" id="exportXls">⬇ Export to Excel</button></div></div>
+    <div class="topbar"><h1>Order summary</h1><div style="display:flex; gap:8px; flex-wrap:wrap;">${order.status==='completed' ? `<a class="btn btn-ghost btn-sm" href="#/invoice/order/${order.id}">🧾 Invoices</a>` : ''}${typeof canMoney==='function' && canMoney() ? `<a class="btn btn-ghost btn-sm" href="#/money/${order.id}">💰 Profit</a>` : ''}<button class="btn btn-signal btn-sm" id="exportXls">⬇ Export to Excel</button></div></div>
     <div class="card" style="margin-bottom:18px;">
       <div class="row2">
         <div><b>Vessel</b><div>${esc(order.vessel)}</div></div>
