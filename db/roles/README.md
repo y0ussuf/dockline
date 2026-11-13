@@ -8,6 +8,7 @@ The app side (js/26-roles.js) works on its own: it hides what a role may not use
 | `r01_roles_and_rls.sql` | Per-permission read/write/delete rules on `records`; activity log append-only; roles admin-only. Replaces the old blanket policies. |
 | `r02_product_prices.sql` | OPTIONAL early copy of prices into `productPrices` (non-destructive; r03 repeats the copy). |
 | `r04_sell_cost_split.sql` | Lets roles with only "See sell prices" or only "See cost prices" read the prices store (needed once the app is updated). Rollback: `r04_rollback.sql`. |
+| `r05_finance.sql` | Lets roles with the new "Profit & loss and vessel expenses" permission read and write vessel expenses (full admins work without it). Rollback: `r05_rollback.sql`. |
 | `r03_switch_prices_to_own_store.sql` | The switch-over, one transaction: copies current prices, keeps a backup copy, removes prices from `products`, turns on the flag `sharedSettings/features.pricesSplit`. Refuses (and changes nothing) if any copy is not exact. `r03_rollback.sql` puts prices back. |
 | `../../supabase/functions/team-admin/index.ts` | Admin-only function the Team page calls to list/create people, set roles and passwords, remove accounts. |
 | `tests/test_roles.sql` | 27 checks (admin, picker, invoices, reports, unknown role, legacy staff, anon). Result: 27 pass, 0 fail. Run after `db/stock-safety/000_test_stubs.sql` + r01. |

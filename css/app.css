@@ -684,3 +684,22 @@ table.pt-hist th,table.pt-hist td{padding:6px 8px;border-bottom:1px solid var(--
 .mod-save{flex:1;height:54px;box-shadow:none;background:var(--signal);color:var(--signal-text)}
 .mod-cancel{height:54px;padding:0 20px;border-radius:14px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;font-weight:700;cursor:pointer}
 .mod-sub{margin-bottom:16px!important}
+
+/* profit & loss */
+.mn-seg{display:inline-flex;border:1px solid var(--line);border-radius:12px;padding:3px;margin:0 0 14px}
+.mn-seg button{border:0;background:transparent;color:inherit;font:inherit;font-weight:700;font-size:.85rem;padding:7px 16px;border-radius:9px;cursor:pointer}
+.mn-seg button.on{background:var(--signal);color:var(--signal-text)}
+.mn-hero{border-radius:18px;padding:18px 18px 16px;background:var(--card);border:1px solid var(--line);margin-bottom:14px}
+.mn-hero-l{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;opacity:.7;font-weight:700}
+.mn-hero-v{font-size:1.9rem;font-weight:800;margin:4px 0}.mn-hero-s{font-size:.85rem;opacity:.8}
+.mn-hero.neg{background:var(--danger-bg);border-color:var(--danger,#c0392b)}.mn-hero.neg .mn-hero-v{color:var(--danger,#c0392b)}
+.mn-hero.pos{background:var(--success-bg);border-color:var(--success)}.mn-hero.pos .mn-hero-v{color:var(--success)}
+.mn-sum>div{display:flex;justify-content:space-between;gap:10px;padding:9px 0}
+.mn-sum small{opacity:.65;font-weight:500}.mn-line{border-top:1px solid var(--line)}.mn-net{font-size:1.1rem;font-weight:800}
+b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
+.mn-cat{padding:7px 0}.mn-cat-h{display:flex;justify-content:space-between;gap:10px}
+.mn-bar{height:7px;border-radius:99px;background:var(--line);margin-top:5px;overflow:hidden}.mn-bar i{display:block;height:100%;background:var(--signal);border-radius:99px}
+.mn-exp{display:flex;gap:10px;align-items:center;padding:11px 0;border-top:1px solid var(--line);cursor:pointer}
+.mn-amt{display:flex;gap:10px;align-items:flex-start}
+.mn-v{display:flex;gap:12px;align-items:center;margin-bottom:10px;text-decoration:none;color:inherit}
+.mn-v-n{font-weight:800;text-align:right}.mn-v.neg .mn-v-n{color:var(--danger,#c0392b)}.mn-v.pos .mn-v-n{color:var(--success)}

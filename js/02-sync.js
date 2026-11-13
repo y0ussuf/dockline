@@ -9,7 +9,7 @@
    wins; a device never overwrites its own not-yet-pushed edit with an
    older remote one.
    ========================================================================= */
-const SYNC_TABLES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','boxReceipts','boxTypes','productReceipts','receivingInvoices','batches','sharedSettings','invoices','roles','activity'];
+const SYNC_TABLES=['warehouses','sections','products','mappings','orders','orderItems','suppliers','boxReceipts','boxTypes','productReceipts','receivingInvoices','batches','sharedSettings','invoices','expenses','roles','activity'];
 /* Past-order analysis data (Insights) is far bigger than normal records — thousands of lines from one
    import — so it can't go through the one-request-per-record queue above. These two stores sync in
    batches of 500 instead (see pushHistory / the pull below). A record without synced:true hasn't been

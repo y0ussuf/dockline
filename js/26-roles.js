@@ -33,7 +33,8 @@ const PERM_GROUPS = [
     ['invoices.view','See invoices',''],
     ['invoices.edit','Create & edit invoices',''],
     ['invoices.issue','Issue invoices',''],
-    ['invoices.delete','Delete invoices','']]},
+    ['invoices.delete','Delete invoices',''],
+    ['finance','Profit & loss and vessel expenses','See profit per vessel and add expenses. Needs both sell and cost prices ticked above to show any numbers']]},
   {g:'Reports', items:[
     ['reports.view','Insights & forecasts',''],
     ['history.view','Order history',''],
@@ -58,7 +59,7 @@ const ROUTE_PERMS = {
   orders:['orders.view'], order:['orders.view'], history:['history.view'], splitter:['splitter'], qcheck:['qcheck'],
   products:['products.view'], productsetup:['products.edit'], table:['products.view'], warehouses:['products.view','warehouses.edit'], warehouse:['receiving','stock.view'],
   stock:['stock.view'], deliveries:['receiving'], boxtypes:['receiving'], receiving:['receiving'], batches:['receiving','stock.view'], reliability:['receiving','suppliers.view'],
-  suppliers:['suppliers.view'], prices:['prices.view'], invoices:['invoices.view'], invoice:['invoices.view'],
+  suppliers:['suppliers.view'], prices:['prices.view'], invoices:['invoices.view'], invoice:['invoices.view'], money:['finance'],
   insights:['reports.view'], forecast:['reports.view'], duplicates:['merge'], merge:['merge'], mergemany:['merge'],
   activity:['activity.view'], mapcheck:['products.edit'], team:['__admin']
 };
@@ -136,7 +137,7 @@ function applyProductFormPerms(){
 /* ------------------------------------ activity log ------------------------------------ */
 let ACTOR_NAME = '', AUDIT_ON = false;   // switched on once the app has started, so start-up housekeeping isn't logged as someone's work
 const actorName = ()=> ACTOR_NAME || (AUTH && AUTH.email ? AUTH.email.split('@')[0] : '') || 'this device';
-const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles','mappings','orderItems']);
+const AUDITED = new Set(['products','orders','invoices','productReceipts','boxReceipts','receivingInvoices','batches','suppliers','warehouses','sections','roles','mappings','orderItems','expenses']);
 const AUD_TRACK = {stockQty:'stock', costPrice:'price', sellPrice:'price', priceRef:'price', lowStockLimit:'edit', supplierId:'edit', lumpGroup:'edit', name:'edit', unit:'edit', active:'edit', packSize:'edit', warehouseId:'move', sectionId:'move'};
 const AUD_FIELD = {stockQty:'Stock', costPrice:'Cost price', sellPrice:'Sell price', priceRef:'Prices are for', lowStockLimit:'Low-stock limit', supplierId:'Supplier', lumpGroup:'Priced as a whole', name:'Name', unit:'Unit', active:'Active', packSize:'Pack size', warehouseId:'Warehouse', sectionId:'Section'};
 const audShow = v => v==null||v==='' ? '—' : (typeof v==='object' ? (v.qty ? `${v.qty} ${v.unit||''}`.trim() : '—') : String(v));
@@ -195,6 +196,13 @@ async function auditChange(store, prev, next){
     if(prev.status!==next.status) return log({kind:'invoice', target:lab(next), tid, text:`${lab(next)}: ${prev.status||'—'} → ${next.status||'—'}`});
     return;
   }
+  if(store==='expenses'){
+    if(cur.kind==='rate') return;
+    const lab = `an expense “${cur.cat||''}” ${cur.vessel?'on '+cur.vessel:''}`.trim();   // amounts are not written to the activity log
+    if(!prev) return log({kind:'money', target:cur.vessel||'', tid:cur.orderId, text:`Added ${lab}`});
+    if(!next) return log({kind:'delete', target:cur.vessel||'', tid:cur.orderId, text:`Deleted ${lab}`});
+    return log({kind:'money', target:cur.vessel||'', tid:cur.orderId, text:`Changed ${lab}`});
+  }
   if(store==='productReceipts' || store==='boxReceipts' || store==='receivingInvoices'){
     const what = store==='receivingInvoices' ? 'a delivery invoice' : store==='boxReceipts' ? 'a box receipt' : 'a product receipt';
     if(!prev) return log({kind:'receive', target:what, tid, text:`Recorded ${what}${cur.invoiceNo?' '+cur.invoiceNo:''}`});
@@ -223,7 +231,7 @@ async function auditChange(store, prev, next){
 }
 
 /* --------------------------------------- Activity page --------------------------------------- */
-const ACT_KINDS = [['','Everything'],['stock','Stock'],['price','Prices'],['receive','Receiving'],['order','Orders'],['pick','Picking'],['import','Imports'],['download','Downloads'],['invoice','Invoices'],['add','Added'],['delete','Deleted'],['move','Moved'],['edit','Edits'],['setup','Setup']];
+const ACT_KINDS = [['','Everything'],['stock','Stock'],['price','Prices'],['receive','Receiving'],['order','Orders'],['pick','Picking'],['import','Imports'],['download','Downloads'],['invoice','Invoices'],['money','Money'],['add','Added'],['delete','Deleted'],['move','Moved'],['edit','Edits'],['setup','Setup']];
 route('activity', async ()=>{
   const all = (await getAll('activity')).sort((a,b)=>a.at<b.at?1:-1);
   const people = [...new Set(all.map(a=>a.by).filter(Boolean))].sort();
