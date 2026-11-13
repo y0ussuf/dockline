@@ -703,3 +703,7 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 .mn-amt{display:flex;gap:10px;align-items:flex-start}
 .mn-v{display:flex;gap:12px;align-items:center;margin-bottom:10px;text-decoration:none;color:inherit}
 .mn-v-n{font-weight:800;text-align:right}.mn-v.neg .mn-v-n{color:var(--danger,#c0392b)}.mn-v.pos .mn-v-n{color:var(--success)}
+
+/* last year at this time */
+.ly-nav{display:flex;align-items:center;gap:10px;margin:4px 0 14px;font-size:1.1rem}
+.ly-nav b{min-width:9.5em;text-align:center}
