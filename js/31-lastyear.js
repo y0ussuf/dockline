@@ -69,15 +69,15 @@ route('lastyear', async ()=>{
     <div class="ly-nav"><button class="btn btn-ghost btn-sm" id="ly_prev" aria-label="Previous month"><span data-ico="arrow-left"></span></button><b>${esc(mname)}</b><button class="btn btn-ghost btn-sm" id="ly_next" aria-label="Next month"><span data-ico="arrow-left" style="display:inline-flex; transform:scaleX(-1);"></span></button>
       ${ym!==dflt ? `<button class="chip" id="ly_reset">${esc(lyMonthName(dflt))}</button>` : ''}</div>
     ${r.reliable ? '' : `<div class="bt-warn" style="margin-bottom:12px;"><b>Too little history for ${esc(mname)}.</b> Only ${c.orders} past order${c.orders===1?'':'s'} ${c.orders===1?'was':'were'} imported for that month${c.typical?` (a normal month lately has about ${c.typical})`:''}, so the list below is incomplete. Pick a month with more orders, or import the missing sheets. Home shows no notice for a month like this.</div>`}
-    <div class="card" style="margin-bottom:14px; ${c.unmatched||c.unit||c.badDates?'border-color:var(--warn);':''}">
-      <div class="section-title">What ${esc(mname)} is built from</div>
+    <details class="card ly-details" style="margin-bottom:14px;">
+      <summary>How ${esc(mname)} was counted${c.unmatched||c.unit||c.badDates?' <span data-ico="triangle-alert" style="color:var(--warn);"></span>':''}<span class="subtle"> · ${c.orders} order${c.orders===1?'':'s'}, ${c.counted} of ${c.lines} lines</span></summary>
       <p style="margin:6px 0;"><b>${c.orders}</b> past order${c.orders===1?'':'s'} from <b>${c.vessels}</b> vessel${c.vessels===1?'':'s'}, with <b>${c.lines}</b> lines. <b>${c.counted}</b> of them are counted below.</p>
       ${c.unmatched ? `<p style="margin:6px 0;"><span data-ico="triangle-alert"></span> <b>${c.unmatched}</b> line${c.unmatched===1?'':'s'} not linked to a product, so left out${c.topUnmatched.length?`: ${c.topUnmatched.map(u=>`${esc(u.desc)} (${u.n})`).join(', ')}`:''}. <a href="#/insights/match">Link them</a>.</p>` : ''}
       ${c.unit ? `<p style="margin:6px 0;"><span data-ico="triangle-alert"></span> <b>${c.unit}</b> line${c.unit===1?'':'s'} with a unit that cannot be converted to the product's unit, so left out. They are listed on the Insights page under the lines to review.</p>` : ''}
       ${c.badDates ? `<p style="margin:6px 0;"><span data-ico="triangle-alert"></span> <b>${c.badDates}</b> past order${c.badDates===1?' has':'s have'} a date that looks wrong and is left out of every Insights figure until it is fixed.</p>` : ''}
       <p class="subtle" style="margin:10px 0 6px;">Imported orders per month — tap a month to look at it:</p>
       <div class="tag-row" style="gap:6px;">${c.perMonth.map(([k,n])=>`<button class="chip ${k===ym?'active':''}" data-m="${k}">${k} · ${n}</button>`).join('')}</div>
-    </div>
+    </details>
     <div class="grid-stats">
       <div class="stat"><b style="color:var(--danger)">${r.red}</b><div class="lbl">Well below that month</div></div>
       <div class="stat"><b style="color:var(--warn)">${r.amber}</b><div class="lbl">Below that month</div></div>
