@@ -59,6 +59,7 @@ route('lastyear', async ()=>{
   if(!hOrders.length){ location.hash = '#/insights'; return; }
   const ym = window.__lyMonth || lyDefaultMonth(), mode = window.__lyMode, dflt = lyDefaultMonth();
   const r = await lastYearWatch(ym), fq = _fmtQty, c = r.cov, mname = lyMonthName(ym);
+  if(ym===dflt) lySaveNotice(r);
   const badge = {red:['b-not_available','Well below'], amber:['b-modified','Below'], green:['b-completed','Covered'], nostock:['b-pending','No stock record'], none:['b-pending','Not compared']};
   const warnSet = r.rows.filter(x=>x.level==='red'||x.level==='amber'||x.level==='nostock');
   const list = mode==='all' ? r.rows : mode==='warn' ? warnSet : r.rows.slice().sort((a,b)=>b.qty-a.qty).slice(0,20);
@@ -103,16 +104,23 @@ route('lastyear', async ()=>{
   $('#ly_a').onclick = ()=>{ window.__lyMode = 'all'; routes['lastyear'](); };
 });
 
-/* home page notice: filled in after the page is drawn so Home never waits for it. Only when that month has enough history to mean something. */
-async function lastYearHomeNotice(){
+/* home page notice. Home must never wait for the history analysis (it reads every past order line), so it only shows a small saved result
+   — written here whenever the analysis has already been run for another reason (opening this page or Insights) — and never computes anything itself. */
+const LY_CACHE_KEY = 'dl_ly_notice';
+function lySaveNotice(r){
+  try{ localStorage.setItem(LY_CACHE_KEY, JSON.stringify({ym:r.ym, red:r.red, amber:r.amber, reliable:r.reliable, day:todayISO()})); }catch(_){}
+}
+function lastYearHomeNotice(){
   try{
     if(!can('reports.view')) return;
-    if(!$('#lyNotice')) return;
-    const hist = await cachedAll('historyOrders'); if(!hist.length) return;
-    const r = await lastYearWatch(lyDefaultMonth()), n = r.red + r.amber;
-    if(!r.reliable || !n || !$('#lyNotice')) return;
-    const col = r.red ? 'var(--danger)' : 'var(--warn)';
-    $('#lyNotice').innerHTML = `<a href="#/lastyear" class="btn btn-ghost" style="border-color:${col}; color:${col};"><span data-ico="history"></span> ${n} product${n===1?'':'s'} below what vessels ordered in ${esc(lyMonthName(r.ym))}${r.red?` (${r.red} well below)`:''}</a>`;
-  }catch(e){ console.warn('last-year notice', e); }
+    const slot = $('#lyNotice'); if(!slot) return;
+    const c = JSON.parse(localStorage.getItem(LY_CACHE_KEY) || 'null');
+    if(!c || c.ym!==lyDefaultMonth() || !c.reliable) return;     // saved for another month (a new month began) → wait for the next visit to Insights
+    const n = c.red + c.amber; if(!n) return;
+    const col = c.red ? 'var(--danger)' : 'var(--warn)';
+    slot.innerHTML = `<a href="#/lastyear" class="btn btn-ghost" style="border-color:${col}; color:${col};"><span data-ico="history"></span> ${n} product${n===1?'':'s'} below what vessels ordered in ${esc(lyMonthName(c.ym))}${c.red?` (${c.red} well below)`:''}<span class="subtle" style="font-weight:500;"> · checked ${esc(fmtDate(c.day))}</span></a>`;
+  }catch(_){}
 }
 { const _home = routes['home']; if(_home) routes['home'] = async function(...a){ const r = await _home.apply(this, a); lastYearHomeNotice(); return r; }; }
+/* opening Insights already loads the history, so refreshing the saved result there costs almost nothing — and only after the page is drawn */
+{ const _ins = routes['insights']; if(_ins) routes['insights'] = async function(...a){ const r = await _ins.apply(this, a); setTimeout(async ()=>{ try{ if((a[0]||[])[0]) return; if(!(await cachedAll('historyOrders')).length) return; lySaveNotice(await lastYearWatch(lyDefaultMonth())); }catch(_){} }, 300); return r; }; }
