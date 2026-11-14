@@ -708,3 +708,7 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 .ly-nav{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:4px 0 14px;font-size:1.1rem}
 .ly-nav .chip{flex-basis:100%;width:fit-content}
 .ly-nav b{min-width:9.5em;text-align:center}
+
+.ly-details>summary{cursor:pointer;font-weight:700;list-style:none}
+.ly-details>summary::-webkit-details-marker{display:none}
+.ly-details[open]>summary{margin-bottom:8px}
