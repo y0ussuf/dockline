@@ -49,73 +49,100 @@ route('warehouse', async ()=>{
   const shortfalls = await openShortfalls();
   const sortedSuppliers = suppliersAll.slice().sort((a,b)=>a.name.localeCompare(b.name));
 
+  const lowPct = tracked.length ? Math.round(low.length / tracked.length * 100) : 0;
+  const short = shortfalls.length;
+  const rcount = receiptsAll.length;
+
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Warehouse management</h1></div>
-    <p class="subtle" style="margin-top:-10px; margin-bottom:22px;">Tools for running the warehouse itself — stock levels today, more coming as you need them.</p>
-    <div class="grid-stats" style="margin-bottom:26px;">
-      <div class="stat"><b>${low.length}</b><div class="lbl">Low stock items</div></div>
-      <div class="stat"><b>${tracked.length}</b><div class="lbl">Products tracked</div></div>
-      <div class="stat"><b>${shortfalls.length}</b><div class="lbl">Unresolved box shortfalls</div></div>
-      <div class="stat"><b>${receiptsAll.length}</b><div class="lbl">Receiving entries logged</div></div>
-    </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:220px;">
-          <div class="section-title" style="margin-bottom:4px;">Stock levels</div>
-          <p class="subtle" style="margin:0;">See what's low, update quantities, and start tracking new products. Stock reduces automatically whenever an order finishes.</p>
+    <header class="wm-head">
+      <h1>Warehouse management</h1>
+      <p>Tools for running the warehouse itself — stock levels today, more coming as you need them.</p>
+    </header>
+
+    <section class="wm-kpis">
+      <div class="wm-kpi ${low.length?'warn':'ok'}"><span class="wm-ic" data-ico="${low.length?'triangle-alert':'circle-check'}"></span><div class="wm-txt"><b>${low.length}</b><div class="lbl">Low stock items</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="package"></span><div class="wm-txt"><b>${tracked.length}</b><div class="lbl">Products tracked</div></div></div>
+      <div class="wm-kpi ${short?'bad':'ok'}"><span class="wm-ic" data-ico="${short?'triangle-alert':'circle-check'}"></span><div class="wm-txt"><b>${short}</b><div class="lbl">Unresolved box shortfalls</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="inbox"></span><div class="wm-txt"><b>${rcount}</b><div class="lbl">Receiving entries logged</div></div></div>
+    </section>
+
+    <section class="wm-grid">
+      <article class="wm-card">
+        <div class="wm-top">
+          <span class="wm-tile" data-ico="boxes"></span>
+          <div class="wm-body">
+            <div class="wm-title"><h2>Stock levels</h2>${low.length ? `<span class="wm-pill warn">${low.length} low</span>` : `<span class="wm-pill ok"><span data-ico="check"></span>All stocked</span>`}</div>
+            <p>See what's low, update quantities, and start tracking new products. Stock reduces automatically whenever an order finishes.</p>
+          </div>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <a href="#/stock" class="btn btn-signal">⚠ View low stock (${low.length})</a>
-          <a href="#/stock/all" class="btn btn-ghost">Manage all stock</a>
+        ${tracked.length ? `<div class="wm-meter">
+          <div class="wm-meter-row"><span><b>${low.length}</b> of ${tracked.length} tracked item${tracked.length===1?'':'s'} running low</span><span>${lowPct}%</span></div>
+          <div class="wm-bar"><i style="width:${lowPct}%"></i></div>
+        </div>` : ''}
+        <div class="wm-actions">
+          <a href="#/stock" class="btn btn-signal"><span data-ico="triangle-alert"></span> View low stock (${low.length})</a>
+          <a href="#/stock/all" class="wm-link">Manage all stock <span data-ico="chevron-right"></span></a>
         </div>
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:220px;">
-          <div class="section-title" style="margin-bottom:4px;">Supplier deliveries</div>
-          <p class="subtle" style="margin:0;">Reconcile fish/meat/pork boxes received from suppliers against what actually went out with each order. Confirming the sent count is required before that order can finish.</p>
+      </article>
+
+      <article class="wm-card">
+        <div class="wm-top">
+          <span class="wm-tile" data-ico="truck"></span>
+          <div class="wm-body">
+            <div class="wm-title"><h2>Supplier deliveries</h2>${short ? `<span class="wm-pill bad">${short} unresolved</span>` : `<span class="wm-pill ok"><span data-ico="check"></span>All clear</span>`}</div>
+            <p>Reconcile fish/meat/pork boxes received from suppliers against what actually went out with each order. Confirming the sent count is required before that order can finish.</p>
+          </div>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-signal" id="hubLogDelivery">+ Log a delivery</button>
-          <a href="#/deliveries" class="btn ${shortfalls.length?'btn-danger':'btn-ghost'}">${shortfalls.length?`⚠ ${shortfalls.length} unresolved`:'View deliveries'}</a>
-          <a href="#/boxtypes" class="btn btn-ghost">Box types</a>
-          <a href="#/reliability" class="btn btn-ghost">📊 Supplier reliability</a>
+        <div class="wm-actions">
+          <button class="btn btn-signal" id="hubLogDelivery"><span data-ico="plus"></span> Log a delivery</button>
+          <a href="#/deliveries" class="btn ${short?'btn-danger':'btn-ghost'}">${short?`<span data-ico="triangle-alert"></span> ${short} unresolved`:'View deliveries'}</a>
+          <div class="wm-links">
+            <a href="#/boxtypes" class="wm-link">Box types <span data-ico="chevron-right"></span></a>
+            <a href="#/reliability" class="wm-link">Supplier reliability <span data-ico="chevron-right"></span></a>
+          </div>
         </div>
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:220px;">
-          <div class="section-title" style="margin-bottom:4px;">Product receiving</div>
-          <p class="subtle" style="margin:0;">Pick a supplier, add every product on the delivery with its quantity, unit, dates and batch — like an invoice. Quantities go onto stock. Not prices, just how much came in, from who, and when.</p>
+      </article>
+
+      <article class="wm-card">
+        <div class="wm-top">
+          <span class="wm-tile" data-ico="inbox"></span>
+          <div class="wm-body">
+            <div class="wm-title"><h2>Product receiving</h2><span class="wm-pill">${rcount} ${rcount===1?'entry':'entries'}</span></div>
+            <p>Pick a supplier, add every product on the delivery with its quantity, unit, dates and batch — like an invoice. Quantities go onto stock. Not prices, just how much came in, from who, and when.</p>
+          </div>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-signal" id="hubLogReceipt">+ New delivery</button>
+        <div class="wm-actions">
+          <button class="btn btn-signal" id="hubLogReceipt"><span data-ico="plus"></span> New delivery</button>
           <a href="#/receiving" class="btn btn-ghost">View history</a>
         </div>
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:220px;">
-          <div class="section-title" style="margin-bottom:4px;">Batches &amp; expiry</div>
-          <p class="subtle" style="margin:0;">See what's expired or about to expire, every batch of each product, and set the shelf-life reminder for vessels.</p>
+      </article>
+
+      <article class="wm-card">
+        <div class="wm-top">
+          <span class="wm-tile" data-ico="hourglass"></span>
+          <div class="wm-body">
+            <div class="wm-title"><h2>Batches &amp; expiry</h2></div>
+            <p>See what's expired or about to expire, every batch of each product, and set the shelf-life reminder for vessels.</p>
+          </div>
         </div>
-        <a href="#/batches" class="btn btn-ghost">Open batches</a>
-      </div>
-    </div>
-    <div class="card">
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:220px;">
-          <div class="section-title" style="margin-bottom:4px;">Low stock report</div>
-          <p class="subtle" style="margin:0;">Download an Excel sheet of everything currently low, grouped by the supplier who restocks it — so you know exactly who to call.</p>
+        <div class="wm-actions">
+          <a href="#/batches" class="btn btn-ghost">Open batches</a>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <a href="#/stock" class="btn btn-ghost">${low.length ? `⬇ Export ${low.length} low item${low.length===1?'':'s'}` : 'View stock'}</a>
+      </article>
+
+      <article class="wm-card wide">
+        <div class="wm-top">
+          <span class="wm-tile" data-ico="download"></span>
+          <div class="wm-body">
+            <div class="wm-title"><h2>Low stock report</h2></div>
+            <p>Download an Excel sheet of everything currently low, grouped by the supplier who restocks it — so you know exactly who to call.</p>
+          </div>
         </div>
-      </div>
-    </div>`;
+        <div class="wm-actions" style="margin-top:0;">
+          <a href="#/stock" class="btn btn-ghost">${low.length ? `<span data-ico="download"></span> Export ${low.length} low item${low.length===1?'':'s'}` : 'View stock'}</a>
+        </div>
+      </article>
+    </section>`;
   $('#hubLogDelivery').onclick = ()=>{
     openOrderPicker((order)=>{ location.hash = `#/order/${order.id}/boxes`; render(); });
   };
