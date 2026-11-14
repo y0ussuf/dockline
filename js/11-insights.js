@@ -387,7 +387,10 @@ function planVesselTidy(hOrders){
     const name = cleanVesselName(o.vesselName);
     if(!name) continue;
     const key = vesselKeyOf(name);
-    if(name!==String(o.vesselName||'').trim() || key!==o.vesselKey) changes.push({order:o, name, key});
+    // Compare with the key STORED on the order. insightsData() swaps in the main spelling's key for vessels
+    // merged in "Same vessel, spelt differently" and keeps the stored one in mergedFrom — comparing against
+    // the swapped key made every merged vessel look "untidy" again after each tidy-up.
+    if(name!==String(o.vesselName||'').trim() || key!==(o.mergedFrom||o.vesselKey)) changes.push({order:o, name, key});
   }
   if(!changes.length) return null;
   const change = new Map(changes.map(c=>[c.order.id,c]));
@@ -400,7 +403,7 @@ function planVesselTidy(hOrders){
   }
   const merges = new Map();   // "old name → clean name" with a count
   for(const c of changes){ const k = c.order.vesselName.trim()+'\u0000'+c.name; merges.set(k, (merges.get(k)||0)+1); }
-  const existingKeys = new Set(imported.filter(o=>!change.has(o.id)).map(o=>o.vesselKey));
+  const existingKeys = new Set(imported.filter(o=>!change.has(o.id)).map(o=>o.mergedFrom||o.vesselKey));
   const mergedVessels = new Set(changes.filter(c=>existingKeys.has(c.key)).map(c=>c.key));
   return {changes, dropIds, merges:[...merges.entries()].map(([k,n])=>{const [from,to]=k.split('\u0000'); return {from,to,n};}), mergedVessels:mergedVessels.size};
 }
