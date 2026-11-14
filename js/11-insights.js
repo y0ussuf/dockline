@@ -277,9 +277,9 @@ function stockAdviceFor(a, product){
    (home → vessel → product → forecast) doesn't re-read and re-crunch everything each time. Read-only. */
 let _insightsMemo = null;
 function insightsData(){
-  const stamp = dataStamp(['historyOrders','historyLines','orders','orderItems','products','mappings']);
+  const stamp = dataStamp(['historyOrders','historyLines','orders','orderItems','products','mappings','sharedSettings']);
   if(_insightsMemo && _insightsMemo.stamp===stamp) return _insightsMemo.p;
-  const p = _computeInsightsData();
+  const p = _computeInsightsData().then(d=> typeof applyVesselAliasesToData==='function' ? applyVesselAliasesToData(d) : d);
   _insightsMemo = {stamp, p};
   p.catch(()=>{ if(_insightsMemo && _insightsMemo.p===p) _insightsMemo = null; });
   return p;
@@ -479,18 +479,20 @@ async function insightsHome(){
   // ---- vessels (grouped by name) ----
   const vessels = new Map();
   for(const o of hOrders){
-    const v = vessels.get(o.vesselKey) || {key:o.vesselKey, names:new Map(), imos:new Set(), dates:[]};
-    v.names.set(o.vesselName, (v.names.get(o.vesselName)||0)+1);
+    const v = vessels.get(o.vesselKey) || {key:o.vesselKey, names:new Map(), own:new Map(), imos:new Set(), dates:[]};
+    v.names.set(o.vesselName, (v.names.get(o.vesselName)||0)+1); if(!o.mergedFrom) v.own.set(o.vesselName, (v.own.get(o.vesselName)||0)+1);
     if(o.imo) v.imos.add(o.imo);
     if(o.orderDate) v.dates.push(o.orderDate);
     vessels.set(o.vesselKey, v);
   }
   const vesselRows = [...vessels.values()].map(v=>{
     v.dates.sort();
-    const name = [...v.names.entries()].sort((a,b)=>b[1]-a[1])[0][0];
+    const name = [...(v.own.size ? v.own : v.names).entries()].sort((a,b)=>b[1]-a[1])[0][0];   // a merged-in spelling never renames the main profile
     const rh = vesselRhythm(v.dates, anchor);
     return {key:v.key, name, orders:v.dates.length, first:v.dates[0], last:v.dates[v.dates.length-1], gap:rh.gap, status:rh.status, variants:v.names.size};
   }).sort((a,b)=> VESSEL_BADGE[a.status].rank-VESSEL_BADGE[b.status].rank || b.orders-a.orders);
+
+  const vaHtml = typeof vesselSuggestHtml==='function' ? await vesselSuggestHtml(vesselRows) : '';
 
   // ---- products: demand in base measure, last 90 days vs the 90 before ----
   const cut1 = new Date(new Date(anchor).getTime()-90*86400000).toISOString().slice(0,10);
@@ -533,6 +535,7 @@ async function insightsHome(){
     </div>
     <p class="subtle" style="margin-top:-6px;">${importedOrders} imported from Excel${liveOrders?` · <b>${liveOrders}</b> finished on the site (added automatically, always up to date)`:' · orders you finish on the site are added here automatically'}${ignoredLive?` · ${ignoredLive} hidden`:''}. <a href="#/insights/live">Choose which site orders to include</a></p>
     ${badCard}
+    ${vaHtml}
     ${tidy ? `<div class="card" style="border-color:var(--warn); margin-bottom:18px;">
       <div class="section-title" style="margin-top:0;">Tidy vessel names</div>
       <p class="subtle">${tidy.changes.length} imported order${tidy.changes.length===1?' still has':'s still have'} a customer name in the vessel name (for example “${esc(tidy.merges[0].from)}” → “${esc(tidy.merges[0].to)}”), so ${tidy.mergedVessels?`${tidy.mergedVessels} vessel${tidy.mergedVessels===1?'':'s'} show${tidy.mergedVessels===1?'s':''} up twice`:'those vessels may show up twice'}. Cleaning them joins each vessel's orders into one profile.</p>
@@ -580,6 +583,7 @@ async function insightsHome(){
     $('#ip_q').oninput = ()=>{ clearTimeout(ipT); ipT = setTimeout(()=>{ ipq = $('#ip_q').value; shown = 60; drawProducts(); }, 120); };
     drawProducts();
   }
+  if(typeof vesselSuggestWire==='function') vesselSuggestWire();
   if(tidy) $('#histTidy').onclick = ()=>{
     const rows = tidy.merges.slice(0,12).map(m=>`<div class="list-row"><div style="flex:1;"><span class="subtle">${esc(m.from)}</span><br><b>→ ${esc(m.to)}</b></div><span class="subtle">${m.n} order${m.n===1?'':'s'}</span></div>`).join('');
     showModal(`<h3>Tidy vessel names</h3>

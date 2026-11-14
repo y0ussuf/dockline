@@ -739,3 +739,9 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 
 .pf .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pf .row2 .field{min-width:0}
+
+/* same-vessel merge */
+.va-s{display:flex; align-items:center; gap:8px; padding:9px 0; border-top:1px solid var(--line,rgba(128,128,128,.2));}
+.va-s:first-of-type{border-top:0;}
+.va-pick{display:flex; justify-content:space-between; align-items:center; gap:10px; width:100%; text-align:left; padding:11px 12px; margin-bottom:6px; border:1px solid var(--line,rgba(128,128,128,.25)); border-radius:12px; background:transparent; color:inherit; font:inherit; cursor:pointer;}
+.va-pick:active{background:rgba(128,128,128,.12);}
