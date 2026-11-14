@@ -1,0 +1,23 @@
+name: version-check
+
+# Fails a pull request that changes css/js/demo without bumping APP_VERSION (and every ?v= tag) in index.html.
+# Without the bump, phones keep running cached files and never show the "newer version" banner.
+# To fix a failure:  tools/bump-version.sh YYYY-MM-DD.N
+
+on:
+  pull_request:
+    paths:
+      - 'css/**'
+      - 'js/**'
+      - 'demo/**'
+      - 'index.html'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check APP_VERSION was bumped
+        run: tools/check-version.sh origin/${{ github.base_ref }}
