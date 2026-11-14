@@ -147,70 +147,91 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
   suppliers = (suppliers||[]).slice().sort((a,b)=>a.name.localeCompare(b.name));
   const secForWh = (whId)=> sections.filter(s=>s.warehouseId===whId).sort((a,b)=>a.priority-b.priority);
   const supplierOptions = ()=> `<option value="">— No supplier —</option>` + suppliers.map(s=>`<option value="${s.id}" ${s.id===p.supplierId?'selected':''}>${esc(s.name)}</option>`).join('');
+  const packSummary = (p.packSize!==''&&p.packSize!=null) ? `Pack of ${esc(p.packSize)}${p.packName?' · '+esc(p.packName):''}` : 'Not set';
+  const sw = (id, on, icon, title, small)=> `<label class="pf-row pf-switch">${qIc(icon)}<span>${title}<small>${small}</small></span><input type="checkbox" id="${id}" ${on?'checked':''}><i class="mod-sw"></i></label>`;
   showModal(`
-    <h3>${editing?'Edit product':'Add product'}</h3>
-    <div class="field"><label>Product name</label><input type="text" id="f_name" value="${esc(p.name)}"></div>
-    <div class="field"><label>Product image (optional)</label><input type="file" id="f_image" accept="image/*"></div>
-    <div class="row2">
+    <div class="pf">
+    <div class="pf-top">
+      <label class="pf-photo" for="f_image" title="Product photo">${p.image?`<img id="f_imgprev" src="${esc(p.image)}" alt="">`:`<span id="f_imgprev_empty">${qIc('image')}Photo</span>`}</label>
+      <input type="file" id="f_image" accept="image/*" style="display:none;">
+      <div><div class="pf-kicker">${editing?'Edit product':'Add product'}</div><div class="pf-title" id="f_titleprev">${esc(p.name)||'New product'}</div></div>
+    </div>
+    <div class="pf-card"><div class="pf-ch">${qIc('box')}Basics</div>
+      <div class="field"><label>Product name</label><input type="text" id="f_name" value="${esc(p.name)}"></div>
       <div class="field"><label>Unit</label><input type="text" id="f_unit" placeholder="Kg, LTR, Tin 400 gm…" value="${esc(p.unit)}"></div>
+    </div>
+    <div class="pf-card"><div class="pf-ch">${qIc('truck')}Where it comes from and lives</div>
       <div class="field">
         <label>Supplier</label>
         <select id="f_supplier">${supplierOptions()}</select>
-        <button type="button" class="btn btn-ghost btn-sm" id="f_newsup" style="margin-top:6px;">+ New supplier</button>
+        <button type="button" class="pf-link" id="f_newsup">${qIc('plus')}New supplier</button>
         <div id="f_newsup_row" style="display:none; margin-top:8px; gap:8px;">
           <input type="text" id="f_newsup_name" placeholder="Supplier name" style="margin-bottom:6px;">
           <button type="button" class="btn btn-signal btn-sm" id="f_newsup_save">Add</button>
         </div>
       </div>
+      <div class="row2">
+        <div class="field"><label>Warehouse</label><select id="f_wh">${warehouses.map(w=>`<option value="${w.id}" ${w.id===p.warehouseId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Section</label><select id="f_sec">${secForWh(p.warehouseId).map(s=>`<option value="${s.id}" ${s.id===p.sectionId?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
+      </div>
+      ${(p.locationHistory||[]).length ? `<div class="subtle" style="margin:-4px 0 4px;">Previously: ${p.locationHistory.slice(0,3).map(h=>`${esc(h.wh)} / ${esc(h.sec)} <span style="opacity:.7">(until ${fmtDate(h.at.slice(0,10))})</span>`).join(' · ')}</div>` : ''}
     </div>
-    <div class="row2">
-      <div class="field"><label>Warehouse</label><select id="f_wh">${warehouses.map(w=>`<option value="${w.id}" ${w.id===p.warehouseId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
-      <div class="field"><label>Section</label><select id="f_sec">${secForWh(p.warehouseId).map(s=>`<option value="${s.id}" ${s.id===p.sectionId?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
-    </div>
-    ${(p.locationHistory||[]).length ? `<div class="subtle" style="margin:-4px 0 10px;">Previously: ${p.locationHistory.slice(0,3).map(h=>`${esc(h.wh)} / ${esc(h.sec)} <span style="opacity:.7">(until ${fmtDate(h.at.slice(0,10))})</span>`).join(' · ')}</div>` : ''}
-    <div class="pr-box">
-      <div class="pr-h">Prices <span class="subtle">(EGP — kept exactly as typed, never rounded)</span></div>
+    <div class="pr-box pf-card">
+      <div class="pf-ch">${qIc('price')}Prices<small>EGP · exactly as typed, never rounded</small></div>
       <div class="pr-grid">
         <div class="field"><label>Cost price</label><input type="text" inputmode="decimal" id="f_cost" placeholder="0" value="${esc(p.costPrice??'')}"></div>
         <div class="field"><label>Markup %</label><input type="text" inputmode="decimal" id="f_markup" placeholder="—" value="${esc(Dec.markupText(p.costPrice, p.sellPrice))}"></div>
         <div class="field"><label>Sell price</label><input type="text" inputmode="decimal" id="f_sell" placeholder="0" value="${esc(p.sellPrice??'')}"></div>
       </div>
-      <div class="field"><label>These prices are for <span class="subtle">(optional — leave empty if the price is per unit picked)</span></label>
-        <div style="display:flex; gap:8px;"><input type="text" inputmode="decimal" id="f_refq" placeholder="e.g. 200" value="${esc(p.priceRef?p.priceRef.qty:'')}" style="flex:1;"><select id="f_refu" style="width:96px;">${['','ml','l','g','kg'].map(u=>`<option value="${u}" ${(p.priceRef&&p.priceRef.unit===u)?'selected':''}>${u||'—'}</option>`).join('')}</select></div>
-        <div class="subtle">Pro-rata: with “200 ml”, a 350 ml bottle is billed at price × 350 ÷ 200.</div></div>
-      <div class="subtle" id="f_pr_note" style="margin-top:-2px;"></div>
+      <details class="pf-more" ${p.priceRef&&p.priceRef.qty?'open':''}><summary class="pf-link">${qIc('plus')}Price is for a different amount (e.g. per 200 ml)</summary>
+        <div class="field" style="margin-top:10px;"><label>These prices are for <span class="subtle">(leave empty if the price is per unit picked)</span></label>
+          <div style="display:flex; gap:8px;"><input type="text" inputmode="decimal" id="f_refq" placeholder="e.g. 200" value="${esc(p.priceRef?p.priceRef.qty:'')}" style="flex:1;"><select id="f_refu" style="width:96px;">${['','ml','l','g','kg'].map(u=>`<option value="${u}" ${(p.priceRef&&p.priceRef.unit===u)?'selected':''}>${u||'—'}</option>`).join('')}</select></div>
+          <div class="subtle">Pro-rata: with “200 ml”, a 350 ml bottle is billed at price × 350 ÷ 200.</div></div>
+      </details>
+      <div class="subtle" id="f_pr_note" style="margin-top:6px;"></div>
     </div>
-    <div class="field"><label>Production date</label><input type="date" id="f_pdate" value="${p.productionDate||''}"></div>
-    ${expiryFieldHtml('f', {expiryDate:p.expiryDate, mode:p.expiryMode, shelfAmount:p.expiryShelfAmount, shelfUnit:p.expiryShelfUnit})}
-    <div class="field"><label>Notes</label><textarea id="f_notes">${esc(p.notes)}</textarea></div>
-    <div class="field"><label>Priced as a whole?</label>
-      <select id="f_lump"><option value="">Same as its warehouse</option><option value="-" ${p.lumpGroup==='-'?'selected':''}>No — priced item by item</option>${p.lumpGroup && p.lumpGroup!=='-'?`<option value="${esc(p.lumpGroup)}" selected>${esc(p.lumpGroup)}</option>`:''}</select>
-      <div class="subtle" style="margin-top:4px;">For meat, fish… the invoice gets one line per group (the supplier invoice total). <a href="javascript:void(0)" id="f_lumpmg">Manage groups</a></div></div>
-    <div class="field"><label>Bought per order?</label>
-      <select id="f_perorder"><option value="">Same as its warehouse</option><option value="yes" ${p.perOrder==='yes'?'selected':''}>Yes — leave out of Insights</option><option value="no" ${p.perOrder==='no'?'selected':''}>No — always show in Insights</option></select></div>
-    <div class="field"><label><input type="checkbox" id="f_active" ${p.active?'checked':''} style="width:auto; margin-right:8px;">Active</label></div>
-    <details style="margin-bottom:14px;" ${(p.stockQty!==''&&p.stockQty!=null)?'open':''}>
-      <summary class="subtle" style="cursor:pointer; margin-bottom:8px;">Stock tracking (optional)</summary>
-      <p class="subtle" style="margin-top:0;">Leave "Stock on hand" blank to not track this product — nothing changes for it. Fill it in and it'll be kept up to date automatically as orders are picked, and flagged on the Stock page once it runs low.</p>
+    <div class="pf-card"><div class="pf-ch">${qIc('chart')}Stock</div>
       <div class="row2">
         <div class="field"><label>Stock on hand</label><input type="number" id="f_stockqty" step="any" placeholder="not tracked" value="${p.stockQty===''||p.stockQty==null?'':esc(p.stockQty)}"></div>
         <div class="field"><label>Low stock limit</label><input type="number" id="f_stocklimit" step="any" placeholder="0" value="${p.lowStockLimit===''||p.lowStockLimit==null?'':esc(p.lowStockLimit)}"></div>
       </div>
-      <div class="row2" style="margin-top:12px;">
-        <div class="field"><label>Pack size</label><input type="number" id="f_packsize" step="any" placeholder="Quantity per pack" value="${p.packSize===''||p.packSize==null?'':esc(p.packSize)}"></div>
-        <div class="field"><label>Pack name</label><input type="text" id="f_packname" placeholder="Pack name" value="${esc(p.packName||'')}"></div>
-      </div>
-      <div class="field"><label>Rounding for this item</label><select id="f_packround">
-        ${[['','Use the general rule'],['up','Always round up'],['nearest','Round to nearest'],['down','Always round down']].map(([v,l])=>`<option value="${v}" ${(p.packRound||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>
-      <p class="subtle" style="margin:-4px 0 12px;">Pack size is how much one pack holds, in this product's unit — used to round vessel orders to whole packs. It can also be a step: size 1 with name “kg” orders this item in whole kg. A batch can have its own pack size when it differs. Items without a pack size are never changed.</p>
-      <label class="bt-switch"><input type="checkbox" id="f_trackbatches" ${p.trackBatches?'checked':''}><span><b>Track batches</b><small>Keep this product's stock as batches with their own batch no., production and expiry dates. Needs "Stock on hand" above (0 is fine). Turning it off removes its batch records.</small></span></label>
-    </details>
-    <div style="display:flex; gap:10px; margin-top:14px;">
-      <button class="btn btn-signal" id="f_save" style="flex:1;">Save product</button>
+      <p class="pf-hint">Leave stock on hand blank to not track this product. When filled in, it is kept up to date as orders are picked and flagged on the Stock page when it runs low.</p>
+      ${sw('f_trackbatches', p.trackBatches, 'cal', 'Track batches', 'Batch no., production and expiry dates. Needs “Stock on hand” (0 is fine). Turning it off removes its batch records.')}
+      <details class="pf-rowd"><summary class="pf-row">${qIc('pack')}<span>Pack size &amp; rounding<small>${packSummary}</small></span>${qIc('go')}</summary>
+        <div class="row2" style="margin-top:12px;">
+          <div class="field"><label>Pack size</label><input type="number" id="f_packsize" step="any" placeholder="Quantity per pack" value="${p.packSize===''||p.packSize==null?'':esc(p.packSize)}"></div>
+          <div class="field"><label>Pack name</label><input type="text" id="f_packname" placeholder="Pack name" value="${esc(p.packName||'')}"></div>
+        </div>
+        <div class="field"><label>Rounding for this item</label><select id="f_packround">
+          ${[['','Use the general rule'],['up','Always round up'],['nearest','Round to nearest'],['down','Always round down']].map(([v,l])=>`<option value="${v}" ${(p.packRound||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <p class="pf-hint">Pack size is how much one pack holds, in this product's unit — used to round vessel orders to whole packs. It can also be a step: size 1 with name “kg” orders this item in whole kg. A batch can have its own pack size when it differs. Items without a pack size are never changed.</p>
+      </details>
+    </div>
+    <div class="pf-card">
+      <details class="pf-rowd"><summary class="pf-row">${qIc('cal')}<span>Dates &amp; notes<small>Production date, expiry date, notes</small></span>${qIc('go')}</summary>
+        <div style="margin-top:12px;">
+        <div class="field"><label>Production date</label><input type="date" id="f_pdate" value="${p.productionDate||''}"></div>
+        ${expiryFieldHtml('f', {expiryDate:p.expiryDate, mode:p.expiryMode, shelfAmount:p.expiryShelfAmount, shelfUnit:p.expiryShelfUnit})}
+        <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(p.notes)}</textarea></div></div>
+      </details>
+      <details class="pf-rowd"><summary class="pf-row">${qIc('list')}<span>Invoicing options<small>Priced as a whole · bought per order</small></span>${qIc('go')}</summary>
+        <div style="margin-top:12px;">
+        <div class="field"><label>Priced as a whole?</label>
+          <select id="f_lump"><option value="">Same as its warehouse</option><option value="-" ${p.lumpGroup==='-'?'selected':''}>No — priced item by item</option>${p.lumpGroup && p.lumpGroup!=='-'?`<option value="${esc(p.lumpGroup)}" selected>${esc(p.lumpGroup)}</option>`:''}</select>
+          <div class="pf-hint">For meat, fish… the invoice gets one line per group (the supplier invoice total). <a href="javascript:void(0)" id="f_lumpmg">Manage groups</a></div></div>
+        <div class="field"><label>Bought per order?</label>
+          <select id="f_perorder"><option value="">Same as its warehouse</option><option value="yes" ${p.perOrder==='yes'?'selected':''}>Yes — leave out of Insights</option><option value="no" ${p.perOrder==='no'?'selected':''}>No — always show in Insights</option></select></div></div>
+      </details>
+      ${sw('f_active', p.active, 'check', 'Active', 'Shows up in orders and pickers')}
+    </div>
+    <div class="pf-bar">
+      <button class="btn btn-signal" id="f_save" style="flex:1;">Save</button>
       <button class="btn btn-ghost" id="f_cancel">Cancel</button>
+    </div>
     </div>
   `);
   wireExpiryField('f', 'f_pdate');
+  $('#f_name').addEventListener('input', ()=>{ const t = $('#f_titleprev'); if(t) t.textContent = $('#f_name').value.trim() || 'New product'; });
   $('#f_wh').onchange = ()=>{
     const opts = secForWh($('#f_wh').value);
     $('#f_sec').innerHTML = opts.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('') || '<option value="">No sections — add one first</option>';
@@ -239,6 +260,7 @@ function openProductForm(p, warehouses, sections, suppliers, onSaved){
     const file = e.target.files[0]; if(!file) return;
     try{
       newImage = await compressImageFile(file, 480, 0.72);
+      const tile = document.querySelector('.pf-photo'); if(tile) tile.innerHTML = `<img id="f_imgprev" src="${newImage}" alt="">`;
     }catch(err){
       showAlert('Could not process that image — try a different photo.');
     }

@@ -712,3 +712,30 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 .ly-details>summary{cursor:pointer;font-weight:700;list-style:none}
 .ly-details>summary::-webkit-details-marker{display:none}
 .ly-details[open]>summary{margin-bottom:8px}
+
+/* product form */
+.pf-top{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.pf-photo{width:64px;height:64px;border-radius:16px;background:var(--card);border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer;flex:none;color:var(--signal);font-size:.68rem;font-weight:700}
+.pf-photo span{display:flex;flex-direction:column;align-items:center;gap:2px}.pf-photo img{width:100%;height:100%;object-fit:cover}
+.pf-kicker{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;opacity:.65;font-weight:700}
+.pf-title{font-size:1.2rem;font-weight:800;line-height:1.2;overflow-wrap:anywhere}
+.pf-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+.pf-ch{display:flex;align-items:center;gap:9px;font-weight:800;font-size:.95rem;margin-bottom:12px}
+.pf-ch .qi{color:var(--signal)}.pf-ch small{margin-left:auto;font-weight:600;opacity:.65;font-size:.74rem;text-align:right}
+.pf-link{display:inline-flex;gap:6px;align-items:center;color:var(--signal);font-weight:700;font-size:.85rem;margin-top:8px;background:none;border:0;padding:0;cursor:pointer;font-family:inherit;list-style:none}
+.pf-link .qi{width:16px;height:16px}
+.pf-more>summary::-webkit-details-marker,.pf-rowd>summary::-webkit-details-marker{display:none}
+.pf-hint{font-size:.78rem;opacity:.75;margin:2px 0 10px;line-height:1.4}
+.pf-row{display:flex;gap:12px;align-items:center;padding:13px 0;border-top:1px solid var(--line);font-weight:600;font-size:.95rem;cursor:pointer;list-style:none}
+.pf-row>.qi:first-child{color:var(--signal)}.pf-row>.qi:last-child{margin-left:auto;width:18px;opacity:.5}
+.pf-row small{display:block;opacity:.7;font-weight:500;font-size:.78rem}
+.pf-card>.pf-row:first-child,.pf-card>.pf-rowd:first-child>.pf-row{border-top:0}
+.pf-rowd[open]>summary .qi:last-child{transform:rotate(90deg)}
+.pf-switch{position:relative}.pf-switch input{position:absolute;opacity:0;pointer-events:none}
+.pf-switch input:checked+.mod-sw{background:var(--signal)}.pf-switch input:checked+.mod-sw:after{transform:translateX(20px)}
+.pf-switch .mod-sw{margin-left:auto}
+.pf-bar{position:sticky;bottom:-22px;display:flex;gap:10px;margin:0 -22px -22px;padding:20px 22px 22px;background:linear-gradient(transparent,var(--card) 28%)}
+.pf-bar .btn{height:54px;font-size:1.05rem;border-radius:14px}
+
+.pf .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pf .row2 .field{min-width:0}
