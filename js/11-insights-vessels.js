@@ -104,7 +104,8 @@ function analyzeVessel(orders, lines, productsById, anchor){
 }
 
 async function vesselProfileScreen(rawKey){
-  const key = decodeURIComponent(rawKey||'');
+  let key = decodeURIComponent(rawKey||'');
+  { const va = await vaLoad(), to = vaFollow(va.map, key); if(to!==key){ location.replace('#/insights/vessel/'+encodeURIComponent(to)); return; } }
   const [{hOrders, hLines}, products] = await Promise.all([insightsData(), slimProducts()]);
   const mine = hOrders.filter(o=>o.vesselKey===key);
   if(!mine.length){ location.hash = '#/insights'; return; }
@@ -112,7 +113,8 @@ async function vesselProfileScreen(rawKey){
   const byId = new Map(products.map(p=>[p.id,p]));
   const a = analyzeVessel(mine, hLines.filter(l=>l.vesselKey===key), byId, anchor);
   const spellings = new Map(); mine.forEach(o=>spellings.set(o.vesselName,(spellings.get(o.vesselName)||0)+1));
-  const name = [...spellings.entries()].sort((x,y)=>y[1]-x[1])[0][0];
+  const ownSp = new Map(); mine.filter(o=>!o.mergedFrom).forEach(o=>ownSp.set(o.vesselName,(ownSp.get(o.vesselName)||0)+1));
+  const name = [...(ownSp.size?ownSp:spellings).entries()].sort((x,y)=>y[1]-x[1])[0][0];
   const imos = [...new Set(mine.map(o=>o.imo).filter(Boolean))];
   const st = VESSEL_BADGE[a.rhythm.status];
   const icon = {warning:'⚠', note:'ℹ', ok:'✓'};
@@ -123,6 +125,7 @@ async function vesselProfileScreen(rawKey){
   $('#main').innerHTML = `
     <div class="topbar"><h1>${esc(name)}</h1><a href="#/insights" class="btn btn-ghost btn-sm">← Insights</a></div>
     <p class="subtle" style="margin-top:-10px;"><span class="badge ${st.cls}">${st.label}</span> &nbsp;${a.orderCount} past order${a.orderCount===1?'':'s'}, ${fmtDate(a.rhythm.first)} → ${fmtDate(a.rhythm.last)}${spellings.size>1?` · ${spellings.size} spellings of the name merged`:''}${imos.length?` · order references seen: ${esc(imos.slice(0,4).join(', '))}${imos.length>4?'…':''}`:''}</p>
+    ${vesselMergeHtml(mine)}
     <div class="grid-stats">
       <div class="stat"><b>${a.rhythm.gap!=null ? a.rhythm.gap+' d' : '—'}</b><div class="lbl">Usually orders every</div></div>
       <div class="stat"><b>${a.rhythm.sinceLast} d</b><div class="lbl">Since last order</div></div>
@@ -149,4 +152,5 @@ async function vesselProfileScreen(rawKey){
         return `<tr><td><a href="${href}" style="text-decoration:none; color:inherit;"><b>${esc(o.code||'No code')}</b> <span class="subtle">›</span></a>${o.live?' <span class="badge b-completed">picked on the site</span>':''}</td><td>${fmtDate(o.date)}</td><td class="num">${o.items.size}</td></tr>`; }).join('')}</tbody>
     </table></div>
     <p class="subtle" style="margin-top:14px;">Read as a guide, not a prediction: vessels change supplier, route and menu without warning. The name is how vessels are told apart, so a renamed or misspelt vessel shows up as a separate one.</p>`;
+  vesselMergeWire(key, name, hOrders);
 }
