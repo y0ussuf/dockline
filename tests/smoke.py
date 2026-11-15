@@ -293,8 +293,36 @@ async def test_invprice(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 7. size differs between the picked unit and the product
+async def test_sizes(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  sizes/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""() => {
+      const mk = (name, unit, over) => { const sz = parseSize(name); return Object.assign({qty:'50', unit, price:'797.5', include:true, ref:null, pack:null, productId:'p', desc:'Cashew', priceUnit:'KG',
+        nameSize: sz ? {qty:sz.qty, unit:sz.unit} : null}, over||{}); };
+      const inv = {roundMode:'ask'};
+      const flag = l => lineIssues(l, inv, null).some(m => m.startsWith('Size differs'));
+      const tot = l => Dec.str(invoiceTotals({lines:[l], taxOn:false, roundMode:'ask'}).total);
+      const byref = mk('CASHEW RAW 1 KG', 'TIN 150 gm'); byref.ref = {qty:'1', unit:'kg'};
+      return {cashew: flag(mk('CASHEW RAW 1 KG', 'TIN 150 gm')), same: flag(mk('FLOUR 500 GM', 'PKT 500 GM')), bare: flag(mk('SUGAR 50 KG', 'KG')),
+              noSize: flag(mk('COCA COLA', 'CAN')), byref: tot(byref), byrefFlag: flag(byref), asis: tot(mk('CASHEW RAW 1 KG', 'TIN 150 gm', {perPiece:true}))};
+    }""")
+    check(r['cashew'], 'TIN 150 gm on a "1 KG" product is flagged (blocking)', r)
+    check(not r['same'] and not r['bare'] and not r['noSize'], 'same size, bare KG and size-less products are not flagged', r)
+    check(r['byref'] == '5981.25' and not r['byrefFlag'], 'bill by weight: 50 x 150 gm at 797.5 per kg = 5981.25', r)
+    check(r['asis'] == '39875', 'bill per tin as is stays possible when chosen', r)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -313,6 +341,7 @@ async def main():
         if args.only in (None, 'libs'): await run('libraries load on demand:', test_libs(pw, url))
         if args.only in (None, 'markup'): await run('product table markup:', test_markup(pw, url))
         if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
+        if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
