@@ -2,7 +2,7 @@
 """Dockline smoke tests — run the real app in a headless browser, in demo mode (no cloud, no login).
 
     python3 tests/smoke.py              # everything
-    python3 tests/smoke.py --only tidy  # one group: pages | tidy | libs
+    python3 tests/smoke.py --only tidy  # one group: pages | tidy | libs | settings
 
 1. pages  — opens every page with sample data and fails on an uncaught error, a console error,
             a page that renders nothing, or a "no access" screen.
@@ -10,6 +10,8 @@
             (it did for vessels merged in "Same vessel, spelt differently").
 3. libs   — the Excel / zip / drag-to-reorder libraries load only when a feature needs them (not on every page load),
             load once, fail with a readable message, and can be retried; pages still work if one can't load.
+4. settings — Settings → App version (shows the version, checks for a newer one, "Refresh app files" re-downloads every
+            css/js file and reloads) and the count of imported rows still waiting to be sent.
 
 Needs: pip install playwright   +   Chrome or Chromium on the machine (set CHROME=/path to pick one).
 Exit code 0 = all passed, 1 = something failed.
@@ -29,9 +31,16 @@ PAGES = ['', 'orders', 'order/new', 'splitter', 'qcheck', 'products', 'table', '
 IGNORED = re.compile(r'Failed to load resource|net::ERR|ERR_(INTERNET|NAME|CONNECTION|BLOCKED)|favicon|Failed to fetch dynamically|Refused to (load|execute)', re.I)
 
 
+REQUESTS = []     # (path, cache-control, pragma) of everything the test server was asked for
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a, **k):      # keep the test output readable
         pass
+
+    def do_GET(self):
+        REQUESTS.append((self.path.split('?')[0], self.headers.get('Cache-Control') or '', self.headers.get('Pragma') or ''))
+        super().do_GET()
 
 
 def serve():
@@ -322,8 +331,83 @@ async def test_sizes(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 8. Settings: app version + what is waiting to send
+async def test_settings(pw, url):
+    failed = 0
+
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  settings/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    await page.evaluate("async()=>{ location.hash='#/settings'; await render(); }")
+    await page.wait_for_timeout(300)
+    s = await page.evaluate("({shown: (document.querySelector('#verNow')||{}).textContent, real: APP_VERSION, buttons: !!(document.querySelector('#verCheck') && document.querySelector('#verRefresh'))})")
+    check(s['shown'] == s['real'] and s['buttons'], 'shows-the-version', str(s))
+
+    async def status():
+        await page.wait_for_function("document.querySelector('#verStatus').textContent.trim() !== '' && document.querySelector('#verStatus').textContent.trim() !== 'Checking…'", timeout=8000)
+        return (await page.inner_text('#verStatus')).strip()
+
+    await page.click('#verCheck')
+    st = await status()
+    banner = await page.evaluate("document.querySelector('#updateBanner').classList.contains('show')")
+    check('latest version' in st and not banner, 'up-to-date', f'{st!r}, banner: {banner}')
+
+    html = open(os.path.join(ROOT, 'index.html'), encoding='utf-8').read()
+    newer = re.sub(r"const APP_VERSION\s*=\s*'[^']*'", "const APP_VERSION = '9999-01-01.1'", html)
+    mode = {'v': 'newer'}
+
+    async def index_check(route):
+        if mode['v'] == 'newer': await route.fulfill(status=200, content_type='text/html', body=newer)
+        else: await route.abort()
+    await page.route(re.compile(r'/index\.html\?_='), index_check)
+
+    await page.evaluate("document.querySelector('#verStatus').textContent=''")
+    await page.click('#verCheck')
+    st = await status()
+    banner = await page.evaluate("document.querySelector('#updateBanner').classList.contains('show')")
+    check('9999-01-01.1' in st and 'newer version' in st and banner, 'newer-version-found', f'{st!r}, banner: {banner}')
+
+    mode['v'] = 'offline'
+    await page.evaluate("document.querySelector('#verStatus').textContent=''")
+    await page.click('#verCheck')
+    st = await status()
+    check("Couldn't check" in st, 'check-fails-politely-when-offline', repr(st))
+    await page.unroute(re.compile(r'/index\.html\?_='), index_check)
+
+    expected_js = await page.evaluate("[...document.querySelectorAll('script[src]')].filter(e=>new URL(e.src).pathname.startsWith('/js/')).length")
+    expected_css = await page.evaluate("[...document.querySelectorAll('link[rel=stylesheet][href]')].filter(e=>new URL(e.href).pathname.startsWith('/css/')).length")
+    REQUESTS.clear()
+    async with page.expect_navigation(timeout=20000):
+        await page.click('#verRefresh')
+    await page.wait_for_timeout(300)
+    # files the server was asked to send fresh (what fetch(..., {cache:'reload'}) asks for)
+    fresh = {'js': {r[0] for r in REQUESTS if r[0].startswith('/js/') and ('no-cache' in r[1] or 'no-cache' in r[2])},
+             'css': {r[0] for r in REQUESTS if r[0].startswith('/css/') and ('no-cache' in r[1] or 'no-cache' in r[2])}}
+    check(len(fresh['js']) >= expected_js and len(fresh['css']) >= expected_css and expected_js > 20, 'refresh-redownloads-every-file-and-reloads',
+          f'js re-fetched {len(fresh["js"])}/{expected_js}, css {len(fresh["css"])}/{expected_css}')
+    await browser.close()
+
+    # imported past-order rows that have not been sent yet are counted
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    c = await page.evaluate("""async()=>{
+      const o = (i, synced)=>({id:'o'+i, fileName:'f'+i, vesselName:'V'+i, vesselKey:'v'+i, imo:'', orderDate:'2026-01-0'+i, fingerprint:'fp'+i, lineCount:1, importedAt:'2026-01-01T00:00:00Z', synced});
+      const l = (i, synced)=>({id:'l'+i, historyOrderId:'o1', vesselKey:'v1', orderDate:'2026-01-01', excelDesc:'x', descKey:'x', qty:1, unit:'KG', productId:null, skipped:true, baseOk:true, synced});
+      await bulkPut('historyOrders', [o(1,false), o(2,false), o(3,false), o(4,true), o(5,true)]);
+      await bulkPut('historyLines',  [l(1,false), l(2,true), l(3,true), l(4,true)]);
+      return await pendingSyncCounts();
+    }""")
+    check(c['history'] == 4 and isinstance(c['queue'], int), 'counts-imported-rows-waiting-to-send', str(c))
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -344,6 +428,7 @@ async def main():
         if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
         if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
+        if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
     sys.exit(1 if failed else 0)

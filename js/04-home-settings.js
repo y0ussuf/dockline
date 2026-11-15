@@ -92,6 +92,37 @@ route('home', async ()=>{
 });
 
 /* ==================================== SETTINGS ==================================== */
+/* Settings → App version: which version this device is running, a way to check for a newer one, and a way to re-download the
+   app's files without clearing any data */
+function appVersionCardHtml(){
+  return `
+    <div class="card" style="margin-top:24px;" id="versionCard">
+      <div class="section-title">App version</div>
+      <p style="margin:6px 0 0;">Dockline <b id="verNow">${esc(APP_VERSION)}</b></p>
+      <p id="verStatus" class="subtle" style="margin:8px 0 0; min-height:1.3em;" aria-live="polite"></p>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
+        <button class="btn btn-ghost btn-sm" id="verCheck">Check for updates</button>
+        <button class="btn btn-signal btn-sm" id="verRefresh">Refresh app files</button>
+      </div>
+      <p class="subtle" style="margin-top:12px;">If something looks out of date, use <b>Refresh app files</b>: it re-downloads the app and reloads the page. Your data stays on this device and nothing is lost. There's no need to clear the browser's site data, which would also remove anything not yet sent to the crew.</p>
+    </div>`;
+}
+function bindAppVersionCard(){
+  const status = $('#verStatus');
+  $('#verCheck').onclick = async ()=>{
+    const btn = $('#verCheck'); btn.disabled = true; status.textContent = 'Checking…';
+    const r = await checkForUpdate();
+    btn.disabled = false;
+    if(!r) status.textContent = "Couldn't check right now — you may be offline.";
+    else if(r.newer) status.innerHTML = `A newer version (<b>${esc(r.latest)}</b>) is available. Tap <b>Refresh app files</b> to update.`;
+    else status.textContent = "You're on the latest version.";
+  };
+  $('#verRefresh').onclick = async ()=>{
+    const btn = $('#verRefresh'); btn.disabled = true; btn.textContent = 'Refreshing…';
+    await refreshAppFiles();
+  };
+}
+
 route('settings', async ()=>{
   const [syncCfgRaw, company] = await Promise.all([getSyncConfig(), getCompany()]);
   const syncCfgCache = syncCfgRaw || {};
@@ -122,8 +153,10 @@ route('settings', async ()=>{
         ${syncCfgCache.url?'<button class="btn btn-ghost btn-sm" id="syncOff">Turn off sync on this device</button>':''}
       </div>
     </div>
+    ${appVersionCardHtml()}
     ${lookCardHtml()}`;
   $('#doBackup').onclick = downloadBackup;
+  bindAppVersionCard();
   bindCompanyCard(company);
   if($('#restoreFile')) $('#restoreFile').onchange = e=>{
     const file = e.target.files[0];
