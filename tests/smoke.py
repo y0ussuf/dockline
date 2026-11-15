@@ -216,6 +216,7 @@ async def test_packs(pw, url):
         cs:    calc({name:'COCA COLA', unit:'CASE'}, 'CASE 24*300 ML', '363.6'),
         name:  calc({name:'COCA COLA 300 ML', unit:''}, 'CASE 24*300 ML', '15.15'),
         none:  calc({name:'COCA COLA', unit:''}, 'CASE 24*300 ML', '15.15'),
+        pcs:   calc({name:'COCA COLA 300 ML', unit:'CAN'}, '24 PCS*300 ML', '15.51'),
         plain: calc({name:'RICE', unit:'KG'}, 'KG', '10', {qty:'10'}),
       };
     }""")
@@ -223,6 +224,7 @@ async def test_packs(pw, url):
     check(r['cs']['basis'] == 'case' and r['cs']['g'] == '3636', 'unit CASE: billed per whole pack, 10 x 363.60', r['cs'])
     check(r['name']['g'] == '3636', 'no unit but name carries the piece size: per piece', r['name'])
     check(r['none']['issue'] == 'Pack choice needed', 'cannot be told: the line asks instead of guessing', r['none'])
+    check(r['pcs']['g'] == '3722.4' and not r['pcs']['issue'], '"24 PCS*300 ML" is read as a pack of 24: 10 x 24 x 15.51 = 3722.40', r['pcs'])
     check(r['plain']['g'] == '100' and not r['plain']['issue'], 'a plain KG line is unaffected', r['plain'])
     await browser.close()
     return failed

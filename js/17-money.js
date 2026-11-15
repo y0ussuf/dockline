@@ -106,9 +106,9 @@ function parseMeasure(unitText){
   const w = String(unitText||'').trim().toLowerCase().replace(/\.$/,''); const u = SIZE_UNITS[w]; if(!u) return null;
   return {qty:'1', unit:w, family:u[0], base:Dec.parse(String(u[1])), text:w, index:0};
 }
-/* a multipack written in a unit: "CASE 24*300 ML", "CTN 12X1 LTR", "24 x 330ml" -> {count:'24', size:'300 ML'} (size may be ''), else null */
+/* a multipack written in a unit: "CASE 24*300 ML", "24 PCS*300 ML", "CTN 12X1 LTR", "24 x 330ml" -> {count:'24', size:'300 ML'} (size may be ''), else null */
 function parsePack(text){
-  const m = /(\d{1,4})\s*[x*×]\s*(\d+(?:\.\d+)?)\s*(ml|litres?|liters?|ltr|lt|l|gms?|grams?|gr|g|kgs?|kilos?)?(?![a-z])/i.exec(String(text||''));
+  const m = /(\d{1,4})\s*(?:pcs?|pieces?|cans?|btls?|bottles?|tins?|units?|nos?)?\s*[x*×]\s*(\d+(?:\.\d+)?)\s*(ml|litres?|liters?|ltr|lt|l|gms?|grams?|gr|g|kgs?|kilos?)?(?![a-z])/i.exec(String(text||''));
   if(!m || +m[1] < 2) return null;
   return {count:m[1], size: m[3] ? (m[2]+' '+m[3]) : ''};
 }
