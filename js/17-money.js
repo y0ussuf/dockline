@@ -83,7 +83,7 @@ function costFromMarkup(sell, m){
   const s = Dec.parse(sell), p = Dec.parse(m); if(!s || !p) return null;
   const den = Dec.add(Dec.parse('100'), p); if(Dec.cmp(den, Dec.ZERO)<=0) return null;
   const r = Rat.div(Rat.mul(Rat.fromDec(s), Rat.fromDec(Dec.parse('100'))), Rat.fromDec(den));
-  const d = Rat.toDec(r); return d ? {text:Dec.str(d)} : {approx:Rat.peek(r)};
+  const d = Rat.toDec(r); return d ? {text:Dec.str(d)} : {approx:Rat.peek(r), r2:Dec.str(Rat.roundHalfUp(r, 2))};
 }
 
 /* ---- sizes written in names and units: "350 ML", "BTL 350 ML", "PKT 500 GM", "1KG", "KG" ---- */
