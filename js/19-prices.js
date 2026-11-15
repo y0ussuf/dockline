@@ -41,6 +41,7 @@ route('prices', async ()=>{
 
   async function process(file){
     const buf = await file.arrayBuffer();
+    await ensureLib('xlsx');   // a failure is shown by the caller ("Could not read this file: …")
     const wb = XLSX.read(buf, {type:'array'});
     const aoa = sheetToRows(wb.Sheets[wb.SheetNames[0]], {raw:true});
     const rows = readSheet(aoa);

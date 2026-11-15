@@ -50,6 +50,7 @@ route('home', async ()=>{
         ${lowStockCount ? `<a href="#/stock" class="btn btn-ghost" style="border-color:var(--warn); color:var(--warn);">⚠ ${lowStockCount} low stock item${lowStockCount===1?'':'s'}</a>` : ''}
         ${shortfalls.length ? `<a href="#/deliveries" class="btn btn-ghost" style="border-color:var(--danger); color:var(--danger);">⚠ ${shortfalls.length} unresolved shortfall${shortfalls.length===1?'':'s'}</a>` : ''}
       </div>` : ''}
+    <div id="lyNotice" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;"></div>
     <div class="grid-stats">
       <div class="stat"><b>${active}</b><div class="lbl">Active orders</div></div>
       <div class="stat"><b>${completedToday}</b><div class="lbl">Completed today</div></div>

@@ -319,7 +319,7 @@ async function orderSummary(orderId){
   const counts = {};
   items.forEach(it=>{ counts[it.status]=(counts[it.status]||0)+1; });
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Order summary</h1><div style="display:flex; gap:8px; flex-wrap:wrap;">${order.status==='completed' ? `<a class="btn btn-ghost btn-sm" href="#/invoice/order/${order.id}">🧾 Invoices</a>` : ''}${typeof canMoney==='function' && canMoney() ? `<a class="btn btn-ghost btn-sm" href="#/money/${order.id}">💰 Profit</a>` : ''}<button class="btn btn-signal btn-sm" id="exportXls">⬇ Export to Excel</button></div></div>
+    <div class="topbar"><h1>Order summary</h1><div style="display:flex; gap:8px; flex-wrap:wrap;">${order.status==='completed' ? `<a class="btn btn-ghost btn-sm" href="#/invoice/order/${order.id}">🧾 Invoices</a>` : ''}${typeof canMoney==='function' && canMoney() ? `<a class="btn btn-ghost btn-sm" href="#/money/${order.id}"><span data-ico="chart-no-axes-combined"></span> Profit</a>` : ''}<button class="btn btn-signal btn-sm" id="exportXls">⬇ Export to Excel</button></div></div>
     <div class="card" style="margin-bottom:18px;">
       <div class="row2">
         <div><b>Vessel</b><div>${esc(order.vessel)}</div></div>
@@ -470,6 +470,7 @@ function modNote(it){
 }
 
 async function exportOrderExcel(orderId){
+  if(!(await ensureLibOrAlert('exceljs'))) return;
   const order = await getOne('orders', orderId);
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
   const products = await getAll('products');
@@ -591,6 +592,7 @@ async function exportOrderExcel(orderId){
    supplier was deleted) fall into their own "Unassigned" group at the end rather than
    being silently dropped. */
 async function exportLowStockExcel(lowProducts, supMap){
+  if(!(await ensureLibOrAlert('exceljs'))) return;
   const groups = new Map(); // supplierId ('' for unassigned) -> {name, products}
   for(const p of lowProducts){
     const sup = p.supplierId ? supMap.get(p.supplierId) : null;

@@ -382,6 +382,7 @@ async function invoiceScreen(id){
 
 /* ---------- Excel copy of an invoice ---------- */
 async function exportInvoiceExcel(inv){
+  if(!(await ensureLibOrAlert('exceljs'))) return;
   const t = invoiceTotals(inv), wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Invoice');
   const co = inv.company || {};
   ws.addRow([co.name||'']).font = {bold:true, size:14};
