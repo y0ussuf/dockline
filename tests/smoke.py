@@ -243,12 +243,12 @@ async def test_markup(pw, url):
     await page.wait_for_timeout(500)
     row = page.locator('tr:has(input[data-f="__markup"])').first
     cost, sell, mk = row.locator('input[data-f="costPrice"]'), row.locator('input[data-f="sellPrice"]'), row.locator('input[data-f="__markup"]')
-    await cost.fill(''); await sell.fill('52.35')
-    await mk.click(); await page.keyboard.type('1'); await page.keyboard.type('0')
+    await cost.fill(''); await sell.fill('52.35'); await page.wait_for_timeout(150)
+    await mk.focus(); await page.keyboard.type('1'); await page.keyboard.type('0')        # focus(), not click(): the row restyles after the sell price is typed and a click could land on a neighbour cell
     modal_while_typing = await page.locator('#modal-root *').count()
     check(modal_while_typing == 0, 'no pop-up while the number is still being typed', modal_while_typing)
     await page.keyboard.press('Tab')
-    await page.wait_for_timeout(300)
+    await page.locator('#pt_mk_ok').wait_for(timeout=8000)           # the pop-up shows once the cell is left (waits instead of guessing a delay)
     txt = await page.locator('#modal-root').inner_text()
     check('47.59' in txt and '52.35' in txt, 'pop-up appears when you finish: offers cost 47.59, sell stays 52.35', txt[:120])
     await page.locator('#pt_mk_ok').click(); await page.wait_for_timeout(300)
@@ -256,7 +256,8 @@ async def test_markup(pw, url):
     cost_after = await row.locator('input[data-f="costPrice"]').input_value()
     check(sell_after == '52.35' and cost_after == '47.59', 'sell price untouched, chosen cost saved', f'sell={sell_after} cost={cost_after}')
     await cost.fill(''); await sell.fill('110')
-    await mk.click(); await mk.fill('10'); await page.keyboard.press('Tab'); await page.wait_for_timeout(300)
+    await page.wait_for_timeout(150); await mk.focus(); await mk.fill('10'); await page.keyboard.press('Tab')
+    await page.wait_for_function("(document.querySelector('input[data-f=\"costPrice\"]')||{}).value==='100'", timeout=8000)
     check(await row.locator('input[data-f="costPrice"]').input_value() == '100', 'exact case still fills the cost (110 at 10% -> 100)')
     check(not errors, 'no page errors', errors[:1])
     await browser.close()
@@ -293,8 +294,36 @@ async def test_invprice(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 7. size differs between the picked unit and the product
+async def test_sizes(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  sizes/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""() => {
+      const mk = (name, unit, over) => { const sz = parseSize(name); return Object.assign({qty:'50', unit, price:'797.5', include:true, ref:null, pack:null, productId:'p', desc:'Cashew', priceUnit:'KG',
+        nameSize: sz ? {qty:sz.qty, unit:sz.unit} : null}, over||{}); };
+      const inv = {roundMode:'ask'};
+      const flag = l => lineIssues(l, inv, null).some(m => m.startsWith('Size differs'));
+      const tot = l => Dec.str(invoiceTotals({lines:[l], taxOn:false, roundMode:'ask'}).total);
+      const byref = mk('CASHEW RAW 1 KG', 'TIN 150 gm'); byref.ref = {qty:'1', unit:'kg'};
+      return {cashew: flag(mk('CASHEW RAW 1 KG', 'TIN 150 gm')), same: flag(mk('FLOUR 500 GM', 'PKT 500 GM')), bare: flag(mk('SUGAR 50 KG', 'KG')),
+              noSize: flag(mk('COCA COLA', 'CAN')), byref: tot(byref), byrefFlag: flag(byref), asis: tot(mk('CASHEW RAW 1 KG', 'TIN 150 gm', {perPiece:true}))};
+    }""")
+    check(r['cashew'], 'TIN 150 gm on a "1 KG" product is flagged (blocking)', r)
+    check(not r['same'] and not r['bare'] and not r['noSize'], 'same size, bare KG and size-less products are not flagged', r)
+    check(r['byref'] == '5981.25' and not r['byrefFlag'], 'bill by weight: 50 x 150 gm at 797.5 per kg = 5981.25', r)
+    check(r['asis'] == '39875', 'bill per tin as is stays possible when chosen', r)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -313,6 +342,7 @@ async def main():
         if args.only in (None, 'libs'): await run('libraries load on demand:', test_libs(pw, url))
         if args.only in (None, 'markup'): await run('product table markup:', test_markup(pw, url))
         if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
+        if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
