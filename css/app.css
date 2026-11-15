@@ -801,3 +801,19 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
   .wm-card{padding:18px;} .wm-card.wide{flex-direction:column; align-items:stretch;}
   .wm-kpi{padding:14px; gap:11px;} .wm-kpi b{font-size:1.65rem;} .wm-kpi .wm-ic{width:40px; height:40px;}
 }
+
+/* ===== Shared page look (same language as the wm-* Warehouse page): bigger titles, tinted icon tiles, hover rows ===== */
+.topbar{margin-bottom:26px;}
+.topbar h1{font-size:1.9rem; letter-spacing:-0.02em;}
+.thumb{border-radius:13px; color:var(--signal); background:linear-gradient(140deg,color-mix(in srgb,var(--signal) 30%,transparent),color-mix(in srgb,var(--signal) 9%,transparent)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--signal) 22%, transparent);}
+.thumb svg{width:20px; height:20px;}
+.card > .list-row{padding:14px 18px;}
+.card > .list-row:hover, .card > div > .list-row:hover{background:color-mix(in srgb,var(--signal) 6%, transparent);}
+.wm-kpis.five{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+.pg-actions{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:28px;}
+.pg-actions .btn{width:auto; flex:0 0 auto;}
+.pg-demo{display:flex; align-items:center; gap:10px; padding:10px 14px; margin-bottom:18px; border-radius:12px; background:var(--warn-bg); color:var(--warn); font-size:.88rem; border:1px solid color-mix(in srgb,var(--warn) 35%, transparent);}
+.pg-search{position:relative; max-width:420px; margin-bottom:18px;}
+.pg-search input{padding-left:40px;}
+.pg-search svg{position:absolute; left:13px; top:50%; transform:translateY(-50%); width:17px; height:17px; opacity:.6;}
+@media (max-width:860px){ .topbar h1{font-size:1.55rem;} .pg-actions .btn{flex:1 1 auto;} }

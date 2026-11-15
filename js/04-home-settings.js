@@ -43,7 +43,7 @@ route('home', async ()=>{
   </div>` : '';
   $('#main').innerHTML = `
     ${await homeHeaderHtml(active, awaitingCount, completedToday)}
-    ${DEMO_MODE ? `<div class="card" style="margin-bottom:18px; border-color:var(--warn); background:var(--warn-bg);"><b>🧪 Demo mode</b><span class="subtle"> — you're testing locally, not logged into a real account. Nothing here syncs anywhere, and this ends when you reload the page.</span></div>` : ''}
+    ${DEMO_MODE ? `<div class="pg-demo"><span data-ico="flask-conical"></span><span><b>Demo mode</b> — local test data, nothing syncs and it ends on reload.</span></div>` : ''}
     ${waitingHtml}
     ${(lowStockCount || shortfalls.length) ? `
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">
@@ -51,17 +51,17 @@ route('home', async ()=>{
         ${shortfalls.length ? `<a href="#/deliveries" class="btn btn-ghost" style="border-color:var(--danger); color:var(--danger);">⚠ ${shortfalls.length} unresolved shortfall${shortfalls.length===1?'':'s'}</a>` : ''}
       </div>` : ''}
     <div id="lyNotice" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;"></div>
-    <div class="grid-stats">
-      <div class="stat"><b>${active}</b><div class="lbl">Active orders</div></div>
-      <div class="stat"><b>${completedToday}</b><div class="lbl">Completed today</div></div>
-      <div class="stat"><b>${awaitingCount}</b><div class="lbl">Picked, not sent</div></div>
-      <div class="stat"><b>${products.length}</b><div class="lbl">Products in database</div></div>
-      <div class="stat"><b>${warehouses.length}</b><div class="lbl">Warehouses</div></div>
+    <div class="wm-kpis five">
+      <div class="wm-kpi"><span class="wm-ic" data-ico="clipboard-list"></span><div class="wm-txt"><b>${active}</b><div class="lbl">Active orders</div></div></div>
+      <div class="wm-kpi ok"><span class="wm-ic" data-ico="circle-check"></span><div class="wm-txt"><b>${completedToday}</b><div class="lbl">Completed today</div></div></div>
+      <div class="wm-kpi ${awaitingCount?'warn':''}"><span class="wm-ic" data-ico="truck"></span><div class="wm-txt"><b>${awaitingCount}</b><div class="lbl">Picked, not sent</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="package"></span><div class="wm-txt"><b>${products.length}</b><div class="lbl">Products in database</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="building-2"></span><div class="wm-txt"><b>${warehouses.length}</b><div class="lbl">Warehouses</div></div></div>
     </div>
-    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:28px;">
-      <a href="#/order/new" class="btn btn-signal btn-lg" style="max-width:320px;">+ New Order</a>
-      <a href="#/receiving" class="btn btn-ghost btn-lg" style="max-width:320px;">Product receiving</a>
-      <a href="#/deliveries" class="btn btn-ghost btn-lg" style="max-width:320px;">Supplier deliveries</a>
+    <div class="pg-actions">
+      <a href="#/order/new" class="btn btn-signal btn-lg"><span data-ico="plus"></span> New order</a>
+      <a href="#/receiving" class="btn btn-ghost btn-lg"><span data-ico="inbox"></span> Product receiving</a>
+      <a href="#/deliveries" class="btn btn-ghost btn-lg"><span data-ico="truck"></span> Supplier deliveries</a>
     </div>
     <h3 class="section-title">Recent orders</h3>
     <div class="card">
