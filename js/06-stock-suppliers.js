@@ -266,7 +266,7 @@ route('suppliers', async ()=>{
     const list = suppliers.filter(s=>!q || normalize(s.name).includes(q));
     $('#main').innerHTML = `
       <div class="topbar"><h1>Suppliers</h1><button class="btn btn-signal" id="addSup">+ Add supplier</button></div>
-      <div class="field" style="max-width:360px;"><input type="text" id="supSearch" placeholder="Search suppliers…" value="${esc(window.__supplierSearch)}"></div>
+      <div class="pg-search"><span data-ico="search"></span><input type="text" id="supSearch" placeholder="Search suppliers…" value="${esc(window.__supplierSearch)}"></div>
       <div class="card" id="supList">
         ${list.length ? list.map(s=>{
           const prods = productsFor(s.id);
