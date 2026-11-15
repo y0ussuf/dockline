@@ -2,12 +2,14 @@
 """Dockline smoke tests — run the real app in a headless browser, in demo mode (no cloud, no login).
 
     python3 tests/smoke.py              # everything
-    python3 tests/smoke.py --only tidy  # one group: pages | tidy
+    python3 tests/smoke.py --only tidy  # one group: pages | tidy | libs
 
 1. pages  — opens every page with sample data and fails on an uncaught error, a console error,
             a page that renders nothing, or a "no access" screen.
 2. tidy   — regression test: "Tidy vessel names" must not come back after it has run
             (it did for vessels merged in "Same vessel, spelt differently").
+3. libs   — the Excel / zip / drag-to-reorder libraries load only when a feature needs them (not on every page load),
+            load once, fail with a readable message, and can be retried; pages still work if one can't load.
 
 Needs: pip install playwright   +   Chrome or Chromium on the machine (set CHROME=/path to pick one).
 Exit code 0 = all passed, 1 = something failed.
@@ -39,23 +41,35 @@ def serve():
     return srv, f'http://127.0.0.1:{srv.server_address[1]}/index.html'
 
 
-async def fresh_page(pw, url, errors):
+# The CDN libraries are replaced by tiny fakes, so the tests don't need internet and can also make a download fail.
+FAKE_LIBS = {'xlsx': 'window.XLSX = {fake:true};', 'exceljs': 'window.ExcelJS = {fake:true};', 'jszip': 'window.JSZip = {fake:true};',
+             'Sortable': 'window.Sortable = function(){ window.__sortables = (window.__sortables||0) + 1; };'}
+
+
+async def fresh_page(pw, url, errors, fail=()):
+    """Opens the app in demo mode in a brand-new browser (empty database). Returns (browser, page, net):
+    net['hits'] lists every CDN library the page asked for; names in net['fail'] get a failed download."""
     exe = os.environ.get('CHROME') or shutil.which('google-chrome') or shutil.which('chromium') or shutil.which('chromium-browser')
     browser = await pw.chromium.launch(executable_path=exe, args=['--no-sandbox']) if exe else await pw.chromium.launch(args=['--no-sandbox'])
     ctx = await browser.new_context(viewport={'width': 1300, 'height': 900})   # a new context = an empty database
+    net = {'hits': [], 'fail': set(fail)}
+
+    async def cdn(route):
+        u = route.request.url.lower()
+        name = next((k for k in FAKE_LIBS if k.lower() in u), None)
+        net['hits'].append(name or route.request.url)
+        if name is None: await route.fulfill(status=404, body='')
+        elif name in net['fail']: await route.abort()
+        else: await route.fulfill(status=200, content_type='application/javascript', body=FAKE_LIBS[name])
+    await ctx.route('https://cdnjs.cloudflare.com/**', cdn)
+
     page = await ctx.new_page()
-    # Sortable (drag-to-reorder) is loaded from a CDN. If this machine can't reach it, stand in a no-op so the pages that
-    # use it still render; the real library replaces the stand-in when it does load (so on GitHub it is the real one).
-    await page.add_init_script("""window.Sortable = window.Sortable || (function(){
-        const S = function(){ return {destroy(){}, option(){}, toArray(){ return []; }}; };     // works with `new Sortable(el, opts)`
-        S.__stub = true; S.create = function(){ return new S(); }; S.mount = function(){};
-        return S; })();""")
     page.on('pageerror', lambda e: errors.append(f'uncaught: {e}'))
     page.on('console', lambda m: errors.append(f'console.error: {m.text}') if m.type == 'error' and not IGNORED.search(m.text) else None)
     await page.goto(url)
     await page.locator('#authDemo').click()                                     # demo mode: sample app, nothing is saved to the cloud
     await page.wait_for_function("typeof routes==='object' && document.querySelector('#main') && document.querySelector('#main').children.length>0", timeout=20000)
-    return browser, page
+    return browser, page, net
 
 
 # ---------------------------------------------------------------- 1. pages
@@ -72,9 +86,7 @@ SEED_PAGES = """async()=>{
 
 async def test_pages(pw, url):
     errors = []
-    browser, page = await fresh_page(pw, url, errors)
-    if await page.evaluate("!!(window.Sortable && window.Sortable.__stub)"):
-        print('  note: the Sortable library (CDN) could not be loaded here, so a stand-in is used; drag-to-reorder is not exercised')
+    browser, page, net = await fresh_page(pw, url, errors)
     await page.evaluate(SEED_PAGES)
     failed = 0
     for p in PAGES:
@@ -121,7 +133,7 @@ async def test_tidy(pw, url):
     failed = 0
     for scn, expected_before, what in cases:
         errors = []
-        browser, page = await fresh_page(pw, url, errors)
+        browser, page, net = await fresh_page(pw, url, errors)
         await page.evaluate(seed_tidy(scn))
         before = await page.evaluate(PENDING)
         if before: await page.evaluate(APPLY)
@@ -133,16 +145,75 @@ async def test_tidy(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 3. libraries load on demand
+async def test_libs(pw, url):
+    failed = 0
+
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  libs/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    await page.wait_for_timeout(500)
+    tags = await page.evaluate("document.querySelectorAll('script[src*=\"cdnjs\"]').length")
+    loaded = await page.evaluate("['XLSX','ExcelJS','JSZip','Sortable'].filter(n=>typeof window[n]!=='undefined')")
+    check(tags == 0 and not net['hits'] and not loaded, 'startup-downloads-nothing', f'cdn script tags: {tags}, requested: {net["hits"]}, defined: {loaded}')
+
+    r = await page.evaluate("""async()=>{ await Promise.all([ensureLib('xlsx'), ensureLib('xlsx')]); await ensureLib('xlsx');
+        return {ok: typeof XLSX!=='undefined', tags: document.querySelectorAll('script[src*="xlsx"]').length}; }""")
+    check(r['ok'] and r['tags'] == 1 and net['hits'].count('xlsx') == 1, 'loads-once-on-demand', f'{r}, requests: {net["hits"].count("xlsx")}')
+
+    net['fail'].add('jszip')
+    msg = await page.evaluate("async()=>{ try{ await ensureLib('jszip'); return 'no error'; }catch(e){ return e.message; } }")
+    missing = await page.evaluate("typeof JSZip==='undefined'")
+    net['fail'].clear()
+    retried = await page.evaluate("async()=>{ await ensureLib('jszip'); return typeof JSZip!=='undefined'; }")
+    check('Could not load' in msg and 'connection' in msg and missing and retried and net['hits'].count('jszip') == 2, 'failed-download-can-be-retried', f'message: {msg!r}, retried: {retried}')
+
+    net['fail'].add('exceljs')
+    a = await page.evaluate("async()=>{ const ok = await ensureLibOrAlert('exceljs'); return {ok, text:(document.querySelector('#modal-root')||{}).innerText||''}; }")
+    check(a['ok'] is False and 'Could not load the Excel export library' in a['text'], 'failure-shows-an-alert', str(a)[:160])
+    net['fail'].clear()
+
+    await page.evaluate("async()=>{ location.hash='#/warehouses'; await render(); }")
+    await page.wait_for_timeout(500)
+    s = await page.evaluate("({loaded: typeof Sortable!=='undefined', made: window.__sortables||0})")
+    check(s['loaded'] and s['made'] >= 1 and 'Sortable' in net['hits'] and not errors, 'sortable-loads-with-its-page', f'{s}, errors: {errors[:1]}')
+    await browser.close()
+
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors, fail=['Sortable'])
+    bad = []
+    for h in ('#/warehouses', '#/products'):
+        await page.evaluate("async(h)=>{ location.hash=h; await render(); }", h)
+        await page.wait_for_timeout(400)
+        n = await page.evaluate("(document.querySelector('#main').innerText||'').trim().length")
+        if n < 15: bad.append(h)
+    check(not bad and not errors, 'pages-work-if-sortable-cannot-load', f'blank: {bad}, errors: {errors[:1]}')
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
+    async def run(title, group):
+        nonlocal failed
+        print(title)
+        try:
+            failed += await group
+        except Exception as e:             # a group that crashes counts as a failure, with one readable line
+            print(f"  FAIL  this group stopped early: {str(e).strip().splitlines()[0][:200]}")
+            failed += 1
+
     async with async_playwright() as pw:
-        if args.only in (None, 'pages'):
-            print('pages (demo mode, sample data):'); failed += await test_pages(pw, url)
-        if args.only in (None, 'tidy'):
-            print('tidy vessel names:'); failed += await test_tidy(pw, url)
+        if args.only in (None, 'pages'): await run('pages (demo mode, sample data):', test_pages(pw, url))
+        if args.only in (None, 'tidy'): await run('tidy vessel names:', test_tidy(pw, url))
+        if args.only in (None, 'libs'): await run('libraries load on demand:', test_libs(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
     sys.exit(1 if failed else 0)

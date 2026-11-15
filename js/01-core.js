@@ -149,6 +149,43 @@ function sheetToRows(sheet, opts){
   return XLSX.utils.sheet_to_json(sheet, Object.assign({header:1, defval:'', blankrows:false}, opts||{}));
 }
 
+/* ---------------- libraries loaded on demand ----------------
+   The Excel / zip / drag-to-reorder libraries (~2 MB together) come from a CDN. They used to be <script> tags in the
+   page head, so EVERY page load waited for them. Now each one is fetched the first time a feature needs it, and the
+   browser keeps it after that. ensureLib('xlsx' | 'exceljs' | 'jszip' | 'sortable') resolves when the library is ready
+   and rejects with a readable message if it can't be loaded (a failed attempt is forgotten, so the next try starts again). */
+const LIB_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/';
+const LAZY_LIBS = {
+  xlsx:     {label:'Excel reading',   url:LIB_CDN+'xlsx/0.18.5/xlsx.full.min.js',     ready:()=>typeof XLSX!=='undefined'},
+  exceljs:  {label:'Excel export',    url:LIB_CDN+'exceljs/4.4.0/exceljs.min.js',     ready:()=>typeof ExcelJS!=='undefined'},
+  jszip:    {label:'zip',             url:LIB_CDN+'jszip/3.10.1/jszip.min.js',        ready:()=>typeof JSZip!=='undefined'},
+  sortable: {label:'drag-to-reorder', url:LIB_CDN+'Sortable/1.15.2/Sortable.min.js',  ready:()=>typeof Sortable!=='undefined'}
+};
+const _libLoading = {};
+function ensureLib(name){
+  const L = LAZY_LIBS[name];
+  if(!L) return Promise.reject(new Error('Unknown library: '+name));
+  if(L.ready()) return Promise.resolve();
+  if(!_libLoading[name]) _libLoading[name] = new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = L.url;
+    const fail = ()=>{ s.remove(); delete _libLoading[name];
+      reject(new Error('Could not load the '+L.label+' library — check your connection and try again.')); };
+    s.onload = ()=> L.ready() ? resolve() : fail();
+    s.onerror = fail;
+    document.head.appendChild(s);
+  });
+  return _libLoading[name];
+}
+/* for handlers that have no error handling of their own: shows the problem and returns false */
+async function ensureLibOrAlert(name){
+  try{ await ensureLib(name); return true; }catch(e){ showAlert(e.message); return false; }
+}
+/* drag-to-reorder: if the library can't load, the page still works and reordering simply stays off */
+function makeSortable(el, opts){
+  ensureLib('sortable').then(()=> new Sortable(el, opts)).catch(()=>{});
+}
+
 function normalize(s){
   return (s||'').toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
 }

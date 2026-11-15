@@ -6,7 +6,8 @@
    in local variables for the lifetime of this screen. Re-uses the same header-detection and
    product-matching logic as a normal order import (locateOrderHeaderRow, matchExcelRow) so
    it recognizes the file the same way picking does, but keeps its own separate flow. */
-function exportSplitterExcel(groups, sourceLabel, sourceCode){
+async function exportSplitterExcel(groups, sourceLabel, sourceCode){
+  if(!(await ensureLibOrAlert('exceljs'))) return;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Dockline';
   wb.created = new Date();
@@ -103,6 +104,7 @@ route('splitter', async ()=>{
 
   async function processFile(file){
     const buf = await file.arrayBuffer();
+    if(!(await ensureLibOrAlert('xlsx'))) return false;
     const wb = XLSX.read(buf, {type:'array'});
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const aoa = sheetToRows(sheet);

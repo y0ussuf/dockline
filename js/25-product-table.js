@@ -387,6 +387,7 @@ route('table', async ()=>{
 
   /* ---- export what is shown ---- */
   $('#pt_export').onclick = async ()=>{
+    if(!(await ensureLibOrAlert('exceljs'))) return;
     const list = rows(), cs = cols();
     const wb = new ExcelJS.Workbook(); wb.creator = 'Dockline'; const ws = wb.addWorksheet('Products');
     ws.columns = [{header:'Product', width:48}].concat(cs.map(c=>({header:c.label, width:c.kind==='dec'||c.kind==='markup' ? 14 : 16})));

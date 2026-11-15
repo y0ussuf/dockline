@@ -168,6 +168,7 @@ async function newOrderStep1(existing){
     };
     try{
       const buf = await file.arrayBuffer();
+      await ensureLib('xlsx');   // a failure falls through to the filename-based guess below
       const wb = XLSX.read(buf, {type:'array'});
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const aoa = sheetToRows(sheet);
@@ -195,6 +196,7 @@ async function newOrderStep1(existing){
       o.vessel=vessel; o.imo=imo; o.orderNumber=num; o.orderDate=$('#o_date').value; o.destination=$('#o_dest').value.trim();
 
       const buf = await file.arrayBuffer();
+      try{ await ensureLib('xlsx'); }catch(err){ return fail(err.message); }
       const wb = XLSX.read(buf, {type:'array'});
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const aoa = sheetToRows(sheet);
