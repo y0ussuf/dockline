@@ -248,13 +248,7 @@ route('table', async ()=>{
         else { setPending(p, f, norm); if(f==='sellPrice') last.set(p.id,'sell'); }
       }
     } else if(kind==='markup'){
-      ok = decOk(t); el.classList.toggle('bad', !ok);
-      if(ok && t!==''){ last.set(p.id,'markup'); lastMk.set(p.id,t);
-        if(!Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))){      // no cost yet: work it out from the sell price
-          const r = costFromMarkup(eff(p,'sellPrice'), t);
-          if(r && r.text!==undefined){ setPending(p,'costPrice', r.text); el.title = ''; el.classList.remove('bad'); }
-          else if(r){ el.classList.add('bad'); el.title = 'The cost does not divide exactly (≈ '+r.approx+'). Type the cost yourself.'; showAlert(`The cost does not divide exactly (≈ ${r.approx}). Nothing is rounded, so type the real cost yourself.`); }
-        } else { const sv = Dec.sellFromMarkup(eff(p,'costPrice'), t); if(sv!==null) setPending(p,'sellPrice',sv); } }
+      ok = decOk(t); el.classList.toggle('bad', !ok);     // only checked while typing; the maths runs when you finish (leave the cell / Enter)
     } else if(kind==='ref'){
       const tr = rowEl(p.id), qEl = tr.querySelector('[data-part=qty]'), uEl = tr.querySelector('[data-part=unit]');
       const qt = qEl.value.trim().replace(/,/g,''); ok = qt==='' || (!!Dec.parse(qt) && Dec.cmp(Dec.parse(qt), Dec.ZERO)>0 && /^\d*\.?\d+$/.test(qt));
@@ -270,8 +264,30 @@ route('table', async ()=>{
       drawBars();
     }
   });
+  /* the markup cell is applied when you FINISH typing it, so half-typed numbers ("1" on the way to "10") never change anything or pop up */
+  function commitMarkup(p, el){
+    const t = el.value.trim(); if(t==='' || !decOk(t)) return;
+    last.set(p.id,'markup'); lastMk.set(p.id,t);
+    if(!Dec.parse(eff(p,'costPrice')) && Dec.parse(eff(p,'sellPrice'))){      // no cost yet: work it out from the sell price
+      const sell = eff(p,'sellPrice'), r = costFromMarkup(sell, t);
+      if(r && r.text!==undefined){ setPending(p,'costPrice', r.text); el.title = ''; el.classList.remove('bad'); }
+      else if(r){
+        last.set(p.id,'sell');
+        showModal(`<h3>No exact cost for ${esc(t)}%</h3><p>To sell at <b>${esc(sell)}</b> with ${esc(t)}% markup the cost would be ${esc(r.approx)}, a number that never ends.</p>
+          <p class="subtle">The sell price stays <b>${esc(sell)}</b>. Type the cost you want to keep; the markup is then calculated from the two numbers (so it may show a hair under ${esc(t)}%).</p>
+          <div class="field"><label>Cost</label><input type="text" inputmode="decimal" id="pt_mk_cost" value="${esc(r.r2)}"></div>
+          <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="pt_mk_ok" style="flex:1;">Use this cost</button><button class="btn btn-ghost" id="pt_mk_no">Leave the cost empty</button></div>`);
+        $('#pt_mk_no').onclick = ()=>{ closeModal(); el.value = ''; };
+        $('#pt_mk_ok').onclick = ()=>{ const v = $('#pt_mk_cost').value.trim(); if(!decOk(v) || !Dec.parse(v)){ showAlert('Type the cost as a plain number, like 47.59.'); return; } setPending(p,'costPrice',Dec.str(Dec.parse(v))); closeModal(); draw(true); };
+      }
+    } else { const sv = Dec.sellFromMarkup(eff(p,'costPrice'), t); if(sv!==null) setPending(p,'sellPrice',sv); }
+    const tr = rowEl(p.id), sEl = tr.querySelector('[data-f="sellPrice"]'), cEl = tr.querySelector('[data-f="costPrice"]');
+    if(sEl) sEl.value = eff(p,'sellPrice')??''; if(cEl) cEl.value = eff(p,'costPrice')??'';
+    refreshRow(p); drawBars();
+  }
   wrap.addEventListener('change', e=>{
     const el = e.target;
+    if(el.matches('.pt-in[data-kind="markup"]')){ commitMarkup(prodById.get(el.dataset.p), el); return; }
     if(el.matches('.pt-sel-r')){ el.checked ? sel.add(el.dataset.sel) : sel.delete(el.dataset.sel); drawBars(); return; }
     if(!el.matches('.pt-in[data-f], .pt-chk')) return;
     const p = prodById.get(el.dataset.p), f = el.dataset.f;

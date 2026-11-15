@@ -230,8 +230,41 @@ async def test_packs(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 5. product table: markup cell
+async def test_markup(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  markup/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    await page.evaluate("async()=>{ location.hash='#/table'; await render(); }")
+    await page.wait_for_timeout(500)
+    row = page.locator('tr:has(input[data-f="__markup"])').first
+    cost, sell, mk = row.locator('input[data-f="costPrice"]'), row.locator('input[data-f="sellPrice"]'), row.locator('input[data-f="__markup"]')
+    await cost.fill(''); await sell.fill('52.35')
+    await mk.click(); await page.keyboard.type('1'); await page.keyboard.type('0')
+    modal_while_typing = await page.locator('#modal-root *').count()
+    check(modal_while_typing == 0, 'no pop-up while the number is still being typed', modal_while_typing)
+    await page.keyboard.press('Tab')
+    await page.wait_for_timeout(300)
+    txt = await page.locator('#modal-root').inner_text()
+    check('47.59' in txt and '52.35' in txt, 'pop-up appears when you finish: offers cost 47.59, sell stays 52.35', txt[:120])
+    await page.locator('#pt_mk_ok').click(); await page.wait_for_timeout(300)
+    sell_after = await row.locator('input[data-f="sellPrice"]').input_value()
+    cost_after = await row.locator('input[data-f="costPrice"]').input_value()
+    check(sell_after == '52.35' and cost_after == '47.59', 'sell price untouched, chosen cost saved', f'sell={sell_after} cost={cost_after}')
+    await cost.fill(''); await sell.fill('110')
+    await mk.click(); await mk.fill('10'); await page.keyboard.press('Tab'); await page.wait_for_timeout(300)
+    check(await row.locator('input[data-f="costPrice"]').input_value() == '100', 'exact case still fills the cost (110 at 10% -> 100)')
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -248,6 +281,7 @@ async def main():
         if args.only in (None, 'pages'): await run('pages (demo mode, sample data):', test_pages(pw, url))
         if args.only in (None, 'tidy'): await run('tidy vessel names:', test_tidy(pw, url))
         if args.only in (None, 'libs'): await run('libraries load on demand:', test_libs(pw, url))
+        if args.only in (None, 'markup'): await run('product table markup:', test_markup(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
