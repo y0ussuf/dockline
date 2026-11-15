@@ -129,7 +129,7 @@ route('products', async ()=>{
       }, {danger:true, yesLabel:'Deactivate'});
     });
     $('#prodList').querySelectorAll('[data-sortable-section]').forEach(el=>{
-      new Sortable(el,{handle:'.drag-handle', animation:150, onEnd: async ()=>{
+      makeSortable(el,{handle:'.drag-handle', animation:150, onEnd: async ()=>{
         const ids=[...el.children].map(c=>c.dataset.id);
         for(let i=0;i<ids.length;i++){
           const p = products.find(x=>x.id===ids[i]);
@@ -418,6 +418,7 @@ function openBulkImport(){
     if(!file) return;
     $('#csv_preview').innerHTML = `<p class="subtle">Reading file…</p>`;
     const text = await file.text();
+    try{ await ensureLib('xlsx'); }catch(err){ $('#csv_preview').innerHTML = `<p class="subtle">${esc(err.message)}</p>`; return; }
     const wb = XLSX.read(text, {type:'string'});
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
@@ -589,12 +590,12 @@ route('warehouses', async ()=>{
       </div>`;
     }).join('');
 
-    new Sortable(list, {handle:'.wh-handle', animation:150, onEnd: async ()=>{
+    makeSortable(list, {handle:'.wh-handle', animation:150, onEnd: async ()=>{
       const ids=[...list.children].map(c=>c.dataset.whid);
       for(let i=0;i<ids.length;i++){ const w=warehouses.find(x=>x.id===ids[i]); w.priority=i+1; await put('warehouses',w); }
     }});
     list.querySelectorAll('[data-sec-sortable]').forEach(el=>{
-      new Sortable(el,{handle:'.drag-handle', animation:150, onEnd: async ()=>{
+      makeSortable(el,{handle:'.drag-handle', animation:150, onEnd: async ()=>{
         const ids=[...el.children].map(c=>c.dataset.secid).filter(Boolean);
         for(let i=0;i<ids.length;i++){ const s=sections.find(x=>x.id===ids[i]); if(s){ s.priority=i+1; await put('sections',s); } }
       }});

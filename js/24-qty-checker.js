@@ -48,6 +48,7 @@ route('qcheck', async ()=>{
 
   async function processFile(f){
     buf = await f.arrayBuffer(); file = f;
+    if(!(await ensureLibOrAlert('exceljs'))) return false;
     const wb = new ExcelJS.Workbook();
     try{ await wb.xlsx.load(buf); }catch(e){ showAlert('This file could not be opened. Please use an .xlsx file.'); return false; }
     const ws = wb.worksheets[0];
@@ -111,6 +112,7 @@ route('qcheck', async ()=>{
   }
 
   async function exportChecked(){
+    if(!(await ensureLibOrAlert('exceljs'))) return;
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);      // a fresh copy of the original every time
     const ws = wb.worksheets[0], skipped = [];
     let n = 0;

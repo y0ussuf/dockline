@@ -18,4 +18,11 @@ site data to get a fix).
 `python3 tests/smoke.py` opens every page in a headless Chrome (demo mode, sample data) and runs the "Tidy vessel
 names" regression test; CI runs it on every pull request. Run it before committing changes to css/ or js/. Needs
 `pip install playwright` and Chrome/Chromium (set `CHROME=/path` to pick one). When you fix a bug, add a case to
-`tests/smoke.py` that fails without the fix. If this machine can't reach the CDN, the test uses a stand-in for Sortable.
+`tests/smoke.py` that fails without the fix. The tests replace the CDN libraries with tiny fakes, so they need no internet.
+
+## Libraries from the CDN load on demand
+
+xlsx, exceljs, jszip and Sortable are NOT in `index.html`; `ensureLib('xlsx' | 'exceljs' | 'jszip' | 'sortable')` in
+`js/01-core.js` loads each one the first time a feature needs it. Before using `XLSX`, `ExcelJS` or `JSZip` in new code,
+`await ensureLib(...)` (or `ensureLibOrAlert(...)` in a handler that has no error handling of its own); use `makeSortable(el, opts)`
+instead of `new Sortable(...)`. A new CDN library goes into `LAZY_LIBS`, not into a `<script>` tag in the page head.

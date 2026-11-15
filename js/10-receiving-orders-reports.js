@@ -470,6 +470,7 @@ function modNote(it){
 }
 
 async function exportOrderExcel(orderId){
+  if(!(await ensureLibOrAlert('exceljs'))) return;
   const order = await getOne('orders', orderId);
   const items = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
   const products = await getAll('products');
@@ -591,6 +592,7 @@ async function exportOrderExcel(orderId){
    supplier was deleted) fall into their own "Unassigned" group at the end rather than
    being silently dropped. */
 async function exportLowStockExcel(lowProducts, supMap){
+  if(!(await ensureLibOrAlert('exceljs'))) return;
   const groups = new Map(); // supplierId ('' for unassigned) -> {name, products}
   for(const p of lowProducts){
     const sup = p.supplierId ? supMap.get(p.supplierId) : null;

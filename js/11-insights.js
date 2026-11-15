@@ -205,6 +205,7 @@ async function parseHistorySheet(file){
   const out = {fileName:file.name, ok:false, error:'', vessel:'', code:'', imo:'', date:'', ambiguous:false, dateSource:'', lines:[], skippedLines:0};
   try{
     const buf = await file.arrayBuffer();
+    try{ await ensureLib('xlsx'); }catch(err){ out.error = err.message; return out; }
     const wb = XLSX.read(buf, {type:'array', cellDates:true});
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const aoa = sheetToRows(sheet);
@@ -622,7 +623,7 @@ async function expandPickedFiles(files, onProgress){
   const out = [];
   for(const f of files){
     if(!/\.zip$/i.test(f.name)){ out.push(f); continue; }
-    if(typeof JSZip==='undefined'){ out.push({name:f.name, unreadable:'zip support not loaded — check your connection and reload'}); continue; }
+    try{ await ensureLib('jszip'); }catch(err){ out.push({name:f.name, unreadable:err.message}); continue; }
     try{
       const zip = await JSZip.loadAsync(await f.arrayBuffer());
       const entries = Object.values(zip.files).filter(e=>
