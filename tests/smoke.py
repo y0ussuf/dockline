@@ -263,8 +263,38 @@ async def test_markup(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 6. invoice price -> product
+async def test_invprice(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  invprice/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""async () => {
+      const mkp = (id, over) => Object.assign({id, name:'T '+id, unit:'PCS', supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, costPrice:'', sellPrice:''}, over||{});
+      for (const p of [mkp('t1'), mkp('t2', {sellPrice:'9'}), mkp('t3'), mkp('t4', {unit:'KG'})]) await put('products', p);
+      const byProd = new Map();
+      const L = (pid, over) => Object.assign({id:uid(), productId:pid, desc:'x', qty:'2', unit:'PCS', price:'', include:true, ref:null, pack:null}, over||{});
+      const inv = {number:'', priceBasis:'sell', lines:[L('t1',{price:'12.5'}), L('t1'), L('t2',{price:'11'}), L('t3',{price:'7', lump:'Meat'}), L('t4',{price:'5', unit:'PCS'})]};
+      for (let i = 0; i < inv.lines.length; i++) await priceToProduct(inv, i, byProd);
+      const g = async id => (await getOne('products', id)).sellPrice;
+      return {t1: await g('t1'), second: inv.lines[1].price, t2: await g('t2'), t3: await g('t3'), t4: await g('t4'), note4: (inv.lines[4].savedNote||{}).text||'', hist: ((await getOne('products','t1')).priceHistory||[]).length};
+    }""")
+    check(r['t1'] == '12.5', 'a price typed on the invoice is saved on a product that had none', r)
+    check(r['second'] == '12.5', 'another line of the same product is filled in too', r)
+    check(r['t2'] == '9', 'an existing product price is never overwritten', r)
+    check(r['t3'] == '', 'lines priced as a whole (lump) never write to the product', r)
+    check(r['t4'] == '' and 'Not saved' in r['note4'], 'a different unit is not saved, and the line says so', r)
+    check(r['hist'] == 1, 'the change is recorded in the price history', r)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -282,6 +312,7 @@ async def main():
         if args.only in (None, 'tidy'): await run('tidy vessel names:', test_tidy(pw, url))
         if args.only in (None, 'libs'): await run('libraries load on demand:', test_libs(pw, url))
         if args.only in (None, 'markup'): await run('product table markup:', test_markup(pw, url))
+        if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
