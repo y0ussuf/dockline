@@ -828,5 +828,5 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
   .wm-kpis.five .wm-kpi .lbl{font-size:.83rem;}
   .pg-actions{gap:10px; margin-bottom:24px;}
   .pg-actions .btn-signal{flex:1 1 100%;}
-  .pg-actions .btn-ghost{flex:1 1 calc(50% - 5px); justify-content:center;}
+  .pg-actions .btn-ghost{flex:1 1 calc(50% - 5px); min-width:0; justify-content:center; padding:16px 10px; font-size:1rem; text-align:center;}
 }
