@@ -818,17 +818,15 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 .pg-search svg{position:absolute; left:13px; top:50%; transform:translateY(-50%); width:17px; height:17px; opacity:.6;}
 @media (max-width:860px){ .topbar h1{font-size:1.55rem;} .pg-actions .btn{flex:1 1 auto;} }
 
-/* Phones: compact two-column KPI tiles and a one-big + two-small action row on Home */
+/* Phones: two-column KPI tiles and a one-big + two-small action row on Home, kept at the original (comfortable) size */
 @media (max-width:860px){
-  .wm-kpis.five{grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:16px;}
+  .wm-kpis.five{grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:20px;}
   .wm-kpis.five .wm-kpi:last-child:nth-child(odd){grid-column:1 / -1;}
-  .wm-kpis.five .wm-kpi{padding:12px; gap:10px; border-radius:14px;}
-  .wm-kpis.five .wm-kpi .wm-ic{width:36px; height:36px; border-radius:10px;}
-  .wm-kpis.five .wm-kpi .wm-ic svg{width:18px; height:18px;}
-  .wm-kpis.five .wm-kpi b{font-size:1.45rem;}
-  .wm-kpis.five .wm-kpi .lbl{margin-top:3px; font-size:.74rem;}
-  .pg-actions{gap:8px; margin-bottom:22px;}
-  .pg-actions .btn-lg{padding:12px 14px; font-size:.95rem; min-height:0;}
+  .wm-kpis.five .wm-kpi{padding:16px; gap:12px;}
+  .wm-kpis.five .wm-kpi .wm-ic{width:44px; height:44px;}
+  .wm-kpis.five .wm-kpi b{font-size:1.8rem;}
+  .wm-kpis.five .wm-kpi .lbl{font-size:.83rem;}
+  .pg-actions{gap:10px; margin-bottom:24px;}
   .pg-actions .btn-signal{flex:1 1 100%;}
-  .pg-actions .btn-ghost{flex:1 1 calc(50% - 4px); justify-content:center;}
+  .pg-actions .btn-ghost{flex:1 1 calc(50% - 5px); justify-content:center;}
 }
