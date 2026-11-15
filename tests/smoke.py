@@ -196,8 +196,40 @@ async def test_libs(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 4. pack pricing (cases x pieces)
+async def test_packs(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  packs/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""() => {
+      const calc = (prod, unit, price, over) => {
+        const pack = parsePack(unit), b = packBasisFor(prod, pack);
+        const l = Object.assign({qty:'10', unit, price, ref:null, pack, packBasis:b.basis}, over||{});
+        const c = lineCalc(l, price, 'ask'); return {g:Dec.str(c.gross), issue:c.issue, basis:b.basis};
+      };
+      return {
+        can:   calc({name:'COCA COLA', unit:'CAN'}, 'CASE 24*300 ML', '15.15'),
+        cs:    calc({name:'COCA COLA', unit:'CASE'}, 'CASE 24*300 ML', '363.6'),
+        name:  calc({name:'COCA COLA 300 ML', unit:''}, 'CASE 24*300 ML', '15.15'),
+        none:  calc({name:'COCA COLA', unit:''}, 'CASE 24*300 ML', '15.15'),
+        plain: calc({name:'RICE', unit:'KG'}, 'KG', '10', {qty:'10'}),
+      };
+    }""")
+    check(r['can']['g'] == '3636' and not r['can']['issue'], 'unit CAN: 10 cases x 24 x 15.15 = 3636 automatically', r['can'])
+    check(r['cs']['basis'] == 'case' and r['cs']['g'] == '3636', 'unit CASE: billed per whole pack, 10 x 363.60', r['cs'])
+    check(r['name']['g'] == '3636', 'no unit but name carries the piece size: per piece', r['name'])
+    check(r['none']['issue'] == 'Pack choice needed', 'cannot be told: the line asks instead of guessing', r['none'])
+    check(r['plain']['g'] == '100' and not r['plain']['issue'], 'a plain KG line is unaffected', r['plain'])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -214,6 +246,7 @@ async def main():
         if args.only in (None, 'pages'): await run('pages (demo mode, sample data):', test_pages(pw, url))
         if args.only in (None, 'tidy'): await run('tidy vessel names:', test_tidy(pw, url))
         if args.only in (None, 'libs'): await run('libraries load on demand:', test_libs(pw, url))
+        if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
     srv.shutdown()
     print('\n' + ('ALL PASSED' if not failed else f'{failed} FAILED'))
     sys.exit(1 if failed else 0)

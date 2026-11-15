@@ -112,5 +112,20 @@ function parsePack(text){
   if(!m || +m[1] < 2) return null;
   return {count:m[1], size: m[3] ? (m[2]+' '+m[3]) : ''};
 }
+/* Is the product's price per piece inside a pack, or per whole pack? Worked out from the product itself, never asked unless it cannot be told:
+   - the product's own unit is a pack word (CASE, CTN, BOX...)  -> per whole pack
+   - the product's own unit is anything else (CAN, BTL, PCS...) -> per piece
+   - no unit, but the product name carries the piece size ("COCA COLA 300 ML" in a 24*300 ML pack) -> per piece
+   -> {basis:'piece'|'case'|'', why} */
+const PACK_WORDS = /^(case|cases|cs|ctn|ctns|carton|cartons|box|boxes|bx|pack|packs|pkt|pkts|bundle|tray|crate|dozen|doz)$/;
+function packBasisFor(p, pack){
+  if(!p || !pack) return {basis:'', why:''};
+  if(p.pricePack==='piece' || p.pricePack==='case') return {basis:p.pricePack, why:'set on the product'};
+  const u = String(p.unit||'').trim().toLowerCase().replace(/\.$/,'');
+  if(u) return PACK_WORDS.test(u) ? {basis:'case', why:`product unit is ${p.unit}`} : {basis:'piece', why:`product unit is ${p.unit}`};
+  const ns = parseSize(p.name), ps = pack.size ? parseMeasure(pack.size) : null;
+  if(ns && ps && sameSize(ns, ps)) return {basis:'piece', why:`name says ${ns.qty} ${ns.unit}`};
+  return {basis:'', why:''};
+}
 const sameSize = (a,b)=> !!a && !!b && a.family===b.family && Dec.cmp(a.base, b.base)===0;
 

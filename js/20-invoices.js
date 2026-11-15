@@ -17,7 +17,7 @@ function invoiceLinesFromItems(items, byProd, basis, whMap){
       cost:(p&&seesCost()&&p.costPrice)||'', sell:(p&&seesSell()&&p.sellPrice)||'', price:(p ? (basis==='cost'?(seesCost()&&p.costPrice):(seesSell()&&p.sellPrice)) : '')||'',
       pack:parsePack(uu), priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
       lump:lumpOf(p, whMap), discType:'', disc:'', include:true, substituted:it.status==='substituted',
-      ordered:it.excelDesc||'', sysName:(p&&p.name)||'', packBasis:(p&&(p.pricePack==='piece'||p.pricePack==='case'))?p.pricePack:'', doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : '', ...(over||{})});
+      ordered:it.excelDesc||'', sysName:(p&&p.name)||'', packBasis:packBasisFor(p, parsePack(uu)).basis, packWhy:packBasisFor(p, parsePack(uu)).why, doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : '', ...(over||{})});
     /* stock taken from a different pack size (400 GM packs of a KG product) is billed per pack at that size's own price */
     let rest = q; const packs = new Map(), packLines = [];
     for(const a of (allocs||[])){
@@ -322,7 +322,7 @@ async function invoiceScreen(id){
           </div>
           ${t.rows[i].calc.note?`<div class="iv-work">${esc(t.rows[i].calc.note)}</div>`:''}
           ${issues[i].includes('Pack choice needed')?`<div class="iv-fix"><span><b>Pack of ${esc(l.pack.count)}${l.pack.size?' × '+esc(l.pack.size):''}.</b> Is ${esc(l.price)} the price of one piece or of one whole pack?</span><button class="btn btn-ghost btn-sm" data-ok="packpiece:${i}">Per piece (×${esc(l.pack.count)})</button><button class="btn btn-ghost btn-sm" data-ok="packcase:${i}">Per whole pack</button></div>`:''}
-          ${l.pack && l.packBasis && !l.perPiece && !l.unitOverride?`<button class="qc-link" data-ok="packclear:${i}">Change pack choice</button>`:''}
+          ${l.pack && l.packBasis && !l.perPiece && !l.unitOverride?`${l.packWhy?`<div class="subtle" style="font-size:12px;">Priced per ${l.packBasis==='piece'?'piece':'whole pack'} automatically — ${esc(l.packWhy)}.</div>`:''}<button class="qc-link" data-ok="packclear:${i}">Change pack choice</button>`:''}
           ${issues[i].includes('Size needed')?`<div class="iv-fix"><input type="text" data-size="${i}" placeholder="Size of one ${esc(l.unit||'unit')}, e.g. 350 ml"><button class="btn btn-ghost btn-sm" data-ok="size:${i}">Use size</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill per piece at this price</button></div>`:''}
           ${issues[i].some(m=>m.startsWith('Does not divide'))?`<div class="iv-fix"><span class="subtle">Exact amount ${esc(t.rows[i].calc.exactText)} never ends.</span><input type="text" inputmode="decimal" data-uo="${i}" placeholder="Unit price to use"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`:''}
           ${(l.unitOverride||l.sizeOverride||l.perPiece)?`<button class="qc-link" data-ok="clear:${i}">Undo my change to this line</button>`:''}
