@@ -1,0 +1,30 @@
+name: smoke-tests
+
+# Opens every page of the app in a headless Chrome (demo mode, sample data) and runs the "Tidy vessel names"
+# regression test. Fails the pull request on an uncaught error, a console error or a blank page.
+# Run it yourself with:  python3 tests/smoke.py
+
+on:
+  pull_request:
+    paths:
+      - 'css/**'
+      - 'js/**'
+      - 'demo/**'
+      - 'index.html'
+      - 'tests/**'
+      - '.github/workflows/smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Playwright (the runner already has Google Chrome)
+        run: python -m pip install playwright
+      - name: Run smoke tests
+        run: python tests/smoke.py
