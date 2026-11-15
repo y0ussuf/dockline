@@ -143,6 +143,10 @@ async function historyPendingCount(){
   for(const s of HISTORY_STORES) n += (await getAll(s)).filter(r=>!r.synced).length;
   return n;
 }
+/* what is still waiting to be sent from this device: ordinary changes (the queue) and imported past-order rows */
+async function pendingSyncCounts(){
+  return {queue:(await getAll('syncQueue')).length, history: await historyPendingCount()};
+}
 /* every row gets its own timestamp (1 ms apart): the pull pages through rows by "updated_at greater than the
    last one seen", so rows sharing one timestamp across a page boundary would be silently skipped */
 let _histClock = 0;
@@ -275,7 +279,7 @@ async function renderSyncIndicator(liveState){
   if(!el) return;
   const cfg = await getSyncConfig();
   if(!cfg || !cfg.url || !cfg.key){ el.innerHTML = `<span class="subtle">Not set up — add your crew's connection details below.</span>`; return; }
-  const pendingCount = (await getAll('syncQueue')).length;
+  const pend = await pendingSyncCounts(), pendingCount = pend.queue, histPending = pend.history;
   const status = await getSyncStatus();
   const online = typeof navigator==='undefined' || navigator.onLine!==false;
   let dot='#9aa5b1', label='Offline';
@@ -284,6 +288,6 @@ async function renderSyncIndicator(liveState){
   else if(status.ok===false){ dot='#C1432E'; label='Sync error: '+esc(status.error||'unknown'); }
   else if(status.lastSyncedAt){ dot='#2E7D4F'; label='Synced · last '+new Date(status.lastSyncedAt).toLocaleTimeString(); }
   else{ dot='#B8860B'; label='Not synced yet'; }
-  el.innerHTML = `<span style="display:inline-flex; align-items:center; gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span>${label}</span>${pendingCount?` <span class="subtle">· ${pendingCount} change${pendingCount===1?'':'s'} waiting to send</span>`:''}`;
+  el.innerHTML = `<span style="display:inline-flex; align-items:center; gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span>${label}</span>${pendingCount?` <span class="subtle">· ${pendingCount} change${pendingCount===1?'':'s'} waiting to send</span>`:''}${histPending?` <span class="subtle">· ${histPending.toLocaleString()} imported row${histPending===1?'':'s'} waiting to send</span>`:''}`;
 }
 

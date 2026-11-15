@@ -354,16 +354,27 @@ async function checkForUpdate(){
   try{
     const url = location.pathname + '?_=' + Date.now();
     const res = await fetch(url, {cache:'no-store'});
-    if(!res.ok) return;
+    if(!res.ok) return null;
     const text = await res.text();
     const m = text.match(/const APP_VERSION\s*=\s*'([^']+)'/);
-    if(m && m[1] && m[1] !== APP_VERSION){
-      $('#updateBanner').classList.add('show');
+    if(m && m[1]){
+      const newer = m[1] !== APP_VERSION;
+      if(newer) $('#updateBanner').classList.add('show');
+      return {latest:m[1], newer};   // Settings → App version shows this
     }
   }catch(e){ /* offline or blocked — just skip this round, no harm done */ }
+  return null;
 }
 function reloadToLatest(){
   location.href = location.pathname + '?_=' + Date.now();
+}
+/* Re-downloads every css/js file this page uses straight from the network (which also replaces the browser's cached copies)
+   and then reloads. It does what clearing the site data used to be needed for, without touching anything stored on this device. */
+async function refreshAppFiles(){
+  const urls = [...document.querySelectorAll('link[rel="stylesheet"][href], script[src]')]
+    .map(e=> e.href || e.src).filter(u=> u.startsWith(location.origin));
+  await Promise.all(urls.map(u=> fetch(u, {cache:'reload'}).catch(()=>{})));
+  reloadToLatest();
 }
 
 /* A device that has never loaded the shared data would otherwise open on an empty app and only fill in later (needing a reload).
