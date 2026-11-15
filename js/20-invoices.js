@@ -30,7 +30,7 @@ function invoiceLinesFromItems(items, byProd, basis, whMap){
       const r = Rat.div(Rat.fromDec(e.qty), Rat.fromDec(e.sz));
       if(r.d!==1n) continue;                                        // not a whole number of packs: billed at the product's own price below
       const sell = (p&&seesSell()&&packPriceOf(p, e.label,'sell'))||'', cost = (p&&seesCost()&&packPriceOf(p, e.label,'cost'))||'';
-      packLines.push(mk({n:r.n, s:0}, e.label, {desc:`${desc} — ${e.label} packs`, cost, sell, price:(basis==='cost'?cost:sell), priceUnit:e.label, ref:null, nameSize:null, pack:null}));
+      packLines.push(mk({n:r.n, s:0}, e.label, {desc:`${desc} — ${e.label} packs`, cost, sell, price:(basis==='cost'?cost:sell), priceUnit:e.label, ref:null, nameSize:null, pack:null, bySize:true}));
       rest = Dec.sub(rest, e.qty);
     }
     if(Dec.cmp(rest, Dec.ZERO)>0) lines.push(mk(rest, unit));
@@ -142,6 +142,34 @@ function lineIssues(l, inv, calc){
     }
   }
   return w;
+}
+/* ---- a price typed on an invoice line is remembered on the product, when the product has none yet ----
+   Never overwrites an existing product price (then it is just this invoice's price), never touches "priced as a whole" lumps,
+   and only when the price clearly means the same thing as the product's own price (same unit, same pack basis). */
+function priceSaveBlock(l, p, field){
+  if(!p || !l.productId) return 'no product';
+  if(l.lump || l.bySize || l.perPiece || l.unitOverride || l.sizeOverride) return 'special line';
+  if(Dec.parse(p[field])) return 'already has a price';
+  if(l.pack){ if(l.packBasis!==packBasisFor(p, l.pack).basis) return 'pack basis differs from the product unit'; }
+  else if(!l.ref && p.unit && normalize(l.unit)!==normalize(p.unit)) return `picked in “${l.unit}” but the product is priced per “${p.unit}”`;
+  return '';
+}
+async function priceToProduct(inv, i, byProd){
+  const l = inv.lines[i]; delete l.savedNote;
+  const field = inv.priceBasis==='cost' ? 'costPrice' : 'sellPrice';
+  if(!can('prices.edit') || !(field==='costPrice' ? seesCost() : seesSell())) return;
+  const v = Dec.parse(l.price); if(!v || Dec.cmp(v, Dec.ZERO)<=0) return;
+  const p = l.productId ? await getOne('products', l.productId) : null; if(!p) return;
+  const why = priceSaveBlock(l, p, field);
+  if(why==='already has a price' || why==='no product') return;
+  if(why){ l.savedNote = {text:`Not saved to the product: ${why}.`}; return; }
+  p[field] = Dec.str(v);
+  p.priceHistory = [...(p.priceHistory||[]), {at:new Date().toISOString(), cost:p.costPrice||'', sell:p.sellPrice||'', from:'invoice '+(inv.number||'draft')}].slice(-50);
+  await put('products', p); byProd.set(p.id, p);
+  let also = 0;                                         // the same product on other lines of this invoice (e.g. every chips flavour) gets it too
+  inv.lines.forEach((o,j)=>{ if(j!==i && o.include && o.productId===p.id && !Dec.parse(o.price) && !priceSaveBlock(Object.assign({}, o), Object.assign({}, p, {[field]:''}), field)){ o.price = l.price; also++; } });
+  l.savedNote = {text:`Saved as ${field==='costPrice'?'cost':'sell'} price of “${p.name}”${also?` and filled in ${also} more line${also===1?'':'s'} of it`:''}.`, pid:p.id, field};
+  if(typeof syncNow==='function') syncNow();
 }
 async function nextInvoiceNumber(prefix){
   const year = new Date().getFullYear(), head = `${prefix}-${year}-`;
@@ -322,6 +350,7 @@ async function invoiceScreen(id){
           </div>
           ${t.rows[i].calc.note?`<div class="iv-work">${esc(t.rows[i].calc.note)}</div>`:''}
           ${issues[i].includes('Pack choice needed')?`<div class="iv-fix"><span><b>Pack of ${esc(l.pack.count)}${l.pack.size?' × '+esc(l.pack.size):''}.</b> Is ${esc(l.price)} the price of one piece or of one whole pack?</span><button class="btn btn-ghost btn-sm" data-ok="packpiece:${i}">Per piece (×${esc(l.pack.count)})</button><button class="btn btn-ghost btn-sm" data-ok="packcase:${i}">Per whole pack</button></div>`:''}
+          ${l.savedNote?`<div class="subtle" style="font-size:12px;">${esc(l.savedNote.text)} ${l.savedNote.pid?`<button class="qc-link" data-ok="unsave:${i}">Undo</button>`:''}</div>`:''}
           ${l.pack && l.packBasis && !l.perPiece && !l.unitOverride?`${l.packWhy?`<div class="subtle" style="font-size:12px;">Priced per ${l.packBasis==='piece'?'piece':'whole pack'} automatically — ${esc(l.packWhy)}.</div>`:''}<button class="qc-link" data-ok="packclear:${i}">Change pack choice</button>`:''}
           ${issues[i].includes('Size needed')?`<div class="iv-fix"><input type="text" data-size="${i}" placeholder="Size of one ${esc(l.unit||'unit')}, e.g. 350 ml"><button class="btn btn-ghost btn-sm" data-ok="size:${i}">Use size</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill per piece at this price</button></div>`:''}
           ${issues[i].some(m=>m.startsWith('Does not divide'))?`<div class="iv-fix"><span class="subtle">Exact amount ${esc(t.rows[i].calc.exactText)} never ends.</span><input type="text" inputmode="decimal" data-uo="${i}" placeholder="Unit price to use"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`:''}
@@ -344,6 +373,11 @@ async function invoiceScreen(id){
       if(act==='packpiece') l.packBasis = 'piece';
       if(act==='packcase') l.packBasis = 'case';
       if(act==='packclear') l.packBasis = '';
+      if(act==='unsave' && l.savedNote && l.savedNote.pid){
+        const pr = await getOne('products', l.savedNote.pid);
+        if(pr && Dec.parse(pr[l.savedNote.field]) && Dec.cmp(Dec.parse(pr[l.savedNote.field]), dm(l.price))===0){ pr[l.savedNote.field] = ''; pr.priceHistory = (pr.priceHistory||[]).slice(0,-1); await put('products', pr); byProd.set(pr.id, pr); }
+        delete l.savedNote;
+      }
       if(act==='uo'){ const v = $(`[data-uo="${i}"]`).value.trim(); if(!Dec.parse(v)){ showAlert('Enter a plain number, like 116.67.'); return; } l.unitOverride = Dec.str(Dec.parse(v)); }
       if(act==='clear'){ delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; }
       await save(); draw();
@@ -362,7 +396,7 @@ async function invoiceScreen(id){
     $('#iv_notes').onchange = async e=>{ inv.notes = e.target.value; await save(); };
     const bad = (el, msg)=>{ showAlert(msg||'Enter a plain number, like 36.25.'); el.focus(); };
     $('#main').querySelectorAll('[data-inc]').forEach(cb=>cb.onchange=async ()=>{ inv.lines[+cb.dataset.inc].include = cb.checked; await save(); draw(); });
-    $('#main').querySelectorAll('[data-price]').forEach(el=>el.onchange=async ()=>{ const v = el.value.trim(); if(v!=='' && !Dec.parse(v)) return bad(el); inv.lines[+el.dataset.price].price = v===''?'':Dec.str(Dec.parse(v)); await save(); draw(); });
+    $('#main').querySelectorAll('[data-price]').forEach(el=>el.onchange=async ()=>{ const v = el.value.trim(); if(v!=='' && !Dec.parse(v)) return bad(el); inv.lines[+el.dataset.price].price = v===''?'':Dec.str(Dec.parse(v)); await priceToProduct(inv, +el.dataset.price, byProd); await save(); draw(); });
     $('#main').querySelectorAll('[data-dt]').forEach(el=>el.onchange=async ()=>{ const l = inv.lines[+el.dataset.dt]; l.discType = el.value; if(!el.value) l.disc = ''; await save(); draw(); });
     $('#main').querySelectorAll('[data-d]').forEach(el=>el.onchange=async ()=>{ const v = el.value.trim(); if(v!=='' && !Dec.parse(v)) return bad(el); inv.lines[+el.dataset.d].disc = v===''?'':Dec.str(Dec.parse(v)); await save(); draw(); });
     $('#iv_del').onclick = ()=>showConfirm('Delete this draft? Nothing is lost from the order.', async ()=>{ await del('invoices', inv.id); location.hash = '#/invoice/order/'+inv.orderId; }, {danger:true, yesLabel:'Delete draft'});
