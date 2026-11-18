@@ -638,6 +638,7 @@ async def test_polish(pw, url):
     await page.set_viewport_size({'width':390,'height':800})
     await go('insights')
     check(await page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), 'Insights on a phone: the page does not scroll sideways')
+    check(await page.locator('.ins-prod th:visible').count() == 7 and await page.locator('.ins-ves th:visible').count() == 6, 'Insights on a phone: every column of both tables is still there (they scroll)', [await page.locator('.ins-prod th:visible').count(), await page.locator('.ins-ves th:visible').count()])
     await go('products')
     scroll = await page.evaluate("(()=>{const t=document.querySelector('.pg-tools'); return {sw:t.scrollWidth, cw:t.clientWidth, doc:document.documentElement.scrollWidth, win:innerWidth};})()")
     check(scroll['doc'] <= scroll['win'] + 1, 'Products on a phone: the page itself does not scroll sideways', scroll)

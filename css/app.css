@@ -901,10 +901,8 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 @media (max-width:860px){ .ins-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width:600px){
   .ins-kpis{gap:10px;} .ins-kpis .wm-kpi{padding:14px 12px; gap:10px;} .ins-kpis .wm-ic{width:38px; height:38px;} .ins-kpis b{font-size:1.5rem;}
-  .ins-prod th:nth-child(4),.ins-prod td:nth-child(4),.ins-prod th:nth-child(6),.ins-prod td:nth-child(6),.ins-prod th:nth-child(7),.ins-prod td:nth-child(7){display:none;}
-  .ins-ves th:nth-child(3),.ins-ves td:nth-child(3),.ins-ves th:nth-child(5),.ins-ves td:nth-child(5){display:none;}
-  .ins-ves td,.ins-ves th{white-space:nowrap;} .ins-ves td:first-child{white-space:normal;}
-  .ins-pv th:nth-child(5),.ins-pv td:nth-child(5),.ins-pv th:nth-child(6),.ins-pv td:nth-child(6){display:none;}
+  .ins-prod td,.ins-prod th,.ins-ves td,.ins-ves th,.ins-pv td,.ins-pv th{white-space:nowrap;}
+  .ins-prod td:first-child,.ins-ves td:first-child,.ins-pv td:first-child{white-space:normal; min-width:130px;}
 }
 .mc-legend{display:flex; gap:18px; flex-wrap:wrap; font-size:.82rem; color:var(--ink-soft); font-weight:600; margin:-4px 0 8px;}
 .mc-legend span{display:inline-flex; align-items:center; gap:8px;}
