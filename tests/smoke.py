@@ -573,16 +573,25 @@ async def test_report(pw, url):
         getCell: i => cells[i-1] || (cells[i-1] = {}), eachCell: (o, f) => (f||o)&&(typeof o==='function'?o:f) && cells.forEach(c => (typeof o==='function'?o:f)(c))}; rows.push(row); return row; };
       const ws = {columns:null, addRow: v => mkRow(v), mergeCells(){}, get lastRow(){ return rows[rows.length-1]; }};
       window.ExcelJS = {Workbook: function(){ this.addWorksheet = () => ws; this.xlsx = {writeBuffer: async () => new ArrayBuffer(1)}; }};
-      window.saveFile = async () => {};
-      await put('orders', {id:'ro1', vessel:'MV Test', imo:'1', orderNumber:'R-1', status:'completed'});
-      await put('orderItems', {id:'ri1', orderId:'ro1', sr:'1', excelDesc:'OLIVE OIL', excelQty:5, excelUnit:'LTR', status:'picked', actualQty:5, actualUnit:'LTR'});
+      let savedAs = ''; window.saveFile = async (name) => { savedAs = name; };
+      await put('orders', {id:'ro1', vessel:'MV Test', imo:'PGH-ALL-31', orderNumber:'31', status:'completed', destination:'Port Said'});
+      await put('orderItems', {id:'ri1', orderId:'ro1', sr:'1', excelDesc:'OLIVE OIL', excelQty:5, excelUnit:'LTR', status:'picked', actualQty:5, actualUnit:'LTR', notes:'-12 PKT cheese\\r\\n-24 PKT ham\\r\\n-6 PKT butter\\r\\n'});
+      await put('orderItems', {id:'ri2', orderId:'ro1', sr:'2', excelDesc:'RICE', excelQty:1, excelUnit:'BAG', status:'picked', actualQty:1, actualUnit:'BAG', notes:''});
       await exportOrderExcel('ro1');
-      const data = rows.find(x => x.values && x.values[1] === 'OLIVE OIL');
-      return {found: !!data, al: data ? [1,2,3,4,5].map(i => (data.cells[i-1].alignment||{}).horizontal || '') : []};
+      const data = rows.find(x => x.values && x.values[1] === 'OLIVE OIL'), plain = rows.find(x => x.values && x.values[1] === 'RICE');
+      const labels = rows.map(x => x.values && x.values[0]);
+      return {found: !!data, al: data ? [1,2,3,4,5].map(i => (data.cells[i-1].alignment||{}).horizontal || '') : [], savedAs,
+        notes: data ? data.cells[6].value : '', notesWrap: data ? !!(data.cells[6].alignment||{}).wrapText : false, noteH: data ? data.height : 0, plainH: plain ? plain.height : 0,
+        title: String(rows[0].values[0]), hasSummary: labels.includes('Summary'), hasDest: labels.includes('Destination'), pageSetup: ws.pageSetup, footer: ws.headerFooter};
     }""")
     check(r['found'], 'the item row is written', r)
     check(r['found'] and r['al'][0] == 'center' and r['al'][2] == 'center' and r['al'][3] == 'center' and r['al'][4] == 'center', 'SR., QUANTITY, UNIT and CONDITION are centred', r)
-    check(r['found'] and r['al'][1] == '', 'DESCRIPTION stays left-aligned', r)
+    check(r['found'] and r['al'][1] == 'left', 'DESCRIPTION stays left-aligned', r)
+    check(r['savedAs'] == 'PGH-ALL-31-report.xlsx', 'the file is named after the vessel code + report', r['savedAs'])
+    check(r['notes'] == '-12 PKT cheese\n-24 PKT ham\n-6 PKT butter' and r['notesWrap'], 'NOTES keep every line and wrap, nothing hidden behind a click', r['notes'])
+    check(r['noteH'] >= 48 and r['noteH'] > r['plainH'], 'the row is tall enough to show all three note lines', (r['noteH'], r['plainH']))
+    check(r['title'].startswith('ORDER REPORT') and r['hasSummary'] and r['hasDest'], 'title banner, summary strip and destination row are there', r['title'])
+    check(r['pageSetup']['orientation'] == 'landscape' and r['pageSetup']['fitToWidth'] == 1 and 'Page' in r['footer']['oddFooter'], 'prints landscape, one page wide, with page numbers', r['pageSetup'])
     check(not errors, 'no page errors', errors[:1])
     await browser.close()
     return failed
