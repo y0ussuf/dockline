@@ -73,7 +73,7 @@ function lineCalc(l, priceText, roundMode){
   }
   /* picked in one unit, priced in another: exact conversion, or the line asks (see 33-units.js). Only lines flagged unitCheck, so issued invoices keep their numbers. */
   if(l.unitCheck && !refSz && !l.perPiece && !l.pack && !l.bySize && !l.sizeOverride && l.productId){
-    const r = resolveUnits(l, qty);
+    const r = resolveUnits((l.ref && !refSz) ? Object.assign({}, l, {priceUnit:`${l.ref.qty} ${l.ref.unit}`}) : l, qty);      // "price per 23 PC" is a pack of 23 pieces
     if(r){
       if(r.issue){ out.issue = r.issue; out.ask = r.ask || null; return out; }
       let billed = r.billed;
@@ -343,7 +343,7 @@ async function invoiceScreen(id){
     }
     const t = invoiceTotals(inv), co = null;
     const issues = inv.lines.map((l,i)=>lineIssues(l, inv, t.rows[i].calc));
-    const BLOCK = ['Check match','Pack choice needed','Size differs','Unit conversion needed','Partial pack','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
+    const BLOCK = ['Check match','Pack choice needed','Size differs','Unit conversion needed','Price unit needed','Partial pack','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
     const lumpBad = (inv.lumps||[]).some(g=>g.include && !Dec.parse(g.amount));
     const nIncluded = inv.lines.filter(l=>l.include).length + (inv.lumps||[]).filter(g=>g.include).length;
     const nFlag = inv.lines.filter((l,i)=>l.include && issues[i].length).length + (inv.lumps||[]).filter(g=>g.include && !Dec.parse(g.amount)).length;
@@ -406,6 +406,7 @@ async function invoiceScreen(id){
             <button class="btn btn-ghost btn-sm" data-ok="swap:${i}">Different product…</button></div>`:''}
           ${(()=>{ const c = t.rows[i].calc; if(issues[i].includes('Unit conversion needed') && c.ask) return `<div class="iv-fix"><span><b>Picked in ${esc(l.unit)}, priced per ${esc(l.priceUnit)}.</b> How many ${esc(c.ask.smallLabel)} are in one ${esc(String(c.ask.big).toUpperCase())}?</span><input type="text" inputmode="decimal" data-fact="${i}" placeholder="e.g. 23"><button class="btn btn-ghost btn-sm" data-ok="fact:${i}">Save on product</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill as picked (price is per ${esc(l.unit)})</button></div>`;
             if(issues[i].includes('Partial pack') && c.partial) return `<div class="iv-fix"><span><b>${esc(l.qty)} ${esc(l.unit)} is ${esc(c.partial.packs)} ${esc(c.partial.label)}.</b> Bill part of a pack?</span><button class="btn btn-ghost btn-sm" data-ok="floor:${i}">Bill ${esc(c.partial.lo)} ${esc(c.partial.label)}</button><button class="btn btn-ghost btn-sm" data-ok="ceil:${i}">Bill ${esc(c.partial.hi)} ${esc(c.partial.label)}</button><input type="text" inputmode="decimal" data-uo="${i}" placeholder="or the price per ${esc(l.unit)}"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`;
+            if(issues[i].includes('Price unit needed')) return `<div class="iv-fix"><span><b>Picked in ${esc(l.unit)}, but this product has no price unit.</b> Is ${esc(l.price)} per KG, per piece, per pack…?</span><input type="text" data-pu="${i}" placeholder="Price is per… e.g. KG"><button class="btn btn-ghost btn-sm" data-ok="pu:${i}">Use this unit</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Price is per ${esc(l.unit)} as it is</button></div>`;
             return c.fact ? `<div class="subtle" style="font-size:12px;">1 ${esc(String(c.fact.big).toUpperCase())} = ${esc(c.fact.f.qty)} ${esc(c.fact.f.unit)} (set on the product) · <button class="qc-link" data-ok="factclear:${i}">Change</button></div>` : ''; })()}
           ${issues[i].includes('Size needed')?`<div class="iv-fix"><input type="text" data-size="${i}" placeholder="Size of one ${esc(l.unit||'unit')}, e.g. 350 ml"><button class="btn btn-ghost btn-sm" data-ok="size:${i}">Use size</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill per piece at this price</button></div>`:''}
           ${issues[i].some(m=>m.startsWith('Does not divide'))?`<div class="iv-fix"><span class="subtle">Exact amount ${esc(t.rows[i].calc.exactText)} never ends.</span><input type="text" inputmode="decimal" data-uo="${i}" placeholder="Unit price to use"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`:''}
@@ -467,6 +468,13 @@ async function invoiceScreen(id){
         const pr = l.productId ? byProd.get(l.productId) : null;
         if(pr && can('products.edit')){ pr.unitFacts = Object.assign({}, pr.unitFacts||{}, {[c.ask.big]: ans}); await put('products', pr); byProd.set(pr.id, pr); l.savedNote = {text:`Saved on “${pr.name}”: 1 ${String(c.ask.big).toUpperCase()} = ${ans.qty} ${ans.unit}.`}; }
         else { l.facts = Object.assign({}, l.facts||{}, {[c.ask.big]: ans}); l.savedNote = {text:'Used on this invoice only (you cannot edit products).'}; }
+      }
+      if(act==='pu'){
+        const v = $(`[data-pu="${i}"]`).value.trim().replace(/^per\s+/i,'');
+        if(!unitInfo(v)){ showAlert('Write the unit the price is for, like KG, LTR, PC or PKT 100 GM.'); return; }
+        l.priceUnit = v.toUpperCase();
+        const pr = l.productId ? byProd.get(l.productId) : null;
+        if(pr && !String(pr.unit||'').trim() && can('products.edit')){ pr.unit = v.toUpperCase(); await put('products', pr); byProd.set(pr.id, pr); l.savedNote = {text:`Saved as the unit of “${pr.name}”.`}; }
       }
       if(act==='factclear'){
         const c = t.rows[+i].calc, pr = l.productId ? byProd.get(l.productId) : null;

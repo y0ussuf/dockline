@@ -516,6 +516,42 @@ async def test_units(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 10. picked unit vs price unit (weights, packs of pieces, missing unit)
+async def test_units(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  units/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""() => {
+      const mk = over => Object.assign({id:'x', productId:'p', desc:'x', qty:'30', unit:'PKT 100 GM', price:'220', include:true, ref:null, pack:null, priceUnit:'KG', unitCheck:true, facts:{}, nameSize:null, sysName:''}, over);
+      const run = l => { const c = lineCalc(l, l.price, 'ask'); return {gross:Dec.str(c.gross), issue:c.issue, warn:lineIssues(l, {roundMode:'ask', taxOn:false}, c)}; };
+      return {
+        stock: run(mk({})),
+        stockNoUnitName: run(mk({priceUnit:'', sysName:'BROTH BEEF KG'})),
+        stockNoUnit: run(mk({priceUnit:'', sysName:'BROTH'})),
+        puff: run(mk({qty:'25', unit:'400 GM', priceUnit:'400 GM', price:'84'})),
+        samosa: run(mk({qty:'115', unit:'PER PC', priceUnit:'23 PC', price:'110'})),
+        samosaRef: run(mk({qty:'115', unit:'PER PC', priceUnit:'PC', price:'110', ref:{qty:'23', unit:'PC'}})),
+        samosaPartial: run(mk({qty:'116', unit:'PC', priceUnit:'23 PC', price:'110'})),
+        trays: run(mk({qty:'5', unit:'TRAY 23 PCS', priceUnit:'PC', price:'5'})),
+      };
+    }""")
+    check(r['stock']['gross'] == '660', '30 x PKT 100 GM priced per KG is 3 KG = 660', r['stock'])
+    check(r['stockNoUnitName']['gross'] == '660', 'a product with no unit but "KG" in its name is priced per KG', r['stockNoUnitName'])
+    check(r['stockNoUnit']['issue'] == 'Price unit needed', 'no unit anywhere: the line asks instead of billing 30 packs as 30 KG', r['stockNoUnit'])
+    check(r['puff']['gross'] == '2100' and not r['puff']['warn'], '25 x 400 GM priced per 400 GM is 25 units, no warning', r['puff'])
+    check(r['samosa']['gross'] == '550' and not r['samosa']['warn'], '115 PER PC priced per 23 PC is 5 packs = 550', r['samosa'])
+    check(r['samosaRef']['gross'] == '550', 'the same when the product keeps "23 PC" as its price reference', r['samosaRef'])
+    check(r['samosaPartial']['issue'] == 'Partial pack', '116 pieces is not a whole number of 23-piece packs: it asks', r['samosaPartial'])
+    check(r['trays']['gross'] == '575', '5 trays of 23 PCS priced per PC is 115 pieces', r['trays'])
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units'])
     args = ap.parse_args()
@@ -538,6 +574,7 @@ async def main():
         if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
         if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
         if args.only in (None, 'invedit'): await run('invoice editor:', test_invedit(pw, url))
+        if args.only in (None, 'units'): await run('units (picked vs price unit):', test_units(pw, url))
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
