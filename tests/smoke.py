@@ -558,8 +558,38 @@ async def test_units(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 11. order report Excel layout (recorded, no real ExcelJS needed)
+async def test_report(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  report/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""async () => {
+      const rows = [];
+      const mkRow = vals => { const cells = vals.map(v => ({value:v})); const row = {values:vals, cells, number:rows.length+1, height:0,
+        getCell: i => cells[i-1] || (cells[i-1] = {}), eachCell: (o, f) => (f||o)&&(typeof o==='function'?o:f) && cells.forEach(c => (typeof o==='function'?o:f)(c))}; rows.push(row); return row; };
+      const ws = {columns:null, addRow: v => mkRow(v), mergeCells(){}, get lastRow(){ return rows[rows.length-1]; }};
+      window.ExcelJS = {Workbook: function(){ this.addWorksheet = () => ws; this.xlsx = {writeBuffer: async () => new ArrayBuffer(1)}; }};
+      window.saveFile = async () => {};
+      await put('orders', {id:'ro1', vessel:'MV Test', imo:'1', orderNumber:'R-1', status:'completed'});
+      await put('orderItems', {id:'ri1', orderId:'ro1', sr:'1', excelDesc:'OLIVE OIL', excelQty:5, excelUnit:'LTR', status:'picked', actualQty:5, actualUnit:'LTR'});
+      await exportOrderExcel('ro1');
+      const data = rows.find(x => x.values && x.values[1] === 'OLIVE OIL');
+      return {found: !!data, al: data ? [1,2,3,4,5].map(i => (data.cells[i-1].alignment||{}).horizontal || '') : []};
+    }""")
+    check(r['found'], 'the item row is written', r)
+    check(r['found'] and r['al'][0] == 'center' and r['al'][2] == 'center' and r['al'][3] == 'center' and r['al'][4] == 'center', 'SR., QUANTITY, UNIT and CONDITION are centred', r)
+    check(r['found'] and r['al'][1] == '', 'DESCRIPTION stays left-aligned', r)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -581,6 +611,7 @@ async def main():
         if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
         if args.only in (None, 'invedit'): await run('invoice editor:', test_invedit(pw, url))
         if args.only in (None, 'units'): await run('units (picked vs price unit):', test_units(pw, url))
+        if args.only in (None, 'report'): await run('order report excel:', test_report(pw, url))
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))

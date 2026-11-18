@@ -565,6 +565,7 @@ async function exportOrderExcel(orderId){
       c.border = {bottom:{style:'hair', color:{argb:'FFD9D9D9'}}};
     });
     row.getCell(5).font = {bold:true, color:{argb: style.font}};
+    for(const col of [1,3,4,5]) row.getCell(col).alignment = {horizontal:'center', vertical:'middle'};      // SR., QUANTITY, UNIT, CONDITION sit in the middle of their column
   }
   const lastRow = ws.lastRow.number;
   ws.autoFilter = {from:{row:headerRowIdx, column:1}, to:{row:lastRow, column:COLS.length}};
