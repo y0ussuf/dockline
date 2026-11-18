@@ -51,7 +51,10 @@ function parseFactAnswer(text, defaultUnit){
 function resolveUnits(l, qty){
   let pu = unitInfo(l.priceUnit); const pk = unitInfo(l.unit); let inferred = '';
   if(!pu && pk && !String(l.priceUnit||'').trim()){
-    /* the product has no unit: "BROTH BEEF KG" is priced per KG; if even the name does not say and a sized pack was picked, ask - never bill 30 packs as 30 KG */
+    /* the product has no unit. A size in its name ("CORN KERNEL 400 GM", "CASHEW 1 KG") describes ONE ITEM, so the price is per item and the
+       line is left to the size check ("Size differs") - it is never turned into a per-gram price. Only a bare measure at the end of the name
+       ("BROTH BEEF KG", "SUGAR KG") means priced per that measure. If the name says nothing and a sized pack was picked, ask - never bill 30 packs as 30 KG. */
+    if(l.nameSize) return null;
     const nm = /(?:^|\s)(kgs?|ltr|lt|l|gms?|g|ml)\s*$/i.exec(String(l.sysName||'').trim());
     if(nm){ pu = unitInfo(nm[1]); inferred = nm[1].toUpperCase(); l = Object.assign({}, l, {priceUnit:inferred}); }
     else if(pk.m && pk.word) return {issue:'Price unit needed'};
@@ -79,7 +82,8 @@ function resolveCore(l, qty, pu, pk){
     }
     if(pu.cnt && pk.word==='pc' && !pk.m) return {packs:Rat.div(q, cr(pu.cnt)), label:'PACK', picked:pickedText, note:`${Dec.fmt(qty,0)} ${unitLabelOf(pk.word)} ÷ ${pu.cnt}`};
     if(pk.cnt && pu.word==='pc' && !pu.m) return {billed:Rat.mul(q, cr(pk.cnt)), label:'PC', picked:pickedText, note:`${Dec.fmt(qty,0)} × ${pk.cnt}`};
-    return {issue:'Unit not comparable'};
+    const other = pu.cnt ? pk : pu;                                                             // "2 KG" against "23 PC" cannot be compared; "12 PCS" against "CTN" is left as it is (the warning stays)
+    return other.m ? {issue:'Unit not comparable'} : null;
   }
   /* same size written the same way on both sides ("400 GM" picked, priced per "400 GM"): as it is */
   if(pu.m && pk.m && !pu.bare && !pk.bare && sameSize(pu.m, pk.m)) return null;
