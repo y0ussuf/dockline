@@ -7,7 +7,7 @@ async function saveCompany(c){ await put('sharedSettings', Object.assign({}, c, 
 
 function companyCardHtml(c){
   return `<div class="card" style="margin-top:24px;" id="companyCard">
-    <div class="section-title">Company &amp; invoices</div>
+    <div class="sec-h"><span class="sec-ic" data-ico="building-2"></span><div class="section-title">Company &amp; invoices</div></div>
     <p class="subtle">Printed at the top of every invoice. Change it whenever you like — invoices already issued keep the details they were issued with.</p>
     <div class="co-logo-row">
       <div class="co-logo" id="co_logo_box">${c.logo ? `<img src="${esc(c.logo)}" alt="">` : '<span class="subtle">Logo</span>'}</div>
