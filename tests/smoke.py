@@ -406,8 +406,60 @@ async def test_settings(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 8. invoice editor: short pick, quantity, change product, add items
+async def test_invedit(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  invedit/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    await page.evaluate("""async () => {
+      const P = (id, name, unit, sell) => ({id, name, unit, supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, costPrice:'', sellPrice:sell});
+      await put('products', P('ivp1','Cottage cheese 950 GM','PKT','212.5'));
+      await put('products', P('ivp2','Food color blue','PKT','40'));
+      await put('products', P('ivp3','Food color green','PKT','45'));
+      await put('orderItems', {id:'ivi1', orderId:'ivo1', status:'picked', requestedQty:6, requestedUnit:'PKT', actualQty:5, actualUnit:'PKT', excelDesc:'COTTAGE CHEESE 6 X 950GM', productId:'ivp1', productName:'Cottage cheese 950 GM'});
+      await put('orderItems', {id:'ivi2', orderId:'ivo1', status:'picked', requestedQty:40, requestedUnit:'PKT', actualQty:40, actualUnit:'PKT', excelDesc:'FOOD COLOR GREEN', productId:'ivp2', productName:'Food color blue'});
+      const L = (id, itemId, productId, desc, qty, price, sysName) => ({id, itemId, productId, desc, qty, unit:'PKT', cost:'', sell:price, price, pack:null, priceUnit:'PKT', ref:null, nameSize:null, lump:'', discType:'', disc:'', include:true, substituted:false, ordered:desc, sysName, packBasis:'', doubt:''});
+      await put('invoices', {id:'ivinv', orderId:'ivo1', type:'Provision', status:'draft', number:'', priceBasis:'sell', invoiceDate:'2026-11-18', taxOn:false, taxRate:'', taxLabel:'Tax', notes:'', lumps:[], createdAt:new Date().toISOString(),
+        lines:[L('l1','ivi1','ivp1','COTTAGE CHEESE 6 X 950GM','5','212.5','Cottage cheese 950 GM'), L('l2','ivi2','ivp2','FOOD COLOR GREEN','40','40','Food color blue')]});
+      location.hash = '#/invoice/ivinv';
+    }""")
+    await page.wait_for_selector('[data-qty="0"]', timeout=8000)
+    txt = await page.locator('#iv_lines').inner_text()
+    check('Ordered 6, picked 5' in txt and '1 short' in txt, 'short pick is flagged (ordered 6, picked 5)', txt[:200])
+    check('Ordered 40' not in txt, 'a full pick is not flagged')
+    await page.locator('[data-qty="1"]').fill('28'); await page.locator('[data-qty="1"]').press('Tab')
+    await page.wait_for_function("document.querySelector('#iv_lines').innerText.includes('Picked 40')", timeout=5000)
+    tot = await page.locator('.iv-sum .grand').inner_text()
+    check('1,120.00' in (await page.locator('#iv_lines').inner_text()), 'quantity 28 x 40 = 1,120.00 on the line', tot)
+    await page.locator('[data-ok="qtyreset:1"]').click()
+    await page.wait_for_function("!document.querySelector('#iv_lines').innerText.includes('Picked 40')", timeout=5000)
+    check((await page.locator('[data-qty="1"]').input_value()) == '40', 'reset to picked puts 40 back')
+    await page.locator('[data-ok="swap:1"]').click()
+    await page.locator('#pp_q').fill('green'); await page.locator('[data-pp="ivp3"]').click()
+    await page.wait_for_function("document.querySelector('[data-price=\"1\"]').value==='45'", timeout=5000)
+    check('FOOD COLOR GREEN' in await page.locator('#iv_lines').inner_text(), 'changing the product re-prices the line (45) and keeps the order wording')
+    await page.locator('#iv_add').click(); await page.locator('#ad_prod').click()
+    await page.locator('#pp_q').fill('cottage'); await page.locator('[data-pp="ivp1"]').click()
+    await page.locator('#ad_q').fill('3'); await page.locator('#ad_ok').click()
+    await page.wait_for_selector('[data-qty="2"]', timeout=5000)
+    check('Added on invoice' in await page.locator('#iv_lines').inner_text() and (await page.locator('[data-price="2"]').input_value()) == '212.5', 'an added product line comes with its price')
+    await page.locator('#iv_add').click(); await page.locator('#ad_free').click()
+    await page.locator('#ad_n').fill('Delivery fee'); await page.locator('#ad_q').fill('1'); await page.locator('#ad_p').fill('150.25'); await page.locator('#ad_ok').click()
+    await page.wait_for_selector('[data-qty="3"]', timeout=5000)
+    check((await page.locator('[data-price="3"]').input_value()) == '150.25', 'a free item keeps the price typed for it')
+    await page.locator('[data-b="cost"]').click(); await page.wait_for_timeout(300)
+    check((await page.locator('[data-price="3"]').input_value()) == '150.25', 'switching the price basis does not wipe a free item')
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -427,6 +479,7 @@ async def main():
         if args.only in (None, 'markup'): await run('product table markup:', test_markup(pw, url))
         if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
         if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
+        if args.only in (None, 'invedit'): await run('invoice editor:', test_invedit(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()
