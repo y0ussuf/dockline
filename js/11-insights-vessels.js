@@ -126,25 +126,25 @@ async function vesselProfileScreen(rawKey){
     <div class="topbar"><h1>${esc(name)}</h1><a href="#/insights" class="btn btn-ghost btn-sm">← Insights</a></div>
     <p class="subtle" style="margin-top:-10px;"><span class="badge ${st.cls}">${st.label}</span> &nbsp;${a.orderCount} past order${a.orderCount===1?'':'s'}, ${fmtDate(a.rhythm.first)} → ${fmtDate(a.rhythm.last)}${spellings.size>1?` · ${spellings.size} spellings of the name merged`:''}${imos.length?` · order references seen: ${esc(imos.slice(0,4).join(', '))}${imos.length>4?'…':''}`:''}</p>
     ${vesselMergeHtml(mine)}
-    <div class="grid-stats">
-      <div class="stat"><b>${a.rhythm.gap!=null ? a.rhythm.gap+' d' : '—'}</b><div class="lbl">Usually orders every</div></div>
-      <div class="stat"><b>${a.rhythm.sinceLast} d</b><div class="lbl">Since last order</div></div>
-      <div class="stat"><b style="font-size:1.05rem;">${nextTxt}</b><div class="lbl">Next order expected</div></div>
-      <div class="stat"><b>${Math.round(a.medianItems)}</b><div class="lbl">Items in a typical order</div></div>
+    <div class="wm-kpis ins-kpis">
+      <div class="wm-kpi"><span class="wm-ic" data-ico="refresh-cw"></span><div class="wm-txt"><b>${a.rhythm.gap!=null ? a.rhythm.gap+' d' : '—'}</b><div class="lbl">Usually orders every</div></div></div>
+      <div class="wm-kpi ${a.rhythm.status==='quiet'||a.rhythm.status==='overdue'?'warn':''}"><span class="wm-ic" data-ico="hourglass"></span><div class="wm-txt"><b>${a.rhythm.sinceLast} d</b><div class="lbl">Since last order</div></div></div>
+      <div class="wm-kpi ok"><span class="wm-ic" data-ico="calendar"></span><div class="wm-txt"><b class="sm">${nextTxt}</b><div class="lbl">Next order expected</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="list"></span><div class="wm-txt"><b>${Math.round(a.medianItems)}</b><div class="lbl">Items in a typical order</div></div></div>
     </div>
-    <h3 class="section-title">What stands out</h3>
+    <div class="sec-h"><span class="sec-ic" data-ico="zap"></span><div class="section-title">What stands out</div></div>
     <div class="card" style="margin-bottom:22px;">
-      ${a.changes.length ? a.changes.map(c=>`<p style="margin:8px 0;"><b>${icon[c.sev]} ${c.sev==='warning'?'Warning':'Note'}</b> — ${esc(c.text)}</p>`).join('')
-        : `<p class="subtle" style="margin:0;">${a.rhythm.status==='unknown' ? `Only ${a.orderCount} order${a.orderCount===1?'':'s'} so far — not enough to see a pattern.` : 'Nothing unusual — this vessel is ordering as it normally does.'}</p>`}
+      ${a.changes.length ? a.changes.map(c=>`<div class="sig ${c.sev}"><span class="sig-ic" data-ico="${c.sev==='warning'?'triangle-alert':'circle-help'}"></span><div>${esc(c.text)}</div></div>`).join('')
+        : `<div class="sig ok"><span class="sig-ic" data-ico="circle-check"></span><div>${a.rhythm.status==='unknown' ? `Only ${a.orderCount} order${a.orderCount===1?'':'s'} so far — not enough to see a pattern.` : 'Nothing unusual — this vessel is ordering as it normally does.'}</div></div>`}
     </div>
-    <h3 class="section-title">Usual basket</h3>
-    <p class="subtle" style="margin-top:-8px;">What it orders in at least half of its orders, and the usual quantity. If the next order is due, this is roughly what to expect.</p>
+    <div class="sec-h"><span class="sec-ic" data-ico="package"></span><div class="section-title">Usual basket</div></div>
+    <p class="subtle sec-sub">What it orders in at least half of its orders, and the usual quantity. If the next order is due, this is roughly what to expect.</p>
     <div class="card tbl-wrap" style="margin-bottom:22px;"><table class="tbl">
       <thead><tr><th>Product</th><th class="num">In % of orders</th><th class="num">Usual quantity</th></tr></thead>
       <tbody>${a.staples.slice(0,30).map(p=>`<tr><td>${p.key.startsWith('x:')?esc(p.name):`<a href="#/insights/product/${p.key}" style="text-decoration:none; color:inherit;"><b>${esc(p.name)}</b> <span class="subtle">›</span></a>`}</td><td class="num">${Math.round(p.share*100)}%</td><td class="num">${fmtUsual(p)}</td></tr>`).join('') || '<tr><td colspan="3" class="subtle">No product appears in half of its orders yet.</td></tr>'}</tbody>
     </table>${a.staples.length>30?`<p class="subtle" style="padding:8px 10px;">Showing 30 of ${a.staples.length}.</p>`:''}</div>
-    <h3 class="section-title">Order history</h3>
-    <p class="subtle" style="margin-top:-8px;">Every past order of this vessel, newest first. Tap one to see everything that was asked for.</p>
+    <div class="sec-h"><span class="sec-ic" data-ico="history"></span><div class="section-title">Order history</div></div>
+    <p class="subtle sec-sub">Every past order of this vessel, newest first. Tap one to see everything that was asked for.</p>
     <div class="card tbl-wrap" style="max-height:480px; overflow:auto;"><table class="tbl">
       <thead><tr><th>Order</th><th>Date</th><th class="num">Different items</th></tr></thead>
       <tbody>${[...a.orders].reverse().map(o=>{
