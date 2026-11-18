@@ -322,12 +322,20 @@ async function invoiceScreen(id){
     const issues = inv.lines.map((l,i)=>lineIssues(l, inv, t.rows[i].calc));
     const BLOCK = ['Check match','Pack choice needed','Size differs','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
     const lumpBad = (inv.lumps||[]).some(g=>g.include && !Dec.parse(g.amount));
+    const nIncluded = inv.lines.filter(l=>l.include).length + (inv.lumps||[]).filter(g=>g.include).length;
+    const nFlag = inv.lines.filter((l,i)=>l.include && issues[i].length).length + (inv.lumps||[]).filter(g=>g.include && !Dec.parse(g.amount)).length;
     const blocking = lumpBad || inv.lines.some((l,i)=>l.include && issues[i].some(m=>BLOCK.some(b=>m.startsWith(b))));
     const firstOf = new Map(); inv.lines.forEach(l=>{ if(l.include && l.itemId && !firstOf.has(l.itemId)) firstOf.set(l.itemId, l); });
     $('#main').innerHTML = `
       <div class="topbar"><h1>${esc(inv.orderType)} invoice</h1>${invBadge('draft')}</div>
       <p class="subtle" style="margin-top:-10px;">${esc(inv.vessel)} · ${esc(inv.code||inv.orderNumber||'')} — draft, nothing is final until you issue it. Quantities are as picked; prices are exact, never rounded.</p>
-      <div class="card" style="margin-bottom:14px;">
+      <div class="iv-kpis">
+        <div class="wm-kpi"><span class="wm-ic" data-ico="clipboard-list"></span><div class="wm-txt"><b>${nIncluded}</b><div class="lbl">Items on invoice</div></div></div>
+        <div class="wm-kpi ${nFlag?'warn':'ok'}"><span class="wm-ic" data-ico="${nFlag?'triangle-alert':'circle-check'}"></span><div class="wm-txt"><b>${nFlag}</b><div class="lbl">${nFlag?'Lines to check':'All lines OK'}</div></div></div>
+        <div class="wm-kpi"><span class="wm-ic" data-ico="receipt"></span><div class="wm-txt"><b>${money(t.sub)}</b><div class="lbl">Subtotal</div></div></div>
+        <div class="wm-kpi"><span class="wm-ic" data-ico="receipt"></span><div class="wm-txt"><b>${money(t.total)}</b><div class="lbl">Total (EGP)</div></div></div>
+      </div>
+      <div class="card iv-set" style="margin-bottom:14px;">
         <div class="row2">
           <div class="field"><label>Price to use</label><div class="tag-row">${seesSell()?`<button class="chip ${inv.priceBasis==='sell'?'active':''}" data-b="sell">Sell price</button>`:''}${seesCost()?`<button class="chip ${inv.priceBasis==='cost'?'active':''}" data-b="cost">Cost price</button>`:''}</div></div>
           <div class="field"><label>Invoice date</label><input type="date" id="iv_date" value="${esc(inv.invoiceDate)}"></div>
@@ -355,7 +363,7 @@ async function invoiceScreen(id){
         <div class="iv-line ${l.include?'':'off'}" data-i="${i}" style="padding:8px 12px;"><div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)} <span class="subtle">· in ${esc(l.lump)}</span></span></div>
           ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : ''}
         </div>` : `
-        <div class="iv-line ${l.include?'':'off'}" data-i="${i}">
+        <div class="iv-line ${l.include?'':'off'} ${l.include && issues[i].length?'flag':''}" data-i="${i}">
           <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)}</span></div>
           ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : (l.include && l.ordered && normalize(l.ordered)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Ordered as “${esc(l.ordered)}”</div>` : (l.include && l.sysName && normalize(l.sysName)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Matched to product “${esc(l.sysName)}”</div>` : ''))}
           ${l.include ? `<div class="subtle" style="font-size:12px;">${l.added?'Added on invoice · ':''}<button class="qc-link" data-ok="swap:${i}">Change product</button></div>${(()=>{ const sh = shortOf(l, firstOf); return sh ? `<div class="pr-warn">⚠ Ordered ${esc(sh.ordered)}, picked ${esc(sh.picked)} ${esc(sh.unit)} — ${esc(sh.short)} short. Bought elsewhere? Invoicing ${esc(l.qty)}.</div>` : ''; })()}<div class="iv-grid">
@@ -379,9 +387,9 @@ async function invoiceScreen(id){
           ${issues[i].length?`<div class="pr-warn">⚠ ${issues[i].map(esc).join(' · ')}</div>`:''}` : ''}
         </div>`).join('')}</div>
       <button class="btn btn-ghost" id="iv_add" style="width:100%; border-style:dashed; margin:2px 0 12px;">+ Add item</button>
-      <div class="card iv-sum"><div><span>Subtotal</span><b>${money(t.sub)}</b></div><div><span>Discount</span><b>- ${money(t.disc)}</b></div>${inv.taxOn?`<div><span>${esc(inv.taxLabel||'Tax')} (${esc(inv.taxRate)}%)</span><b>${money(t.tax)}</b></div>`:''}<div class="grand"><span>Total (EGP)</span><b>${money(t.total)}</b></div></div>
+      <div class="card iv-sum iv-sumcard"><div><span>Subtotal</span><b>${money(t.sub)}</b></div><div><span>Discount</span><b>- ${money(t.disc)}</b></div>${inv.taxOn?`<div><span>${esc(inv.taxLabel||'Tax')} (${esc(inv.taxRate)}%)</span><b>${money(t.tax)}</b></div>`:''}<div class="grand"><span>Total (EGP)</span><b>${money(t.total)}</b></div></div>
       <div class="field" style="margin-top:14px;"><label>Notes &amp; terms</label><textarea id="iv_notes" rows="2">${esc(inv.notes)}</textarea></div>
-      <div class="pr-bar"><button class="btn btn-ghost btn-sm" id="iv_del">Delete draft</button><button class="btn btn-signal" id="iv_issue" ${blocking?'disabled':''}>${blocking?'Fix the flagged lines to issue':'Issue invoice'}</button></div>`;
+      <div class="pr-bar"><button class="btn btn-ghost btn-sm" id="iv_del">Delete draft</button><div class="bar-tot"><span>Total</span><b>${money(t.total)} EGP</b></div><button class="btn btn-signal" id="iv_issue" ${blocking?'disabled':''}>${blocking?'Fix the flagged lines to issue':'Issue invoice'}</button></div>`;
     $('#main').querySelectorAll('[data-b]').forEach(b=>b.onclick=async ()=>{
       inv.priceBasis = b.dataset.b;
       inv.lines.forEach(l=>{ if(!l.free) l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || ''; });

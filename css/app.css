@@ -830,3 +830,42 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
   .pg-actions .btn-signal{flex:1 1 100%;}
   .pg-actions .btn-ghost{flex:1 1 calc(50% - 5px); min-width:0; justify-content:center; padding:16px 10px; font-size:1rem; text-align:center;}
 }
+
+/* ===== Draft invoice page: settings bar, KPI strip, one-row lines, flagged lines, total in the sticky bar ===== */
+.iv-set{padding:14px 16px; display:grid; grid-template-columns:auto 170px 150px 110px; gap:12px 18px; align-items:end;}
+.iv-set .row2{display:contents;}
+.iv-set .field{margin:0;}
+.iv-line{display:grid; grid-template-columns:minmax(200px,1.6fr) 120px 140px 190px 120px; gap:8px 14px; align-items:end; padding:12px 16px; border-radius:14px;}
+.iv-line.flag{border-color:color-mix(in srgb,var(--warn) 55%, var(--line)); background:linear-gradient(90deg,color-mix(in srgb,var(--warn) 7%,var(--card)),var(--card) 60%);}
+.iv-line .iv-top{grid-column:1; grid-row:1; align-self:center;}
+.iv-line{row-gap:6px;}
+.iv-line .iv-top .iv-q{display:none;}
+.iv-line .iv-grid{display:contents;}
+.iv-line .iv-grid .field{margin:0; min-width:0;}
+.iv-line .iv-grid .field label{font-size:.7rem; margin-bottom:4px;}
+.iv-line .iv-grid > .field:nth-child(1){grid-column:2; grid-row:1;}
+.iv-line .iv-grid > .field:nth-child(2){grid-column:3; grid-row:1;}
+.iv-line .iv-grid > .field:nth-child(3){grid-column:4; grid-row:1;}
+.iv-line .iv-grid > .iv-tot{grid-column:5; grid-row:1; align-self:center;}
+.iv-line .iv-tot .subtle{display:none;} .iv-line .iv-tot b{font-size:1.1rem;}
+.iv-line > :not(.iv-top):not(.iv-grid){grid-column:1 / -1;}
+.iv-line .pr-warn{display:inline-flex; align-items:center; gap:6px; margin:0; padding:5px 11px; border-radius:999px; font-size:.8rem; background:color-mix(in srgb,var(--warn) 14%,transparent); width:fit-content;}
+.iv-line input[type=text]{padding:9px 11px;}
+.iv-kpis{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:0 0 14px;}
+.iv-kpis .wm-kpi{padding:14px 16px;} .iv-kpis .wm-kpi b{font-size:1.45rem; font-variant-numeric:tabular-nums;} .iv-kpis .wm-kpi .wm-ic{width:40px; height:40px;}
+.iv-sumcard{max-width:420px; margin-left:auto;}
+.pr-bar{border-radius:16px; box-shadow:0 -8px 24px rgba(0,0,0,.25);}
+.pr-bar .bar-tot{display:flex; flex-direction:column; align-items:flex-end; margin-left:auto; margin-right:8px; font-variant-numeric:tabular-nums;} .pr-bar .bar-tot span{font-size:.72rem; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.06em;} .pr-bar .bar-tot b{font-size:1.2rem;}
+@media (max-width:860px){
+ .iv-set{grid-template-columns:1fr 1fr;} .iv-set .row2:first-child > .field:first-child{grid-column:1 / -1;}
+ .iv-kpis{grid-template-columns:1fr 1fr; gap:10px;} .iv-kpis .wm-kpi{padding:12px; gap:10px;} .iv-kpis .wm-kpi b{font-size:1.15rem;} .iv-kpis .wm-kpi .wm-ic{width:34px; height:34px;}
+ .iv-line{grid-template-columns:1fr 1fr; padding:12px;}
+ .iv-line .iv-top{grid-column:1 / -1;}
+ .iv-line .iv-grid > .field:nth-child(1){grid-column:1; grid-row:2;}
+ .iv-line .iv-grid > .field:nth-child(2){grid-column:2; grid-row:2;}
+ .iv-line .iv-grid > .field:nth-child(3){grid-column:1; grid-row:3;}
+ .iv-line .iv-grid > .iv-tot{grid-column:2; grid-row:3; align-items:flex-end; flex-direction:column;}
+ .iv-line .iv-tot .subtle{display:block; font-size:.7rem;}
+ .iv-line .iv-top .iv-q{display:inline;}
+ .pr-bar{flex-wrap:wrap;} .pr-bar .bar-tot{order:-1; width:100%; flex-direction:row; justify-content:space-between; align-items:baseline; margin:0;} .pr-bar .btn-signal{flex:1;}
+}
