@@ -537,6 +537,9 @@ async def test_units(pw, url):
         samosaRef: run(mk({qty:'115', unit:'PER PC', priceUnit:'PC', price:'110', ref:{qty:'23', unit:'PC'}})),
         samosaPartial: run(mk({qty:'116', unit:'PC', priceUnit:'23 PC', price:'110'})),
         trays: run(mk({qty:'5', unit:'TRAY 23 PCS', priceUnit:'PC', price:'5'})),
+        corn: run(mk({qty:'12', unit:'tin 400 gm', priceUnit:'', price:'47.1', sysName:'CORN KERNEL 400 GM', nameSize:{qty:'400', unit:'GM'}})),
+        cornKg: run(mk({qty:'5', unit:'tin 200 gm', priceUnit:'', price:'47.1', sysName:'CORN KERNEL 400 GM', nameSize:{qty:'400', unit:'GM'}})),
+        cartons: run(mk({qty:'3', unit:'12 PCS', priceUnit:'CTN', price:'100'})),
       };
     }""")
     check(r['stock']['gross'] == '660', '30 x PKT 100 GM priced per KG is 3 KG = 660', r['stock'])
@@ -546,6 +549,9 @@ async def test_units(pw, url):
     check(r['samosa']['gross'] == '550' and not r['samosa']['warn'], '115 PER PC priced per 23 PC is 5 packs = 550', r['samosa'])
     check(r['samosaRef']['gross'] == '550', 'the same when the product keeps "23 PC" as its price reference', r['samosaRef'])
     check(r['samosaPartial']['issue'] == 'Partial pack', '116 pieces is not a whole number of 23-piece packs: it asks', r['samosaPartial'])
+    check(r['corn']['gross'] == '565.2' and not r['corn']['warn'], 'a tin of CORN KERNEL 400 GM with no unit: price is per tin, never per gram (12 x 47.1)', r['corn'])
+    check(any(w.startswith('Size differs') for w in r['cornKg']['warn']) and r['cornKg']['gross'] == '235.5', 'picked as 200 GM against a 400 GM item with no unit: not turned into a per-gram price, the size check asks', r['cornKg'])
+    check(r['cartons']['gross'] == '300' and not r['cartons']['issue'], 'a unit like "12 PCS" against CTN does not newly block the line', r['cartons'])
     check(r['trays']['gross'] == '575', '5 trays of 23 PCS priced per PC is 115 pieces', r['trays'])
     check(not errors, 'no page errors', errors[:1])
     await browser.close()
