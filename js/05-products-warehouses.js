@@ -61,13 +61,13 @@ route('products', async ()=>{
 
   $('#main').innerHTML = `
     <div class="topbar"><h1>Products</h1>
-      <div class="tb-actions">
-        <a class="btn btn-ghost" href="#/duplicates">⇄ Possible duplicates</a>
-        <a class="btn btn-ghost" href="#/productsetup">⚙ Stock &amp; pack setup</a>
-        <button class="btn btn-ghost" id="bulkImport">⇧ Bulk import (CSV)</button>
-        <button class="btn btn-ghost" id="mvToggle">${window.__mvMode?'✕ Stop selecting':'☑ Select &amp; move'}</button>
-        <button class="btn btn-signal" id="addProd">+ Add product</button>
-      </div>
+      <button class="btn btn-signal" id="addProd">+ Add product</button>
+    </div>
+    <div class="pg-tools">
+      <a class="btn btn-ghost" href="#/duplicates">⇄ Possible duplicates</a>
+      <a class="btn btn-ghost" href="#/productsetup">⚙ Stock &amp; pack setup</a>
+      <button class="btn btn-ghost" id="bulkImport">⇧ Bulk import (CSV)</button>
+      <button class="btn btn-ghost" id="mvToggle">${window.__mvMode?'✕ Stop selecting':'☑ Select &amp; move'}</button>
     </div>
     <div class="field" style="max-width:360px;"><input type="text" id="psearch" placeholder="Search products…" value="${esc(window.__search)}"></div>
     <div class="tag-row" id="whFilter">

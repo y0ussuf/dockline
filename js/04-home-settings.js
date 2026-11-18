@@ -78,7 +78,7 @@ route('home', async ()=>{
         </div>`).join('') : `<div class="empty"><div class="ic">🚢</div>No orders yet. Start with “+ New Order”.</div>`}
     </div>
     <div class="card" style="margin-top:24px;">
-      <div class="section-title">Account</div>
+      <div class="sec-h"><span class="sec-ic" data-ico="lock"></span><div class="section-title">Account</div></div>
       <p class="subtle">${DEMO_MODE ? 'Demo mode <span class="badge b-modified">not a real account</span>' : `Logged in as <b>${esc(AUTH ? AUTH.email : '')}</b> ${isAdmin()?'<span class="badge b-completed">admin</span>':'<span class="badge b-pending">staff</span>'}`}</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px;">
         <a href="#/settings" class="btn btn-ghost btn-sm">⚙ Settings</a>
@@ -97,7 +97,7 @@ route('home', async ()=>{
 function appVersionCardHtml(){
   return `
     <div class="card" style="margin-top:24px;" id="versionCard">
-      <div class="section-title">App version</div>
+      <div class="sec-h"><span class="sec-ic" data-ico="refresh-cw"></span><div class="section-title">App version</div></div>
       <p style="margin:6px 0 0;">Dockline <b id="verNow">${esc(APP_VERSION)}</b></p>
       <p id="verStatus" class="subtle" style="margin:8px 0 0; min-height:1.3em;" aria-live="polite"></p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
@@ -129,7 +129,7 @@ route('settings', async ()=>{
   $('#main').innerHTML = `
     <div class="topbar"><h1>Settings</h1></div>
     <div class="card">
-      <div class="section-title">Backup &amp; restore</div>
+      <div class="sec-h"><span class="sec-ic" data-ico="download"></span><div class="section-title">Backup &amp; restore</div></div>
       <p class="subtle">Everything lives on this device, whether or not crew sync (below) is on. Download a backup before updating the app or trying something new, and keep the file somewhere safe.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
         <button class="btn btn-signal btn-sm" id="doBackup">⬇ Download backup</button>
@@ -138,7 +138,7 @@ route('settings', async ()=>{
     </div>
     ${companyCardHtml(company)}
     <div class="card" style="margin-top:24px;" id="syncCard">
-      <div class="section-title">Crew sync</div>
+      <div class="sec-h"><span class="sec-ic" data-ico="users"></span><div class="section-title">Crew sync</div></div>
       <p class="subtle">Share one live set of products, warehouses and orders with the rest of the crew. Everything still works with no signal — changes made offline send themselves as soon as a connection comes back.</p>
       ${DEMO_MODE ? `<p class="subtle" style="color:var(--warn);">🧪 Disabled in demo mode — there's no real account behind this session, so there's nothing to sync.</p>` : `<p id="syncIndicator" style="margin:12px 0;"></p>`}
       <div class="field"><label>Your name (shown as who made each change)</label><input type="text" id="syncCrewName" placeholder="Your name" value="${esc(syncCfgCache.crewName||'')}"></div>

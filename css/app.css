@@ -869,3 +869,17 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
  .iv-line .iv-top .iv-q{display:inline;}
  .pr-bar{flex-wrap:wrap;} .pr-bar .bar-tot{order:-1; width:100%; flex-direction:row; justify-content:space-between; align-items:baseline; margin:0;} .pr-bar .btn-signal{flex:1;}
 }
+
+/* ===== Settings / Insights / Products polish: section headings with icon tiles, filter chips in the theme colour, Products tool row ===== */
+.chip.active{background:var(--signal); color:var(--signal-text); border-color:var(--signal);}
+.chip{padding:8px 14px;}
+.sec-h{display:flex; align-items:center; gap:12px; margin-bottom:14px;}
+.sec-h .section-title{margin:0; font-size:1.1rem;}
+.sec-ic{width:38px; height:38px; border-radius:12px; display:grid; place-items:center; flex-shrink:0; color:var(--signal); background:linear-gradient(140deg,color-mix(in srgb,var(--signal) 30%,transparent),color-mix(in srgb,var(--signal) 9%,transparent)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--signal) 22%, transparent);}
+.sec-ic svg{width:19px; height:19px;}
+.pg-tools{display:flex; gap:8px; flex-wrap:wrap; margin:-8px 0 18px;}
+.pg-tools .btn{padding:8px 13px; font-size:.86rem; border-radius:10px; width:auto;}
+.empty-card{max-width:640px; display:flex; flex-direction:column; gap:6px;}
+.empty-card p{margin:0 0 8px;}
+.empty-card .btn{width:auto; align-self:flex-start; padding:12px 20px; font-size:1rem; margin-top:6px;}
+@media (max-width:860px){ .pg-tools{flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none;} .pg-tools::-webkit-scrollbar{display:none;} .pg-tools .btn{flex:0 0 auto; white-space:nowrap;} }

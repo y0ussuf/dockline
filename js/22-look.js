@@ -100,7 +100,7 @@ function installThemeButtons(){
 /* ------------------------------ settings card ------------------------------ */
 function lookCardHtml(){
   return `<div class="card" style="margin-top:24px;" id="lookCard">
-    <div class="section-title">Look &amp; feel</div>
+    <div class="sec-h"><span class="sec-ic" data-ico="palette"></span><div class="section-title">Look &amp; feel</div></div>
     <p class="subtle">Pick a theme, and switch off anything you don't like. Changes apply straight away.</p>
     <div class="lk-grid" id="lkGrid">${themeTilesHtml()}</div>
     <div class="subtle" style="margin:14px 0 6px;">Brightness</div>${modeButtonsHtml()}

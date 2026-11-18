@@ -597,8 +597,40 @@ async def test_report(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 12. Settings / Products / Insights layout
+async def test_polish(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  polish/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    async def go(h):
+        await page.evaluate("async(h)=>{ location.hash='#/'+h; await render(); }", h)
+        await page.wait_for_timeout(300)
+    await go('settings')
+    n = await page.locator('#main .sec-h .sec-ic svg').count()
+    check(n >= 5, 'every Settings section has an icon tile', n)
+    await go('products')
+    check(await page.locator('.topbar #addProd').count() == 1 and await page.locator('.topbar .btn').count() == 1, 'Products: only "Add product" sits next to the title')
+    check(await page.locator('.pg-tools .btn').count() == 4, 'Products: the four other tools are in their own row', await page.locator('.pg-tools .btn').count())
+    await page.locator('#bulkImport').click(); await page.wait_for_timeout(200)
+    check(await page.locator('#addProd').count() >= 1, 'Products: the tool buttons still work (bulk import opens)')
+    await page.keyboard.press('Escape')
+    await go('insights')
+    check(await page.locator('.empty-card .sec-ic').count() == 1 and await page.locator('.empty-card a.btn').count() == 1, 'Insights: the empty state has its icon and a normal-size import button')
+    await page.set_viewport_size({'width':390,'height':800})
+    await go('products')
+    scroll = await page.evaluate("(()=>{const t=document.querySelector('.pg-tools'); return {sw:t.scrollWidth, cw:t.clientWidth, doc:document.documentElement.scrollWidth, win:innerWidth};})()")
+    check(scroll['doc'] <= scroll['win'] + 1, 'Products on a phone: the page itself does not scroll sideways', scroll)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -621,6 +653,7 @@ async def main():
         if args.only in (None, 'invedit'): await run('invoice editor:', test_invedit(pw, url))
         if args.only in (None, 'units'): await run('units (picked vs price unit):', test_units(pw, url))
         if args.only in (None, 'report'): await run('order report excel:', test_report(pw, url))
+        if args.only in (None, 'polish'): await run('settings / products / insights layout:', test_polish(pw, url))
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
