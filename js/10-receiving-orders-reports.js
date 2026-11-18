@@ -483,64 +483,102 @@ async function exportOrderExcel(orderId){
   const ws = wb.addWorksheet('Order Report');
 
   const COLS = ['SR.','DESCRIPTION','QUANTITY','UNIT','CONDITION','MODIFICATION','NOTES','PRODUCTION DATE','EXPIRY DATE'];
-  ws.columns = [
-    {width:7},{width:46},{width:11},{width:15},{width:13},{width:42},{width:28},{width:15},{width:15}
-  ];
+  const WIDTHS = [7,46,11,15,13,42,34,15,15];
+  ws.columns = WIDTHS.map(width=>({width}));
+  const NCOL = COLS.length;
+  const fillOf = argb => ({type:'pattern', pattern:'solid', fgColor:{argb}});
+  const hair = {bottom:{style:'hair', color:{argb:'FFCCCCCC'}}};
 
-  // --- info block ---
+  // --- title banner ---
+  const titleRow = ws.addRow([`ORDER REPORT  ·  ${order.vessel||''}`]);
+  ws.mergeCells(titleRow.number, 1, titleRow.number, NCOL);
+  titleRow.height = 34;
+  titleRow.getCell(1).font = {bold:true, size:16, color:{argb:'FFFFFFFF'}};
+  titleRow.getCell(1).fill = fillOf('FF1B6B93');
+  titleRow.getCell(1).alignment = {vertical:'middle', indent:1};
+  ws.addRow([]).height = 6;
+
+  // --- info block: the label sits over columns A:B (column A alone is too narrow to show "Vessel Name"), the value next to it ---
   const infoRow = (label, value)=>{
-    const r = ws.addRow([label, value]);
-    r.getCell(1).font = {bold:true};
+    const r = ws.addRow([label, '', value]);
+    ws.mergeCells(r.number, 1, r.number, 2);
+    ws.mergeCells(r.number, 3, r.number, 6);
+    r.getCell(1).font = {bold:true, color:{argb:'FF44546A'}};
+    r.getCell(1).fill = fillOf('FFEEF3F7');
+    r.getCell(3).font = {color:{argb:'FF222222'}};
+    r.getCell(1).border = hair; r.getCell(3).border = hair;
+    return r;
+  };
+  // a loud, filled row across the whole width (Destination, partial report, dispatch): impossible to miss at a glance
+  const loudRow = (label, value, fill, font)=>{
+    const r = ws.addRow([label, '', value]);
+    ws.mergeCells(r.number, 1, r.number, 2);
+    ws.mergeCells(r.number, 3, r.number, NCOL);
+    r.height = 22;
+    for(let c=1;c<=NCOL;c++){
+      const cell = r.getCell(c);
+      cell.font = {bold:true, size:12, color:{argb:font}};
+      cell.fill = fillOf(fill);
+      cell.alignment = {vertical:'middle'};
+    }
+    return r;
   };
   infoRow('Vessel Name', order.vessel||'');
   infoRow('IMO Number', order.imo||'');
   infoRow('Order Number', order.orderNumber||'');
   infoRow('Order Date', order.orderDate ? fmtDate(order.orderDate) : '');
-  if(order.destination){
-    // destination gets its own loud, filled row rather than blending in with the other
-    // plain info rows — the whole point is that it's impossible to miss at a glance
-    const destRow = ws.addRow(['Destination', order.destination]);
-    destRow.height = 22;
-    destRow.eachCell({includeEmpty:true}, c=>{
-      c.font = {bold:true, size:12, color:{argb:'FF7A2E00'}};
-      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFFFE0B2'}};
-    });
-  }
+  if(order.destination) loudRow('Destination', order.destination, 'FFFFE0B2', 'FF7A2E00');
   const openCount = items.filter(it=>it.status==='pending').length;
   if(order.status!=='completed' && openCount){
-    const pRow = ws.addRow(['Report status', `PARTIAL REPORT — ${openCount} item${openCount===1?'':'s'} still to follow (final report will replace this one)`]);
-    pRow.height = 22;
-    pRow.eachCell({includeEmpty:true}, c=>{
-      c.font = {bold:true, size:12, color:{argb:'FF5B2E91'}};
-      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFE4D9F7'}};
-    });
+    loudRow('Report status', `PARTIAL REPORT — ${openCount} item${openCount===1?'':'s'} still to follow (final report will replace this one)`, 'FFE4D9F7', 'FF5B2E91');
   }
   if(isAwaitingDispatch(order)){
     // picked but still in the warehouse waiting for the ship — loud blue row, same idea as Destination
-    const dRow = ws.addRow(['Dispatch', 'PICKED — NOT SENT (waiting in warehouse for the ship)' + (order.awaitingDispatchSince ? ' · since ' + fmtDate(order.awaitingDispatchSince) : '')]);
-    dRow.height = 22;
-    dRow.eachCell({includeEmpty:true}, c=>{
-      c.font = {bold:true, size:12, color:{argb:'FF1B5E85'}};
-      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFD6E9F5'}};
-    });
+    loudRow('Dispatch', 'PICKED — NOT SENT (waiting in warehouse for the ship)' + (order.awaitingDispatchSince ? ' · since ' + fmtDate(order.awaitingDispatchSince) : ''), 'FFD6E9F5', 'FF1B5E85');
   } else if(order.status==='completed' && order.sentAt){
     infoRow('Dispatch', 'Sent · ' + fmtDate(order.sentAt));
   }
   if(order.driverName) infoRow('Driver Name', order.driverName);
   if(order.carLicense) infoRow('Car License', order.carLicense);
+
+  // --- summary strip: how many items, and how many in each condition (same colours as the rows) ---
+  const labels = items.map(it=>conditionLabel(it, order));
+  const counts = new Map();
+  for(const l of labels) counts.set(l, (counts.get(l)||0)+1);
+  const shown = ['Picked','Modified','Substituted','From Supplier','Cancelled','Postponed','To Follow','Pending'].filter(l=>counts.get(l));
+  const sumRow = ws.addRow(['Summary', '', `${items.length} item${items.length===1?'':'s'}`]);
+  ws.mergeCells(sumRow.number, 1, sumRow.number, 2);
+  sumRow.getCell(1).font = {bold:true, color:{argb:'FF44546A'}};
+  sumRow.getCell(1).fill = fillOf('FFEEF3F7');
+  sumRow.getCell(3).font = {bold:true};
+  shown.slice(0, NCOL-3).forEach((l, i)=>{
+    const style = REPORT_STATUS_STYLE[l] || REPORT_STATUS_STYLE['Pending'];
+    const cell = sumRow.getCell(4+i);
+    cell.value = `${l} ${counts.get(l)}`;
+    cell.font = {bold:true, color:{argb: style.font}};
+    cell.fill = fillOf(style.fill);
+    cell.alignment = {horizontal:'center', vertical:'middle'};
+  });
   ws.addRow([]);
 
   // --- table header ---
   const headerRow = ws.addRow(COLS);
-  headerRow.height = 22;
+  headerRow.height = 24;
   headerRow.eachCell(c=>{
     c.font = {bold:true, color:{argb:'FFFFFFFF'}};
-    c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF1B6B93'}};
-    c.alignment = {vertical:'middle', horizontal:'center'};
+    c.fill = fillOf('FF1B6B93');
+    c.alignment = {vertical:'middle', horizontal:'center', wrapText:true};
     c.border = {bottom:{style:'thin', color:{argb:'FF0D4A66'}}};
   });
   const headerRowIdx = headerRow.number;
-  ws.views = [{state:'frozen', ySplit: headerRowIdx}];
+  ws.views = [{state:'frozen', ySplit: headerRowIdx, showGridLines:false}];
+
+  // how tall a row must be so every wrapped cell shows ALL of its text (Excel does not grow a row by itself for a file written by code)
+  const LINE_H = 15;
+  const linesIn = (text, width)=>{
+    const per = Math.max(4, Math.floor(width*1.05));
+    return String(text||'').split('\n').reduce((n, ln)=>n + Math.max(1, Math.ceil(ln.length/per)), 0);
+  };
 
   // --- data rows, colored by condition ---
   for(const it of items){
@@ -548,27 +586,39 @@ async function exportOrderExcel(orderId){
     const prodDate = it.actualProductionDate || (product && product.productionDate) || '';
     const expDate = it.actualExpiryDate || (product && product.expiryDate) || '';
     const label = conditionLabel(it, order);
+    const desc = it.excelDesc || it.productName || '';
+    const mod = modNote(it);
+    const notes = String(it.notes || '').replace(/\r\n?/g, '\n').replace(/\s+$/, '');       // keep the line breaks and dashes exactly as typed
     const row = ws.addRow([
       it.sr || '',
-      it.excelDesc || it.productName || '',
+      desc,
       it.excelQty,
       it.excelUnit || '',
       label,
-      modNote(it),
-      it.notes || '',
+      mod,
+      notes,
       prodDate ? fmtDate(prodDate) : '',
       expDate ? fmtDate(expDate) : ''
     ]);
     const style = REPORT_STATUS_STYLE[label] || REPORT_STATUS_STYLE['Pending'];
     row.eachCell({includeEmpty:true}, c=>{
-      c.fill = {type:'pattern', pattern:'solid', fgColor:{argb: style.fill}};
+      c.fill = fillOf(style.fill);
       c.border = {bottom:{style:'hair', color:{argb:'FFD9D9D9'}}};
+      c.alignment = {vertical:'middle'};
     });
     row.getCell(5).font = {bold:true, color:{argb: style.font}};
     for(const col of [1,3,4,5]) row.getCell(col).alignment = {horizontal:'center', vertical:'middle'};      // SR., QUANTITY, UNIT, CONDITION sit in the middle of their column
+    for(const col of [2,6,7]) row.getCell(col).alignment = {horizontal:'left', vertical:'middle', wrapText:true};   // long text wraps instead of being cut off
+    const lines = Math.max(linesIn(desc, WIDTHS[1]), linesIn(mod, WIDTHS[5]), linesIn(notes, WIDTHS[6]));
+    row.height = Math.max(22, lines*LINE_H + 6);
   }
   const lastRow = ws.lastRow.number;
-  ws.autoFilter = {from:{row:headerRowIdx, column:1}, to:{row:lastRow, column:COLS.length}};
+  ws.autoFilter = {from:{row:headerRowIdx, column:1}, to:{row:lastRow, column:NCOL}};
+
+  // --- print setup: landscape, one page wide, the header row repeats on every page, page numbers at the bottom ---
+  ws.pageSetup = {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0, printTitlesRow:`${headerRowIdx}:${headerRowIdx}`,
+    margins:{left:0.4, right:0.4, top:0.5, bottom:0.6, header:0.3, footer:0.3}};
+  ws.headerFooter = {oddFooter:'&CPage &P of &N'};
 
   // --- color key / legend, a couple of rows below the table ---
   ws.addRow([]);
@@ -577,13 +627,15 @@ async function exportOrderExcel(orderId){
   for(const label of ['Picked','Modified','Substituted','From Supplier','Cancelled','To Follow']){
     const style = REPORT_STATUS_STYLE[label];
     const r = ws.addRow(['', label]);
-    r.getCell(1).fill = {type:'pattern', pattern:'solid', fgColor:{argb: style.fill}};
+    r.getCell(1).fill = fillOf(style.fill);
     r.getCell(2).font = {color:{argb: style.font}};
   }
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  await saveFile(`${(order.orderNumber||'order').replace(/[^a-z0-9\-_]+/ig,'_')}-report.xlsx`, blob);
+  // named after the vessel code (the IMO field, like "PGH-ALL-31"), falling back to the order number
+  const base = String(order.imo || order.orderNumber || 'order').trim().replace(/[^a-z0-9\-_]+/ig,'_').replace(/^_+|_+$/g,'') || 'order';
+  await saveFile(`${base}-report.xlsx`, blob);
 }
 
 /* ==================================== LOW STOCK REPORT ====================================
