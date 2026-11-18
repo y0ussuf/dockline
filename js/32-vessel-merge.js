@@ -75,6 +75,7 @@ async function vaSeparate(fromKey, fromName, toName){
 function vesselMergeHtml(mine){
   const others = new Map(); mine.filter(o=>o.mergedFrom).forEach(o=>{ const e = others.get(o.mergedFrom) || {key:o.mergedFrom, name:o.vesselName, n:0}; e.n++; others.set(o.mergedFrom, e); });
   if(!canMergeVessels() && !others.size) return '';
+  if(!others.size) return `<div style="margin:-2px 0 16px;"><button class="btn btn-ghost btn-sm" id="va_pick"><span data-ico="link"></span> Same vessel as another profile…</button></div>`;
   return `<div class="card" style="margin-bottom:16px;">
     ${others.size ? `<div class="section-title" style="margin-bottom:6px;">Also counted here</div>${[...others.values()].map(e=>`<div class="va-s"><div style="flex:1;"><b>${esc(e.name)}</b> <span class="subtle">· ${e.n} order${e.n===1?'':'s'} spelt this way</span></div>${canMergeVessels()?`<button class="btn btn-ghost btn-sm" data-vasep="${esc(e.key)}" data-vaname="${esc(e.name)}">Separate</button>`:''}</div>`).join('')}` : ''}
     ${canMergeVessels() ? `<button class="btn btn-ghost btn-sm" id="va_pick" style="${others.size?'margin-top:8px;':''}">Same vessel as another profile…</button>` : ''}</div>`;

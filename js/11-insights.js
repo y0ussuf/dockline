@@ -523,19 +523,19 @@ async function insightsHome(){
     .slice(0,15);
   const trendHtml = p=>{
     if(p.prior<=0 && p.recent<=0) return '<span class="subtle">no recent orders</span>';
-    if(p.prior<=0) return '<span class="trend-up">new</span>';
+    if(p.prior<=0) return '<span class="trend-pill up">new</span>';
     const ch = Math.round((p.recent-p.prior)/p.prior*100);
-    if(Math.abs(ch)<10) return `<span class="subtle">${ch>0?'+':''}${ch}%</span>`;
-    return `<span class="${ch>0?'trend-up':'trend-down'}">${ch>0?'+':''}${ch}%</span>`;
+    if(Math.abs(ch)<10) return `<span class="trend-flat">${ch>0?'+':''}${ch}%</span>`;
+    return `<span class="trend-pill ${ch>0?'up':'down'}">${ch>0?'▲':'▼'} ${Math.abs(ch)}%</span>`;
   };
 
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Insights</h1><div style="display:flex; gap:8px; flex-wrap:wrap;"><a href="#/forecast" class="btn btn-signal btn-sm">📅 Demand forecast</a><a href="#/lastyear" class="btn btn-ghost btn-sm"><span data-ico="history"></span> Last year at this time</a><a href="#/insights/import" class="btn btn-ghost btn-sm">+ Import more orders</a></div></div>
-    <div class="grid-stats">
-      <div class="stat"><b>${hOrders.length}</b><div class="lbl">Past orders</div></div>
-      <div class="stat"><b>${vesselRows.length}</b><div class="lbl">Vessels</div></div>
-      <div class="stat"><b>${hLines.length.toLocaleString()}</b><div class="lbl">Order lines</div></div>
-      <div class="stat"><b style="font-size:1.1rem;">${fmtDate(dates[0])} → ${fmtDate(anchor)}</b><div class="lbl">Period covered</div></div>
+    <div class="topbar"><h1>Insights</h1><div style="display:flex; gap:8px; flex-wrap:wrap;"><a href="#/forecast" class="btn btn-signal btn-sm"><span data-ico="calendar"></span> Demand forecast</a><a href="#/lastyear" class="btn btn-ghost btn-sm"><span data-ico="history"></span> Last year at this time</a><a href="#/insights/import" class="btn btn-ghost btn-sm"><span data-ico="upload"></span> Import orders</a></div></div>
+    <div class="wm-kpis ins-kpis">
+      <div class="wm-kpi"><span class="wm-ic" data-ico="clipboard-list"></span><div class="wm-txt"><b>${hOrders.length}</b><div class="lbl">Past orders</div></div></div>
+      <div class="wm-kpi ok"><span class="wm-ic" data-ico="ship"></span><div class="wm-txt"><b>${vesselRows.length}</b><div class="lbl">Vessels</div></div></div>
+      <div class="wm-kpi warn"><span class="wm-ic" data-ico="list"></span><div class="wm-txt"><b>${hLines.length.toLocaleString()}</b><div class="lbl">Order lines</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="calendar"></span><div class="wm-txt"><b class="sm">${fmtDate(dates[0])} → ${fmtDate(anchor)}</b><div class="lbl">Period covered</div></div></div>
     </div>
     <p class="subtle" style="margin-top:-6px;">${importedOrders} imported from Excel${liveOrders?` · <b>${liveOrders}</b> finished on the site (added automatically, always up to date)`:' · orders you finish on the site are added here automatically'}${ignoredLive?` · ${ignoredLive} hidden`:''}. <a href="#/insights/live">Choose which site orders to include</a></p>
     ${badCard}
@@ -555,15 +555,15 @@ async function insightsHome(){
       return `<a href="#/insights/product/${pid}" class="list-row" style="text-decoration:none; color:inherit;">
         <div style="flex:1; min-width:0;"><b>${esc((byId.get(pid)||{}).name||'?')}</b><div class="subtle">${esc(top)}</div></div>
         <span class="badge ${ANALYSIS_BADGE[a.status].cls}">${ANALYSIS_BADGE[a.status].label}</span></a>`;}).join('')}</div>` : ''}
-    <h3 class="section-title">Products — demand by what vessels asked for</h3>
-    <p class="subtle" style="margin-top:-8px;">Quantities are in each product's own measure. Trend compares the 90 days up to ${fmtDate(anchor)} with the 90 days before.</p>
-    <div class="pt-tools" style="margin-bottom:10px;"><input type="search" id="ip_q" placeholder="Search a product to see its report…" autocomplete="off"></div>
-    <div class="card tbl-wrap"><table class="tbl">
+    <div class="sec-h"><span class="sec-ic" data-ico="boxes"></span><div class="section-title">Products — demand by what vessels asked for</div></div>
+    <p class="subtle sec-sub">Quantities are in each product's own measure. Trend compares the 90 days up to ${fmtDate(anchor)} with the 90 days before.</p>
+    <div class="pg-search" style="margin-bottom:10px;"><span data-ico="search"></span><input type="search" id="ip_q" placeholder="Search a product to see its report…" autocomplete="off"></div>
+    <div class="card tbl-wrap"><table class="tbl ins-prod">
       <thead><tr><th>Product</th><th class="num">Total asked</th><th class="num">Last 90 days</th><th class="num">Before that</th><th>Trend</th><th>Status</th><th class="num">Vessels</th></tr></thead>
       <tbody id="pt_body"></tbody>
     </table><div id="pt_foot"></div></div>
-    <h3 class="section-title" style="margin-top:28px;">Vessels</h3>
-    <div class="card tbl-wrap"><table class="tbl">
+    <div class="sec-h" style="margin-top:28px;"><span class="sec-ic" data-ico="ship"></span><div class="section-title">Vessels</div></div>
+    <div class="card tbl-wrap"><table class="tbl ins-ves">
       <thead><tr><th>Vessel</th><th class="num">Orders</th><th>First</th><th>Last</th><th class="num">Usually every</th><th>Status</th></tr></thead>
       <tbody>${vesselRows.map(v=>`<tr><td><a href="#/insights/vessel/${encodeURIComponent(v.key)}" style="text-decoration:none; color:inherit;"><b>${esc(v.name)}</b> <span class="subtle">›</span></a>${v.variants>1?` <span class="subtle">· ${v.variants} spellings merged</span>`:''}</td>
         <td class="num">${v.orders}</td><td>${fmtDate(v.first)}</td><td>${fmtDate(v.last)}</td><td class="num">${v.gap!=null?v.gap+' days':'—'}</td><td><span class="badge ${VESSEL_BADGE[v.status].cls}">${VESSEL_BADGE[v.status].label}</span></td></tr>`).join('')}</tbody>
@@ -1122,8 +1122,8 @@ function monthlyChartSvg(months, avgRate, recentMonths){
   const bars = months.map((m,i)=> m.qty>0 ? `<path d="M${x(i)-bw/2},${y(0)} V${y(m.qty)+4} q0,-4 4,-4 h${bw-8} q4,0 4,4 V${y(0)} Z" fill="var(--sea)"/>` : '').join('');
   const hit = months.map((m,i)=>`<rect class="mc-hit" data-i="${i}" x="${x(i)-(W-L-R)/n/2}" y="${T}" width="${(W-L-R)/n}" height="${H-T-B}" fill="transparent"><title>${m.label}: ${m.qty}</title></rect>`).join('');
   const rx = x(Math.max(0,n-recentMonths))-(W-L-R)/n/2;
-  const band = `<rect x="${rx}" y="${T}" width="${W-R-rx}" height="${H-T-B}" fill="var(--sea)" opacity=".07"/><text x="${W-R-4}" y="${T+11}" text-anchor="end" font-size="11" fill="var(--ink-soft)">last 3 months</text>`;
-  const avg = avgRate>0 ? `<line x1="${L}" x2="${W-R}" y1="${y(avgRate)}" y2="${y(avgRate)}" stroke="var(--ink-soft)" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${L+4}" y="${y(avgRate)-5}" font-size="11" fill="var(--ink-soft)">normal level ${Math.round(avgRate*10)/10} / month</text>` : '';
+  const band = `<rect x="${rx}" y="${T}" width="${W-R-rx}" height="${H-T-B}" fill="var(--sea)" opacity=".07"/>`;
+  const avg = avgRate>0 ? `<line x1="${L}" x2="${W-R}" y1="${y(avgRate)}" y2="${y(avgRate)}" stroke="var(--ink-soft)" stroke-width="1.5" stroke-dasharray="5 4"/>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;" role="img" aria-label="Monthly demand">${band}${ticks}${bars}${avg}${labels}${hit}</svg>`;
 }
 
@@ -1143,39 +1143,40 @@ async function productInsightScreen(productId){
   $('#main').innerHTML = `
     <div class="topbar"><h1>${esc(product.name)}</h1><a href="#/insights" class="btn btn-ghost btn-sm">← Insights</a></div>
     <p style="margin-top:-8px;"><span class="badge ${badge[0]}">${badge[1]}</span> <span class="subtle">· measured in ${esc(unit)} · what vessels asked for, ${fmtDate(dates[0])} → ${fmtDate(dates[dates.length-1])}</span></p>
-    <div class="grid-stats">
-      <div class="stat"><b>${fq(a.recentRate)}</b><div class="lbl">${esc(unit)} / month lately</div></div>
-      <div class="stat"><b>${a.baseDays>0 ? fq(a.baseRate) : '—'}</b><div class="lbl">${esc(unit)} / month normally</div></div>
-      <div class="stat"><b>${a.orders.length}</b><div class="lbl">Orders in total</div></div>
-      <div class="stat"><b>${a.vesselCount}</b><div class="lbl">Vessels</div></div>
+    <div class="wm-kpis ins-kpis">
+      <div class="wm-kpi ${a.recentRate>=a.baseRate*1.1?'ok':a.recentRate<=a.baseRate*0.9?'bad':''}"><span class="wm-ic" data-ico="activity"></span><div class="wm-txt"><b>${fq(a.recentRate)}</b><div class="lbl">${esc(unit)} / month lately</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="chart-column"></span><div class="wm-txt"><b>${a.baseDays>0 ? fq(a.baseRate) : '—'}</b><div class="lbl">${esc(unit)} / month normally</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="clipboard-list"></span><div class="wm-txt"><b>${a.orders.length}</b><div class="lbl">Orders in total</div></div></div>
+      <div class="wm-kpi"><span class="wm-ic" data-ico="ship"></span><div class="wm-txt"><b>${a.vesselCount}</b><div class="lbl">Vessels</div></div></div>
     </div>
     <div class="card" style="margin-bottom:18px;">
-      <div class="section-title">What stands out</div>
-      ${[...stockAdviceFor(a, product), ...a.signals].map(s=>`<p style="margin:8px 0;"><b>${icon[s.sev]} ${s.sev==='warning'?'Warning':s.sev==='ok'?'OK':'Note'}</b> — ${esc(s.text)}</p>`).join('')}
+      <div class="sec-h"><span class="sec-ic" data-ico="zap"></span><div class="section-title">What stands out</div></div>
+      ${[...stockAdviceFor(a, product), ...a.signals].map(s=>`<div class="sig ${s.sev}"><span class="sig-ic" data-ico="${s.sev==='warning'?'triangle-alert':s.sev==='ok'?'circle-check':'circle-help'}"></span><div>${esc(s.text)}</div></div>`).join('')}
     </div>
     <div class="card" style="margin-bottom:18px;">
-      <div class="section-title">Demand per month (${esc(unit)})</div>
-      <div id="pc_chart" style="position:relative;">${monthlyChartSvg(a.months, a.baseRate, 3)}<div id="pc_tip" style="display:none; position:absolute; pointer-events:none; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:.85rem; box-shadow:0 2px 8px rgba(0,0,0,.15);"></div></div>
+      <div class="sec-h"><span class="sec-ic" data-ico="chart-column"></span><div class="section-title">Demand per month (${esc(unit)})</div></div>
+      <div class="mc-legend">${a.baseDays>0?`<span><i class="dash"></i>Normal level · ${fq(a.baseRate)} ${esc(unit)} / month</span>`:''}<span><i class="band"></i>Last 3 months</span></div>
+      <div id="pc_chart" style="position:relative;">${monthlyChartSvg(a.months, a.baseRate, 3)}<div id="pc_tip" class="mc-tip" style="display:none;"></div></div>
       <details style="margin-top:8px;"><summary class="subtle" style="cursor:pointer;">Show as a table</summary>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Month</th><th class="num">${esc(unit)}</th></tr></thead><tbody>${a.months.map(m=>`<tr><td>${m.label}</td><td class="num">${fq(m.qty)}</td></tr>`).join('')}</tbody></table></div>
       </details>
     </div>
     <div class="card" style="margin-bottom:18px;">
-      <div class="section-title">Thinking of buying a lot of this?</div>
+      <div class="sec-h"><span class="sec-ic" data-ico="package"></span><div class="section-title">Thinking of buying a lot of this?</div></div>
       <p class="subtle" style="margin-top:-6px;">${tracked ? `You hold <b>${fq(parseFloat(product.stockQty))} ${esc(unit)}</b> now.` : `Stock isn't tracked for this product, so only the quantity below is counted.`} Enter what you're considering buying:</p>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;"><input type="number" id="deal_qty" min="0" step="any" placeholder="quantity" style="max-width:160px;"><span>${esc(unit)}</span></div>
       <div id="deal_out" class="subtle">Type a quantity to see how long it would take to sell.</div>
     </div>
     <div class="card tbl-wrap">
-      <div class="section-title" style="padding:0 10px;">Vessels that ordered it</div>
-      <table class="tbl"><thead><tr><th>Vessel</th><th class="num">Orders</th><th class="num">Total (${esc(unit)})</th><th class="num">Share</th><th class="num">Usually every</th><th>Last ordered</th></tr></thead>
+      <div class="sec-h" style="padding:0 10px;"><span class="sec-ic" data-ico="ship"></span><div class="section-title">Vessels that ordered it</div></div>
+      <table class="tbl ins-pv"><thead><tr><th>Vessel</th><th class="num">Orders</th><th class="num">Total (${esc(unit)})</th><th class="num">Share</th><th class="num">Usually every</th><th>Last ordered</th></tr></thead>
       <tbody>${a.vessels.map(v=>`<tr><td><b>${esc(vName(v.key))}</b>${v.quiet?' <span class="badge b-modified">gone quiet</span>':''}</td><td class="num">${v.orders}</td><td class="num">${fq(v.qty)}</td><td class="num">${Math.round(v.share*100)}%</td><td class="num">${v.gap!=null?v.gap+' days':'—'}</td><td>${v.sinceLast} days before the latest order</td></tr>`).join('')}</tbody></table>
     </div>`;
   // hover tooltip
   const chart = $('#pc_chart'), tip = $('#pc_tip');
   chart.querySelectorAll('.mc-hit').forEach(r=>{
-    r.onmouseenter = ()=>{ const m = a.months[+r.dataset.i]; tip.textContent = `${m.label}: ${fq(m.qty)} ${unit}`; tip.style.display='block'; };
-    r.onmousemove = e=>{ const b = chart.getBoundingClientRect(); tip.style.left = Math.min(b.width-150, e.clientX-b.left+10)+'px'; tip.style.top = (e.clientY-b.top-34)+'px'; };
+    const show = e=>{ const m = a.months[+r.dataset.i]; tip.textContent = `${m.label}: ${fq(m.qty)} ${unit}`; tip.style.display='block'; const b = chart.getBoundingClientRect(); tip.style.left = Math.max(0, Math.min(b.width-tip.offsetWidth, e.clientX-b.left-tip.offsetWidth/2))+'px'; tip.style.top = Math.max(0, e.clientY-b.top-tip.offsetHeight-12)+'px'; };
+    r.onmouseenter = show; r.onmousemove = show; r.onclick = show;
     r.onmouseleave = ()=>{ tip.style.display='none'; };
   });
   // deal check

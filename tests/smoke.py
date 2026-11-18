@@ -620,7 +620,24 @@ async def test_polish(pw, url):
     await page.keyboard.press('Escape')
     await go('insights')
     check(await page.locator('.empty-card .sec-ic').count() == 1 and await page.locator('.empty-card a.btn').count() == 1, 'Insights: the empty state has its icon and a normal-size import button')
+    seed = await page.evaluate("""async()=>{
+      const prods=(await getAll('products')).filter(p=>!p.lump).slice(0,3); const name='MV TEST ONE';
+      const orders=[], lines=[];
+      for(let m=0;m<8;m++){ const date=new Date(2026,2+m,5).toISOString().slice(0,10); const o={id:'ph'+m, fileName:'f'+m+'.xlsx', code:'T-'+m, vesselName:name, vesselKey:vesselKeyOf(name), imo:'', orderDate:date, fingerprint:name+m, lineCount:3, importedAt:date+'T10:00:00Z', synced:true}; orders.push(o);
+        prods.forEach((p,i)=>{ const qty=20+m*3+i; lines.push({id:'pl'+m+'_'+i, historyOrderId:o.id, vesselKey:o.vesselKey, orderDate:date, excelDesc:p.name.toUpperCase(), descKey:p.name.toLowerCase(), qty, unit:p.unit||'KG', productId:p.id, baseQty:qty, baseUnit:(p.unit||'KG').toUpperCase(), skipped:false, baseOk:true}); }); }
+      await bulkPut('historyOrders', orders); await bulkPut('historyLines', lines); return [prods[0].id, vesselKeyOf(name)]; }""")
+    await go('insights')
+    check(await page.locator('.ins-kpis .wm-kpi .wm-ic svg').count() == 4, 'Insights with data: four icon tiles', await page.locator('.ins-kpis .wm-kpi .wm-ic svg').count())
+    check(await page.locator('#pt_body .trend-pill, #pt_body .trend-flat, #pt_body .subtle').count() >= 1, 'Insights: trend cells render')
+    await go('insights/product/' + seed[0])
+    check(await page.locator('.mc-legend').count() == 1 and await page.locator('#pc_chart svg text').filter(has_text='normal').count() == 0, 'Product page: chart legend sits outside the chart (no label over the bars)')
+    await page.locator('#pc_chart .mc-hit').nth(2).dispatch_event('click'); await page.wait_for_timeout(100)
+    check(await page.locator('#pc_tip').is_visible(), 'Product page: tapping a bar shows its value')
+    await go('insights/vessel/' + seed[1].replace(' ', '%20'))
+    check(await page.locator('.ins-kpis .wm-kpi').count() == 4 and await page.locator('#va_pick').count() <= 1, 'Vessel page: icon tiles render')
     await page.set_viewport_size({'width':390,'height':800})
+    await go('insights')
+    check(await page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), 'Insights on a phone: the page does not scroll sideways')
     await go('products')
     scroll = await page.evaluate("(()=>{const t=document.querySelector('.pg-tools'); return {sw:t.scrollWidth, cw:t.clientWidth, doc:document.documentElement.scrollWidth, win:innerWidth};})()")
     check(scroll['doc'] <= scroll['win'] + 1, 'Products on a phone: the page itself does not scroll sideways', scroll)
