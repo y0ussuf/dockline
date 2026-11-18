@@ -283,6 +283,16 @@ async function invoiceScreen(id){
   if(!inv){ location.hash = '#/invoices'; return; }
   const products = await getAll('products'); const byProd = new Map(products.map(p=>[p.id,p]));
   const save = async ()=>{ await put('invoices', inv); };
+  const itemsById = new Map((await getAll('orderItems')).map(x=>[x.id, x]));
+  /* ordered more than was picked (same unit): shown on the first line of that order item, as a warning only */
+  function shortOf(l, firstOf){
+    const it = l.itemId ? itemsById.get(l.itemId) : null; if(!it || it.status!=='picked' || firstOf.get(l.itemId)!==l) return null;
+    const req = Dec.parse(it.requestedQty), act = Dec.parse(it.actualQty) || Dec.ZERO;
+    if(!req || Dec.cmp(req, act)<=0) return null;
+    const ru = normalize(it.requestedUnit||''), au = normalize(it.actualUnit||'');
+    if(ru && au && ru!==au) return null;
+    return {ordered:Dec.str(req), picked:Dec.str(act), short:Dec.str(Dec.sub(req, act)), unit:it.requestedUnit||it.actualUnit||''};
+  }
   function draw(){
     if(inv.status!=='draft'){
       $('#main').innerHTML = `
@@ -313,6 +323,7 @@ async function invoiceScreen(id){
     const BLOCK = ['Check match','Pack choice needed','Size differs','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
     const lumpBad = (inv.lumps||[]).some(g=>g.include && !Dec.parse(g.amount));
     const blocking = lumpBad || inv.lines.some((l,i)=>l.include && issues[i].some(m=>BLOCK.some(b=>m.startsWith(b))));
+    const firstOf = new Map(); inv.lines.forEach(l=>{ if(l.include && l.itemId && !firstOf.has(l.itemId)) firstOf.set(l.itemId, l); });
     $('#main').innerHTML = `
       <div class="topbar"><h1>${esc(inv.orderType)} invoice</h1>${invBadge('draft')}</div>
       <p class="subtle" style="margin-top:-10px;">${esc(inv.vessel)} · ${esc(inv.code||inv.orderNumber||'')} — draft, nothing is final until you issue it. Quantities are as picked; prices are exact, never rounded.</p>
@@ -347,11 +358,13 @@ async function invoiceScreen(id){
         <div class="iv-line ${l.include?'':'off'}" data-i="${i}">
           <div class="iv-top"><label class="pr-name"><input type="checkbox" class="sp-cb" data-inc="${i}" ${l.include?'checked':''}><b>${esc(l.desc)}</b></label><span class="iv-q">${Dec.fmt(dm(l.qty),0)} ${esc(l.unit)}</span></div>
           ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : (l.include && l.ordered && normalize(l.ordered)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Ordered as “${esc(l.ordered)}”</div>` : (l.include && l.sysName && normalize(l.sysName)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Matched to product “${esc(l.sysName)}”</div>` : ''))}
-          ${l.include ? `<div class="iv-grid">
+          ${l.include ? `<div class="subtle" style="font-size:12px;">${l.added?'Added on invoice · ':''}<button class="qc-link" data-ok="swap:${i}">Change product</button></div>${(()=>{ const sh = shortOf(l, firstOf); return sh ? `<div class="pr-warn">⚠ Ordered ${esc(sh.ordered)}, picked ${esc(sh.picked)} ${esc(sh.unit)} — ${esc(sh.short)} short. Bought elsewhere? Invoicing ${esc(l.qty)}.</div>` : ''; })()}<div class="iv-grid">
+            <div class="field"><label>Quantity${l.unit?` (${esc(l.unit)})`:''}</label><input type="text" inputmode="decimal" data-qty="${i}" value="${esc(l.qty)}"></div>
             <div class="field"><label>${l.ref?`Price per ${esc(l.ref.qty)} ${esc(l.ref.unit)}`:'Unit price'}</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
             <div class="field"><label>Discount</label><div style="display:flex; gap:6px;"><select data-dt="${i}" style="width:84px;"><option value="">none</option><option value="pct" ${l.discType==='pct'?'selected':''}>%</option><option value="amt" ${l.discType==='amt'?'selected':''}>EGP</option></select><input type="text" inputmode="decimal" data-d="${i}" value="${esc(l.disc)}" ${l.discType?'':'disabled'}></div></div>
             <div class="iv-tot"><span class="subtle">Line total</span><b>${money(t.rows[i].net)}</b></div>
           </div>
+          ${l.pickedQty && l.pickedQty!==l.qty ? `<div class="subtle" style="font-size:12px;">Picked ${esc(l.pickedQty)} ${esc(l.unit)} · invoicing ${esc(l.qty)} ${esc(l.unit)} <button class="qc-link" data-ok="qtyreset:${i}">Reset to picked</button></div>` : ''}
           ${t.rows[i].calc.note?`<div class="iv-work">${esc(t.rows[i].calc.note)}</div>`:''}
           ${issues[i].includes('Pack choice needed')?`<div class="iv-fix"><span><b>Pack of ${esc(l.pack.count)}${l.pack.size?' × '+esc(l.pack.size):''}.</b> Is ${esc(l.price)} the price of one piece or of one whole pack?</span><button class="btn btn-ghost btn-sm" data-ok="packpiece:${i}">Per piece (×${esc(l.pack.count)})</button><button class="btn btn-ghost btn-sm" data-ok="packcase:${i}">Per whole pack</button></div>`:''}
           ${l.savedNote?`<div class="subtle" style="font-size:12px;">${esc(l.savedNote.text)} ${l.savedNote.pid?`<button class="qc-link" data-ok="unsave:${i}">Undo</button>`:''}</div>`:''}
@@ -365,19 +378,55 @@ async function invoiceScreen(id){
           ${(l.unitOverride||l.sizeOverride||l.perPiece||l.refSet)?`<button class="qc-link" data-ok="clear:${i}">Undo my change to this line</button>`:''}
           ${issues[i].length?`<div class="pr-warn">⚠ ${issues[i].map(esc).join(' · ')}</div>`:''}` : ''}
         </div>`).join('')}</div>
+      <button class="btn btn-ghost" id="iv_add" style="width:100%; border-style:dashed; margin:2px 0 12px;">+ Add item</button>
       <div class="card iv-sum"><div><span>Subtotal</span><b>${money(t.sub)}</b></div><div><span>Discount</span><b>- ${money(t.disc)}</b></div>${inv.taxOn?`<div><span>${esc(inv.taxLabel||'Tax')} (${esc(inv.taxRate)}%)</span><b>${money(t.tax)}</b></div>`:''}<div class="grand"><span>Total (EGP)</span><b>${money(t.total)}</b></div></div>
       <div class="field" style="margin-top:14px;"><label>Notes &amp; terms</label><textarea id="iv_notes" rows="2">${esc(inv.notes)}</textarea></div>
       <div class="pr-bar"><button class="btn btn-ghost btn-sm" id="iv_del">Delete draft</button><button class="btn btn-signal" id="iv_issue" ${blocking?'disabled':''}>${blocking?'Fix the flagged lines to issue':'Issue invoice'}</button></div>`;
     $('#main').querySelectorAll('[data-b]').forEach(b=>b.onclick=async ()=>{
       inv.priceBasis = b.dataset.b;
-      inv.lines.forEach(l=>{ l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || ''; });
+      inv.lines.forEach(l=>{ if(!l.free) l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || ''; });
       await save(); draw();
     });
+    $('#main').querySelectorAll('[data-qty]').forEach(el=>el.onchange = async ()=>{       // quantity actually invoiced; the order and stock are not touched
+      const l = inv.lines[+el.dataset.qty], v = Dec.parse(el.value);
+      if(!v || Dec.cmp(v, Dec.ZERO)<=0){ showAlert('Type the quantity as a number above zero. To leave this item off the invoice, untick it.'); draw(); return; }
+      if(!l.pickedQty) l.pickedQty = l.qty;
+      l.qty = Dec.str(v); if(l.pickedQty===l.qty) delete l.pickedQty;
+      await save(); draw();
+    });
+    $('#iv_add').onclick = ()=>{
+      showModal(`<h3>Add an item</h3><p class="subtle">For something added after the order was picked.</p>
+        <div style="display:flex; flex-direction:column; gap:10px;"><button class="btn btn-signal" id="ad_prod">Pick a product</button><button class="btn btn-ghost" id="ad_free">Item that is not in the products list</button><button class="btn btn-ghost" id="ad_no">Cancel</button></div>`);
+      $('#ad_no').onclick = closeModal;
+      const finish = async line=>{ inv.lines.push(Object.assign({id:uid(), itemId:'', discType:'', disc:'', include:true, substituted:false, ordered:'', doubt:'', added:true, lump:''}, line)); closeModal(); await save(); draw(); };
+      $('#ad_prod').onclick = ()=>{ closeModal(); pickProductDialog('Add which product?', async np=>{
+        const wm = new Map((await getAll('warehouses')).map(w=>[w.id,w]));
+        if(lumpOf(np, wm)){ showAlert('That product is priced as a whole (a supplier invoice total), so it cannot be added here.'); return; }
+        showModal(`<h3>${esc(np.name)}</h3><div class="row2"><div class="field"><label>Quantity</label><input type="text" inputmode="decimal" id="ad_q" placeholder="e.g. 3"></div><div class="field"><label>Unit</label><input type="text" id="ad_u" value="${esc(np.unit||'')}"></div></div>
+          <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="ad_ok" style="flex:1;">Add to invoice</button><button class="btn btn-ghost" id="ad_c">Cancel</button></div>`);
+        $('#ad_c').onclick = closeModal;
+        $('#ad_ok').onclick = ()=>{ const q = Dec.parse($('#ad_q').value), u = $('#ad_u').value.trim();
+          if(!q || Dec.cmp(q, Dec.ZERO)<=0){ showAlert('Type the quantity as a number above zero.'); return; }
+          const sz = parseSize(np.name), pk = parsePack(u), pb = packBasisFor(np, pk), cost = (seesCost()&&np.costPrice)||'', sell = (seesSell()&&np.sellPrice)||'';
+          finish({productId:np.id, desc:np.name, sysName:np.name, qty:Dec.str(q), unit:u, cost, sell, price:(inv.priceBasis==='cost'?cost:sell)||'', pack:pk, packBasis:pb.basis, packWhy:pb.why,
+                  priceUnit:np.unit||'', ref:np.priceRef||null, nameSize: sz?{qty:sz.qty,unit:sz.unit}:null}); };
+        byProd.set(np.id, np);
+      }); };
+      $('#ad_free').onclick = ()=>{ showModal(`<h3>Free item</h3><div class="field"><label>Name</label><input type="text" id="ad_n"></div>
+          <div class="row2"><div class="field"><label>Quantity</label><input type="text" inputmode="decimal" id="ad_q"></div><div class="field"><label>Unit</label><input type="text" id="ad_u"></div></div>
+          <div class="field"><label>Unit price (EGP)</label><input type="text" inputmode="decimal" id="ad_p"></div>
+          <div style="display:flex; gap:10px;"><button class="btn btn-signal" id="ad_ok" style="flex:1;">Add to invoice</button><button class="btn btn-ghost" id="ad_c">Cancel</button></div>`);
+        $('#ad_c').onclick = closeModal;
+        $('#ad_ok').onclick = ()=>{ const n = $('#ad_n').value.trim(), q = Dec.parse($('#ad_q').value), pr = Dec.parse($('#ad_p').value);
+          if(!n || !q || Dec.cmp(q, Dec.ZERO)<=0 || !pr || Dec.cmp(pr, Dec.ZERO)<0){ showAlert('A name, a quantity above zero and a price are needed.'); return; }
+          finish({productId:'', desc:n, sysName:'', qty:Dec.str(q), unit:$('#ad_u').value.trim(), cost:'', sell:'', price:Dec.str(pr), pack:null, packBasis:'', priceUnit:'', ref:null, nameSize:null, free:true}); }; };
+    };
     $('#main').querySelectorAll('[data-ok]').forEach(b=>b.onclick=async ()=>{
       const [act, i] = b.dataset.ok.split(':'), l = inv.lines[+i];
       if(act==='size'){ const v = $(`[data-size="${i}"]`).value.trim(); if(!parseMeasure(v)){ showAlert('Write the size like 350 ml, 500 gm or 1 kg.'); return; } l.sizeOverride = v; }
       if(act==='piece') l.perPiece = true;
       if(act==='doubt') l.doubtOk = true;
+      if(act==='qtyreset' && l.pickedQty){ l.qty = l.pickedQty; delete l.pickedQty; }
       if(act==='byref' && l.nameSize){ l.ref = {qty:l.nameSize.qty, unit:l.nameSize.unit}; l.refSet = true; }
       if(act==='swap'){
         pickProductDialog('Choose the right product', async np=>{
@@ -387,7 +436,7 @@ async function invoiceScreen(id){
           Object.assign(l, {productId:np.id, sysName:np.name, cost:(seesCost()&&np.costPrice)||'', sell:(seesSell()&&np.sellPrice)||'', priceUnit:np.unit||'', ref:np.priceRef||null,
             nameSize: sz?{qty:sz.qty,unit:sz.unit}:null, lump:'', packBasis:packBasisFor(np, l.pack).basis, packWhy:packBasisFor(np, l.pack).why, doubt:'', doubtOk:false});
           l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || '';
-          delete l.refSet; delete l.perPiece; delete l.sizeOverride; delete l.unitOverride; delete l.savedNote; byProd.set(np.id, np);
+          delete l.refSet; delete l.perPiece; delete l.sizeOverride; delete l.unitOverride; delete l.savedNote; delete l.free; if(l.added) l.desc = np.name; byProd.set(np.id, np);
           await save(); draw();
         });
         return;
