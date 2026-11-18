@@ -17,7 +17,7 @@ function invoiceLinesFromItems(items, byProd, basis, whMap){
       cost:(p&&seesCost()&&p.costPrice)||'', sell:(p&&seesSell()&&p.sellPrice)||'', price:(p ? (basis==='cost'?(seesCost()&&p.costPrice):(seesSell()&&p.sellPrice)) : '')||'',
       pack:parsePack(uu), priceUnit:(p&&p.unit)||'', ref:(p&&p.priceRef)||null, nameSize:(p&&parseSize(p.name))?{qty:parseSize(p.name).qty,unit:parseSize(p.name).unit}:null,
       lump:lumpOf(p, whMap), discType:'', disc:'', include:true, substituted:it.status==='substituted',
-      ordered:it.excelDesc||'', sysName:(p&&p.name)||'', packBasis:packBasisFor(p, parsePack(uu)).basis, packWhy:packBasisFor(p, parsePack(uu)).why, doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : '', ...(over||{})});
+      unitCheck:true, facts:(p&&p.unitFacts)||{}, ordered:it.excelDesc||'', sysName:(p&&p.name)||'', packBasis:packBasisFor(p, parsePack(uu)).basis, packWhy:packBasisFor(p, parsePack(uu)).why, doubt:(productId && it.status!=='substituted' && it.excelDesc) ? (mapRisk(it.excelDesc, p?p.name:desc).level===2 ? mapRisk(it.excelDesc, p?p.name:desc).reason : '') : '', ...(over||{})});
     /* stock taken from a different pack size (400 GM packs of a KG product) is billed per pack at that size's own price */
     let rest = q; const packs = new Map(), packLines = [];
     for(const a of (allocs||[])){
@@ -70,6 +70,28 @@ function lineCalc(l, priceText, roundMode){
     } else if(l.packBasis==='case'){
       out.unit = price; out.gross = Dec.mul(qty, price); out.note = 'priced per whole pack'; return out;
     } else { out.issue = 'Pack choice needed'; return out; }
+  }
+  /* picked in one unit, priced in another: exact conversion, or the line asks (see 33-units.js). Only lines flagged unitCheck, so issued invoices keep their numbers. */
+  if(l.unitCheck && !refSz && !l.perPiece && !l.pack && !l.bySize && !l.sizeOverride && l.productId){
+    const r = resolveUnits(l, qty);
+    if(r){
+      if(r.issue){ out.issue = r.issue; out.ask = r.ask || null; return out; }
+      let billed = r.billed;
+      if(r.packs){
+        const pr = r.packs;
+        if(pr.d===1n) billed = pr;
+        else {
+          const lo = pr.n/pr.d, hi = lo + 1n;
+          if(l.packRound==='floor') billed = {n:lo, d:1n}; else if(l.packRound==='ceil') billed = {n:hi, d:1n};
+          else { out.issue = 'Partial pack'; out.partial = {packs:Rat.peek(pr,2), lo:String(lo), hi:String(hi), label:r.label}; return out; }
+        }
+      }
+      const grossRat = Rat.mul(billed, Rat.fromDec(price)), bq = Rat.toDec(billed), g = Rat.toDec(grossRat);
+      if(!bq || !g){ out.issue = 'Does not divide exactly — type the unit price'; out.exactText = Rat.peek(grossRat); return out; }
+      out.unit = price; out.gross = g; out.billed = {qty:bq, unit:r.label}; out.fact = r.fact || null;
+      out.note = `${r.note} = ${Dec.str(bq)} ${r.label} × ${Dec.str(price)} = ${Dec.fmt(g,2)}`; out.packNote = `${r.picked} picked`;
+      return out;
+    }
   }
   if(!refSz || Dec.cmp(refSz.base, Dec.ZERO)<=0){ out.unit = price; out.gross = Dec.mul(qty, price); return out; }     // plain price per picked unit
   // pro-rata: what size is one picked unit?
@@ -128,13 +150,13 @@ function lineIssues(l, inv, calc){
   if(Dec.cmp(dm(l.price), Dec.ZERO)===0) w.push('Price is 0');
   calc = calc || lineCalc(l, l.price, inv.roundMode);
   if(calc.issue) w.push(calc.issue);
-  if(!l.ref && !l.sizeOverride && !l.perPiece && !l.pack && !l.bySize && l.nameSize){     // "TIN 150 gm" picked, but the product (and its price) is "1 KG"
+  if(!l.ref && !l.sizeOverride && !l.perPiece && !l.pack && !l.bySize && l.nameSize && !calc.billed){     // "TIN 150 gm" picked, but the product (and its price) is "1 KG"
     const pk = parseSize(l.unit), ns = parseMeasure(l.nameSize.qty+' '+l.nameSize.unit);
     if(pk && ns && pk.family===ns.family && !sameSize(pk, ns)) w.push(`Size differs — picked ${pk.text}, the product is ${l.nameSize.qty} ${l.nameSize.unit}`);
   }
   if(!l.ref){
     const u = normalize(l.unit), pu = normalize(l.priceUnit);
-    if(u && pu && u!==pu) w.push(`Picked in “${l.unit}”, price is per “${l.priceUnit}” — check`);
+    if(u && pu && !unitSame(l.unit, l.priceUnit) && !(l.unitCheck && (calc.billed || calc.issue || l.perPiece))) w.push(`Picked in “${l.unit}”, price is per “${l.priceUnit}” — check`);
   }
   if(l.substituted) w.push('Substituted item — check the price');
   const cost = Dec.parse(l.cost);
@@ -204,7 +226,7 @@ function invoiceDocHtml(inv){
       <div><div class="inv-k">Invoice date</div><div class="inv-v">${fmtDate(inv.invoiceDate)}</div></div>
     </div>
     <div class="inv-tw"><table class="inv-table"><thead><tr><th>#</th><th>Description</th><th class="n">Qty</th><th>Unit</th><th class="n">Unit price</th>${anyDisc?'<th class="n">Discount</th>':''}<th class="n">Total</th></tr></thead><tbody>
-      ${lineRows.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b>${x.r.calc.packNote?`<div class="inv-sub">${esc(x.r.calc.packNote)}</div>`:''}</td><td class="n">${Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.l.unit)}</td><td class="n">${money(x.r.calc.unit || dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
+      ${lineRows.map((x,i)=>`<tr><td class="subtle">${String(i+1).padStart(2,'0')}</td><td><b>${esc(x.l.desc)}</b>${x.r.calc.packNote?`<div class="inv-sub">${esc(x.r.calc.packNote)}</div>`:''}</td><td class="n">${x.r.calc.billed ? Dec.str(x.r.calc.billed.qty) : Dec.fmt(dm(x.l.qty),0)}</td><td>${esc(x.r.calc.billed ? x.r.calc.billed.unit : x.l.unit)}</td><td class="n">${money(x.r.calc.unit || dm(x.l.price))}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
       ${lumps.map((x,i)=>`<tr><td class="subtle">${String(lineRows.length+i+1).padStart(2,'0')}</td><td><b>${esc(x.g.group)}</b></td><td class="n">1</td><td>lot</td><td class="n">${money(x.r.gross)}</td>${anyDisc?`<td class="n">${Dec.cmp(x.r.disc,Dec.ZERO)===0?'—':money(x.r.disc)}</td>`:''}<td class="n"><b>${money(x.r.net)}</b></td></tr>`).join('')}
     </tbody></table></div>
     <div class="inv-foot">
@@ -294,6 +316,7 @@ async function invoiceScreen(id){
     return {ordered:Dec.str(req), picked:Dec.str(act), short:Dec.str(Dec.sub(req, act)), unit:it.requestedUnit||it.actualUnit||''};
   }
   function draw(){
+    if(inv.status==='draft') inv.lines.forEach(l=>{ l.unitCheck = true; const pr = l.productId ? byProd.get(l.productId) : null; l.facts = Object.assign({}, l.facts||{}, pr ? (pr.unitFacts||{}) : {}); });
     if(inv.status!=='draft'){
       $('#main').innerHTML = `
         <div class="topbar no-print"><h1>${esc(inv.number)}</h1>${invBadge(inv.status)}</div>
@@ -320,7 +343,7 @@ async function invoiceScreen(id){
     }
     const t = invoiceTotals(inv), co = null;
     const issues = inv.lines.map((l,i)=>lineIssues(l, inv, t.rows[i].calc));
-    const BLOCK = ['Check match','Pack choice needed','Size differs','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
+    const BLOCK = ['Check match','Pack choice needed','Size differs','Unit conversion needed','Partial pack','No amount','No price','Size needed','Unit not comparable','Does not divide exactly'];
     const lumpBad = (inv.lumps||[]).some(g=>g.include && !Dec.parse(g.amount));
     const nIncluded = inv.lines.filter(l=>l.include).length + (inv.lumps||[]).filter(g=>g.include).length;
     const nFlag = inv.lines.filter((l,i)=>l.include && issues[i].length).length + (inv.lumps||[]).filter(g=>g.include && !Dec.parse(g.amount)).length;
@@ -368,7 +391,7 @@ async function invoiceScreen(id){
           ${l.include && l.doubt ? `<div class="pr-warn">⚠ Ordered as “${esc(l.ordered)}” but matched to “${esc(l.desc)}” (${esc(l.doubt)}). ${l.doubtOk?'<b>Confirmed.</b>':`<button class="btn btn-ghost btn-sm" data-ok="doubt:${i}">Yes, this is right</button>`}</div>` : (l.include && l.ordered && normalize(l.ordered)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Ordered as “${esc(l.ordered)}”</div>` : (l.include && l.sysName && normalize(l.sysName)!==normalize(l.desc) ? `<div class="subtle" style="font-size:12px;">Matched to product “${esc(l.sysName)}”</div>` : ''))}
           ${l.include ? `<div class="subtle" style="font-size:12px;">${l.added?'Added on invoice · ':''}<button class="qc-link" data-ok="swap:${i}">Change product</button></div>${(()=>{ const sh = shortOf(l, firstOf); return sh ? `<div class="pr-warn">⚠ Ordered ${esc(sh.ordered)}, picked ${esc(sh.picked)} ${esc(sh.unit)} — ${esc(sh.short)} short. Bought elsewhere? Invoicing ${esc(l.qty)}.</div>` : ''; })()}<div class="iv-grid">
             <div class="field"><label>Quantity${l.unit?` (${esc(l.unit)})`:''}</label><input type="text" inputmode="decimal" data-qty="${i}" value="${esc(l.qty)}"></div>
-            <div class="field"><label>${l.ref?`Price per ${esc(l.ref.qty)} ${esc(l.ref.unit)}`:'Unit price'}</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
+            <div class="field"><label>${l.ref?`Price per ${esc(l.ref.qty)} ${esc(l.ref.unit)}`:((l.unitCheck && l.priceUnit && !l.pack && !l.bySize && !unitSame(l.unit, l.priceUnit)) ? `Price per ${esc(l.priceUnit)}` : 'Unit price')}</label><input type="text" inputmode="decimal" data-price="${i}" value="${esc(l.price)}" placeholder="—"></div>
             <div class="field"><label>Discount</label><div style="display:flex; gap:6px;"><select data-dt="${i}" style="width:84px;"><option value="">none</option><option value="pct" ${l.discType==='pct'?'selected':''}>%</option><option value="amt" ${l.discType==='amt'?'selected':''}>EGP</option></select><input type="text" inputmode="decimal" data-d="${i}" value="${esc(l.disc)}" ${l.discType?'':'disabled'}></div></div>
             <div class="iv-tot"><span class="subtle">Line total</span><b>${money(t.rows[i].net)}</b></div>
           </div>
@@ -381,9 +404,12 @@ async function invoiceScreen(id){
             <button class="btn btn-ghost btn-sm" data-ok="byref:${i}">Price is per ${esc(l.nameSize.qty)} ${esc(l.nameSize.unit)} — bill by weight</button>
             <button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Price is per ${esc(l.unit)} as it is</button>
             <button class="btn btn-ghost btn-sm" data-ok="swap:${i}">Different product…</button></div>`:''}
+          ${(()=>{ const c = t.rows[i].calc; if(issues[i].includes('Unit conversion needed') && c.ask) return `<div class="iv-fix"><span><b>Picked in ${esc(l.unit)}, priced per ${esc(l.priceUnit)}.</b> How many ${esc(c.ask.smallLabel)} are in one ${esc(String(c.ask.big).toUpperCase())}?</span><input type="text" inputmode="decimal" data-fact="${i}" placeholder="e.g. 23"><button class="btn btn-ghost btn-sm" data-ok="fact:${i}">Save on product</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill as picked (price is per ${esc(l.unit)})</button></div>`;
+            if(issues[i].includes('Partial pack') && c.partial) return `<div class="iv-fix"><span><b>${esc(l.qty)} ${esc(l.unit)} is ${esc(c.partial.packs)} ${esc(c.partial.label)}.</b> Bill part of a pack?</span><button class="btn btn-ghost btn-sm" data-ok="floor:${i}">Bill ${esc(c.partial.lo)} ${esc(c.partial.label)}</button><button class="btn btn-ghost btn-sm" data-ok="ceil:${i}">Bill ${esc(c.partial.hi)} ${esc(c.partial.label)}</button><input type="text" inputmode="decimal" data-uo="${i}" placeholder="or the price per ${esc(l.unit)}"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`;
+            return c.fact ? `<div class="subtle" style="font-size:12px;">1 ${esc(String(c.fact.big).toUpperCase())} = ${esc(c.fact.f.qty)} ${esc(c.fact.f.unit)} (set on the product) · <button class="qc-link" data-ok="factclear:${i}">Change</button></div>` : ''; })()}
           ${issues[i].includes('Size needed')?`<div class="iv-fix"><input type="text" data-size="${i}" placeholder="Size of one ${esc(l.unit||'unit')}, e.g. 350 ml"><button class="btn btn-ghost btn-sm" data-ok="size:${i}">Use size</button><button class="btn btn-ghost btn-sm" data-ok="piece:${i}">Bill per piece at this price</button></div>`:''}
           ${issues[i].some(m=>m.startsWith('Does not divide'))?`<div class="iv-fix"><span class="subtle">Exact amount ${esc(t.rows[i].calc.exactText)} never ends.</span><input type="text" inputmode="decimal" data-uo="${i}" placeholder="Unit price to use"><button class="btn btn-ghost btn-sm" data-ok="uo:${i}">Use this price</button></div>`:''}
-          ${(l.unitOverride||l.sizeOverride||l.perPiece||l.refSet)?`<button class="qc-link" data-ok="clear:${i}">Undo my change to this line</button>`:''}
+          ${(l.unitOverride||l.sizeOverride||l.perPiece||l.refSet||l.packRound)?`<button class="qc-link" data-ok="clear:${i}">Undo my change to this line</button>`:''}
           ${issues[i].length?`<div class="pr-warn">⚠ ${issues[i].map(esc).join(' · ')}</div>`:''}` : ''}
         </div>`).join('')}</div>
       <button class="btn btn-ghost" id="iv_add" style="width:100%; border-style:dashed; margin:2px 0 12px;">+ Add item</button>
@@ -417,7 +443,7 @@ async function invoiceScreen(id){
           if(!q || Dec.cmp(q, Dec.ZERO)<=0){ showAlert('Type the quantity as a number above zero.'); return; }
           const sz = parseSize(np.name), pk = parsePack(u), pb = packBasisFor(np, pk), cost = (seesCost()&&np.costPrice)||'', sell = (seesSell()&&np.sellPrice)||'';
           finish({productId:np.id, desc:np.name, sysName:np.name, qty:Dec.str(q), unit:u, cost, sell, price:(inv.priceBasis==='cost'?cost:sell)||'', pack:pk, packBasis:pb.basis, packWhy:pb.why,
-                  priceUnit:np.unit||'', ref:np.priceRef||null, nameSize: sz?{qty:sz.qty,unit:sz.unit}:null}); };
+                  priceUnit:np.unit||'', ref:np.priceRef||null, facts:np.unitFacts||{}, unitCheck:true, nameSize: sz?{qty:sz.qty,unit:sz.unit}:null}); };
         byProd.set(np.id, np);
       }); };
       $('#ad_free').onclick = ()=>{ showModal(`<h3>Free item</h3><div class="field"><label>Name</label><input type="text" id="ad_n"></div>
@@ -434,6 +460,18 @@ async function invoiceScreen(id){
       if(act==='size'){ const v = $(`[data-size="${i}"]`).value.trim(); if(!parseMeasure(v)){ showAlert('Write the size like 350 ml, 500 gm or 1 kg.'); return; } l.sizeOverride = v; }
       if(act==='piece') l.perPiece = true;
       if(act==='doubt') l.doubtOk = true;
+      if(act==='floor' || act==='ceil') l.packRound = act;
+      if(act==='fact'){
+        const c = t.rows[+i].calc, ans = c.ask ? parseFactAnswer($(`[data-fact="${i}"]`).value, c.ask.smallLabel) : null;
+        if(!ans){ showAlert('Type how many are in one, like 23, or with a unit like 100 gm.'); return; }
+        const pr = l.productId ? byProd.get(l.productId) : null;
+        if(pr && can('products.edit')){ pr.unitFacts = Object.assign({}, pr.unitFacts||{}, {[c.ask.big]: ans}); await put('products', pr); byProd.set(pr.id, pr); l.savedNote = {text:`Saved on “${pr.name}”: 1 ${String(c.ask.big).toUpperCase()} = ${ans.qty} ${ans.unit}.`}; }
+        else { l.facts = Object.assign({}, l.facts||{}, {[c.ask.big]: ans}); l.savedNote = {text:'Used on this invoice only (you cannot edit products).'}; }
+      }
+      if(act==='factclear'){
+        const c = t.rows[+i].calc, pr = l.productId ? byProd.get(l.productId) : null;
+        if(c.fact){ if(pr && pr.unitFacts && can('products.edit')){ delete pr.unitFacts[c.fact.big]; await put('products', pr); } if(l.facts) delete l.facts[c.fact.big]; }
+      }
       if(act==='qtyreset' && l.pickedQty){ l.qty = l.pickedQty; delete l.pickedQty; }
       if(act==='byref' && l.nameSize){ l.ref = {qty:l.nameSize.qty, unit:l.nameSize.unit}; l.refSet = true; }
       if(act==='swap'){
@@ -442,7 +480,7 @@ async function invoiceScreen(id){
           if(lumpOf(np, wm)){ showAlert('That product is priced as a whole (a supplier invoice total), so it cannot be chosen here. Fix the match on the order instead.'); return; }
           const sz = parseSize(np.name);
           Object.assign(l, {productId:np.id, sysName:np.name, cost:(seesCost()&&np.costPrice)||'', sell:(seesSell()&&np.sellPrice)||'', priceUnit:np.unit||'', ref:np.priceRef||null,
-            nameSize: sz?{qty:sz.qty,unit:sz.unit}:null, lump:'', packBasis:packBasisFor(np, l.pack).basis, packWhy:packBasisFor(np, l.pack).why, doubt:'', doubtOk:false});
+            facts:np.unitFacts||{}, nameSize: sz?{qty:sz.qty,unit:sz.unit}:null, lump:'', packBasis:packBasisFor(np, l.pack).basis, packWhy:packBasisFor(np, l.pack).why, doubt:'', doubtOk:false});
           l.price = (inv.priceBasis==='cost' ? l.cost : l.sell) || '';
           delete l.refSet; delete l.perPiece; delete l.sizeOverride; delete l.unitOverride; delete l.savedNote; delete l.free; if(l.added) l.desc = np.name; byProd.set(np.id, np);
           await save(); draw();
@@ -458,7 +496,7 @@ async function invoiceScreen(id){
         delete l.savedNote;
       }
       if(act==='uo'){ const v = $(`[data-uo="${i}"]`).value.trim(); if(!Dec.parse(v)){ showAlert('Enter a plain number, like 116.67.'); return; } l.unitOverride = Dec.str(Dec.parse(v)); }
-      if(act==='clear'){ delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; if(l.refSet){ l.ref = null; delete l.refSet; } }
+      if(act==='clear'){ delete l.packRound; delete l.unitOverride; delete l.sizeOverride; delete l.perPiece; if(l.refSet){ l.ref = null; delete l.refSet; } }
       await save(); draw();
     });
     $('#main').querySelectorAll('[data-ginc]').forEach(cb=>cb.onchange=async ()=>{ inv.lumps[+cb.dataset.ginc].include = cb.checked; await save(); draw(); });
@@ -507,7 +545,7 @@ async function exportInvoiceExcel(inv){
   const h = ws.addRow(['#','Description','Qty','Unit','Unit price','Discount','Total']); h.font = {bold:true};
   const fmtc = '#,##0.00##############';
   inv.lines.forEach((l,i)=>{ if(!l.include || l.lump) return; const r = t.rows[i];
-    const row = ws.addRow([ws.rowCount-9, l.desc, Number(l.qty), l.unit, Number(Dec.str(r.calc.unit || dm(l.price))), Number(Dec.str(r.disc)), Number(Dec.str(r.net))]);
+    const row = ws.addRow([ws.rowCount-9, l.desc, Number(r.calc.billed ? Dec.str(r.calc.billed.qty) : l.qty), r.calc.billed ? r.calc.billed.unit : l.unit, Number(Dec.str(r.calc.unit || dm(l.price))), Number(Dec.str(r.disc)), Number(Dec.str(r.net))]);
     [5,6,7].forEach(c=>row.getCell(c).numFmt = fmtc); });
   (inv.lumps||[]).forEach((g,gi)=>{ if(!g.include) return; const c = t.lumpRows[gi];
     const row = ws.addRow([ws.rowCount-9, g.group, 1, 'lot', Number(Dec.str(c.gross)), Number(Dec.str(c.disc)), Number(Dec.str(c.net))]); [5,6,7].forEach(k=>row.getCell(k).numFmt = fmtc); });
