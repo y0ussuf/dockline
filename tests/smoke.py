@@ -462,8 +462,62 @@ async def test_invedit(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 9. units: picked unit vs price unit
+async def test_units(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  units/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    r = await page.evaluate("""() => {
+      const L = (unit, priceUnit, qty, price, over) => Object.assign({qty, unit, priceUnit, price, productId:'p', include:true, ref:null, pack:null, unitCheck:true, facts:{}}, over||{});
+      const c = l => { const x = lineCalc(l, l.price, 'ask'); return {g: Dec.str(x.gross), bq: x.billed ? Dec.str(x.billed.qty) : null, bu: x.billed ? x.billed.unit : null, issue: x.issue, ask: x.ask, partial: x.partial}; };
+      const f23 = {pkt:{qty:'23', unit:'pc'}};
+      return {
+        broth: c(L('PKT 100 GM','KG','30','180')), brothOld: c(L('PKT 100 GM','KG','30','180',{unitCheck:false})),
+        cashew: c(L('TIN 150 gm','KG','50','797.5')),
+        samNo: c(L('PC','PKT','115','62')), samYes: c(L('PC','PKT','115','62',{facts:f23})),
+        part: c(L('PC','PKT','118','62',{facts:f23})), floor: c(L('PC','PKT','118','62',{facts:f23, packRound:'floor'})), ceil: c(L('PC','PKT','118','62',{facts:f23, packRound:'ceil'})),
+        alias1: c(L('PCS','PC','4','10')), alias2: c(L('KGS','KG','4','10')), alias3: c(L('PACKET','PKT','4','10')),
+        pktKg: c(L('PKT','KG','30','180',{facts:{pkt:{qty:'100', unit:'gm'}}})), pktKgNo: c(L('PKT','KG','30','180')),
+        bad: c(L('ML','KG','2','10')), caseP: c(L('CASE','PKT','3','50',{facts:{case:{qty:'12', unit:'pkt'}}})),
+      };
+    }""")
+    check(r['broth']['g'] == '540' and r['broth']['bq'] == '3' and r['broth']['bu'] == 'KG', '30 x PKT 100 GM priced per KG = 3 KG x 180 = 540', r['broth'])
+    check(r['brothOld']['g'] == '5400', 'a line without the unit check (an issued invoice) keeps its old numbers', r['brothOld'])
+    check(r['cashew']['g'] == '5981.25' and r['cashew']['bq'] == '7.5', '50 TIN 150 gm priced per KG = 7.5 KG = 5981.25', r['cashew'])
+    check(r['samNo']['issue'] == 'Unit conversion needed' and r['samNo']['ask']['big'] == 'pkt' and r['samNo']['ask']['smallLabel'] == 'PC', 'PC priced per PKT with no fact: asks how many PC in a PKT', r['samNo'])
+    check(r['samYes']['g'] == '310' and r['samYes']['bq'] == '5' and r['samYes']['bu'] == 'PKT', '115 PC / 23 = 5 PKT x 62 = 310', r['samYes'])
+    check(r['part']['issue'] == 'Partial pack' and r['part']['partial']['lo'] == '5' and r['part']['partial']['hi'] == '6', '118 PC is not a whole number of packs: asks', r['part'])
+    check(r['floor']['g'] == '310' and r['ceil']['g'] == '372', 'partial pack: bill 5 = 310, bill 6 = 372', r)
+    check(all(r[k]['g'] == v for k, v in [('alias1','40'),('alias2','40'),('alias3','40')]) and not any(r[k]['issue'] for k in ('alias1','alias2','alias3')), 'PCS/PC, KGS/KG, PACKET/PKT are the same unit (no question)', [r['alias1'], r['alias2'], r['alias3']])
+    check(r['pktKg']['g'] == '540' and r['pktKgNo']['issue'] == 'Unit conversion needed', 'PKT priced per KG: uses "1 PKT = 100 gm", asks when unknown', [r['pktKg'], r['pktKgNo']])
+    check(r['bad']['issue'] == 'Unit not comparable', 'ML picked, priced per KG: not comparable (blocks)', r['bad'])
+    check(r['caseP']['g'] == '1800' and r['caseP']['bu'] == 'PKT', '3 CASE x 12 PKT x 50 = 1800', r['caseP'])
+    await page.evaluate("""async () => {
+      await put('products', {id:'up1', name:'Samosa', unit:'PKT', supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, costPrice:'', sellPrice:'62'});
+      await put('orderItems', {id:'ui1', orderId:'uo1', status:'picked', requestedQty:115, requestedUnit:'PC', actualQty:115, actualUnit:'PC', excelDesc:'SAMOSA', productId:'up1'});
+      await put('invoices', {id:'uinv', orderId:'uo1', type:'Provision', status:'draft', number:'', priceBasis:'sell', invoiceDate:'2026-11-18', taxOn:false, taxRate:'', taxLabel:'Tax', notes:'', lumps:[], createdAt:new Date().toISOString(),
+        lines:[{id:'u1', itemId:'ui1', productId:'up1', desc:'SAMOSA', qty:'115', unit:'PC', cost:'', sell:'62', price:'62', pack:null, priceUnit:'PKT', ref:null, nameSize:null, lump:'', discType:'', disc:'', include:true, substituted:false, ordered:'SAMOSA', sysName:'Samosa', packBasis:'', doubt:''}]});
+      location.hash = '#/invoice/uinv';
+    }""")
+    await page.wait_for_selector('[data-fact="0"]', timeout=8000)
+    check(await page.locator('#iv_issue').is_disabled(), 'the line blocks issuing until the question is answered')
+    await page.locator('[data-fact="0"]').fill('23'); await page.locator('[data-ok="fact:0"]').click()
+    await page.wait_for_function("document.querySelector('#iv_lines').innerText.includes('310.00')", timeout=5000)
+    txt = await page.locator('#iv_lines').inner_text()
+    check('115 PC' in txt and '5 PKT' in txt, 'after answering: shows 115 PC ÷ 23 = 5 PKT x 62 = 310.00', txt[:300])
+    saved = await page.evaluate("async () => ((await getOne('products','up1')).unitFacts||{}).pkt")
+    check(saved and saved['qty'] == '23' and saved['unit'] == 'pc', 'the fact is saved on the product (asked once)', saved)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -484,6 +538,7 @@ async def main():
         if args.only in (None, 'invprice'): await run('invoice price -> product:', test_invprice(pw, url))
         if args.only in (None, 'sizes'): await run('size differs:', test_sizes(pw, url))
         if args.only in (None, 'invedit'): await run('invoice editor:', test_invedit(pw, url))
+        if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()
