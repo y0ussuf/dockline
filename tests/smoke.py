@@ -660,8 +660,41 @@ async def test_polish(pw, url):
     return failed
 
 
+async def test_twins(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  twins/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    await page.evaluate("""async()=>{
+      const ps=(await getAll('products')).filter(p=>p.warehouseId).slice(0,3); const oid='twin1';
+      await put('orders',{id:oid,vessel:'MV T',imo:'1',orderNumber:'N',orderDate:'2026-11-10',status:'matched'});
+      const rows=[[ps[0],12,26],[ps[1],6,27],[ps[2],4,31],[ps[0],8,48]]; let i=0;
+      for(const [p,q,sr] of rows){ i++; await put('orderItems',{id:'tw'+i,orderId:oid,sr:String(sr),importIndex:i,excelDesc:p.name,requestedQty:q,requestedUnit:'PCS',excelQty:q,excelUnit:'PCS',status:'pending',productId:p.id,productName:p.name,warehouseId:p.warehouseId,sortKey:[1,1,1],actualQty:null,actualUnit:''}); }
+      await beginPicking(oid); }""")
+    order = await page.evaluate("async()=>{const it=await getAll('orderItems'); return (await getOne('orders','twin1')).queue.map(id=>it.find(x=>x.id===id).sr)}")
+    check(order == ['26', '48', '27', '31'], 'the same product on two lines sits together in the picking queue', order)
+    await page.evaluate("async()=>{location.hash='#/order/twin1/pick/all'; await render();}"); await page.wait_for_timeout(500)
+    check(await page.locator('.pick-twin').count() == 1 and 'in total' in (await page.locator('.pick-twin').inner_text()), 'the pick screen says it is requested again, with the total')
+    await page.locator('#pk_modify').click(); await page.wait_for_timeout(300)
+    check(await page.locator('#m_qty').input_value() == '20', 'Modify starts from the total (12 + 8)', await page.locator('#m_qty').input_value())
+    await page.locator('#m_qty').fill('15'); await page.locator('#m_save').click(); await page.wait_for_timeout(500)
+    rows = await page.evaluate("async()=>(await getAll('orderItems')).filter(x=>x.orderId==='twin1').map(x=>[x.sr,x.actualQty,x.status])")
+    check(rows[0] == ['26', 12, 'completed'] and rows[3] == ['48', 3, 'modified'] and rows[1][2] == 'pending', 'picking 15 of 20 fills the lines in order: 12 and 3', rows)
+    await page.evaluate("async()=>{ const a=await getOne('orderItems','tw1'), b=await getOne('orderItems','tw4'); for(const x of [a,b]){x.status='pending';x.actualQty=null;} await put('orderItems',a); await put('orderItems',b); const o=await getOne('orders','twin1'); o.queue=['tw1','tw4','tw2','tw3']; await put('orders',o); location.hash='#/order/twin1/pick/all'; await render(); }")
+    await page.wait_for_timeout(500)
+    await page.locator('#pk_added').click(); await page.wait_for_timeout(500)
+    rows = await page.evaluate("async()=>(await getAll('orderItems')).filter(x=>x.orderId==='twin1').map(x=>[x.sr,x.actualQty,x.status])")
+    check(rows[0] == ['26', 12, 'completed'] and rows[3] == ['48', 8, 'completed'], '"Product Added" completes both lines with their own quantities', rows)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -685,6 +718,7 @@ async def main():
         if args.only in (None, 'units'): await run('units (picked vs price unit):', test_units(pw, url))
         if args.only in (None, 'report'): await run('order report excel:', test_report(pw, url))
         if args.only in (None, 'polish'): await run('settings / products / insights layout:', test_polish(pw, url))
+        if args.only in (None, 'twins'): await run('same product on several order lines:', test_twins(pw, url))
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))

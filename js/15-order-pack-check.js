@@ -3,6 +3,17 @@
    quantity (same rule, same pack sizes and same "loose" settings as the Order Splitter). The vessel's own
    number stays on the line (excelQty); requestedQty becomes what will really be picked and ordered.
    ================================================================================= */
+/* Lines of the same product go next to each other in the picking queue, so one trip to the shelf covers them all
+   (products that share the same warehouse / section / priority would otherwise sit between them). */
+function groupSameProduct(sorted){
+  const out = [], used = new Set();
+  sorted.forEach(it=>{
+    if(used.has(it.id)) return;
+    out.push(it); used.add(it.id);
+    if(it.productId) sorted.forEach(o=>{ if(!used.has(o.id) && o.productId===it.productId){ out.push(o); used.add(o.id); } });
+  });
+  return out;
+}
 async function beginPicking(orderId){
   const order = await getOne('orders', orderId);
   const fresh = (await getAll('orderItems')).filter(it=>it.orderId===orderId);
@@ -11,7 +22,7 @@ async function beginPicking(orderId){
     return 0;
   });
   order.status = 'picking';
-  order.queue = sorted.map(it=>it.id);
+  order.queue = groupSameProduct(sorted).map(it=>it.id);
   order.postponed = [];
   await put('orders', order);
   location.hash = `#/order/${orderId}/pick`;
