@@ -739,8 +739,98 @@ async def test_live(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 14. Buy check: judge a purchase list against stock and demand
+BUY_SEED = """async () => {
+  const mk = (id, name, stock) => ({id, name, unit:'KG', supplier:'', supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, stockQty:String(stock), costPrice:'', sellPrice:''});
+  await put('products', mk('bcA','Test Rice A',50)); await put('products', mk('bcB','Test Flour B',20));
+  await put('products', mk('bcC','Test Sugar C',10)); await put('products', mk('bcD','Test Salt D',1000)); await put('products', mk('bcE','Test Oil E',500));
+  const orders = [], lines = [];
+  for(let i=0;i<10;i++){
+    const d = new Date(Date.UTC(2026,0+i,15)).toISOString().slice(0,10), oid = 'bco'+i;
+    orders.push({id:oid, fileName:'t.xlsx', vesselName:'Test Ship', vesselKey:'test ship', imo:'', orderDate:d, fingerprint:'fp'+i, lineCount:4});
+    const add = (pid, name, q) => lines.push({id:oid+pid, historyOrderId:oid, vesselKey:'test ship', orderDate:d, excelDesc:name, descKey:name.toLowerCase(), qty:q, unit:'KG', productId:pid, baseQty:q, baseUnit:'kg', baseOk:true, skipped:false});
+    add('bcA','Test Rice A',100); add('bcC','Test Sugar C',100); add('bcD','Test Salt D',100);
+    if(i<5) add('bcB','Test Flour B',50);          // Flour B stopped being ordered after May
+  }
+  await bulkPut('historyOrders', orders); await bulkPut('historyLines', lines);
+}"""
+
+async def test_buy(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  buy/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    # the judgement on its own
+    j = await page.evaluate("""()=>{
+      const a = {orders:[1,2,3,4,5], recentRate:100, baseRate:100, status:'steady', signals:[]};
+      const base = {product:{id:'p'}, perOrder:false, baseOk:true, buy:200, stock:50, a};
+      const k = o => buyAssess(Object.assign({}, base, o), 3);
+      return {good:k({}), over:k({buy:1000}), short:k({buy:20, stock:0}), dead:k({a:Object.assign({}, a, {status:'stopped'})}),
+        thin:k({a:Object.assign({}, a, {status:'unknown'})}), nohist:k({a:null}), unit:k({baseOk:false, unitNote:'x'}), nomatch:k({product:null}),
+        skip:k({perOrder:true}), untracked:k({stock:null})}; }""")
+    check(j['good']['key']=='good' and abs(j['good']['cover']-2.5)<1e-9 and abs(j['good']['suggested']-250)<1e-9, 'stock 50 + buy 200 at 100/month lasts 2.5 months, 250 would give 3 months', j['good'])
+    check(j['over']['key']=='over' and j['short']['key']=='short', 'far too much / far too little are told apart', (j['over']['key'], j['short']['key']))
+    check(j['dead']['key']=='dead' and j['thin']['key']=='thin' and j['nohist']['key']=='nohistory', 'stopped, short-history and no-history products get their own verdicts', (j['dead']['key'], j['thin']['key'], j['nohist']['key']))
+    check(j['unit']['key']=='unit' and j['nomatch']['key']=='nomatch' and j['skip']['key']=='skip', 'a bad unit, an unmatched name and a per-order product are never judged', (j['unit']['key'], j['nomatch']['key'], j['skip']['key']))
+    check(j['untracked']['key']=='good' and abs(j['untracked']['cover']-2)<1e-9 and 'not tracked' in j['untracked']['note'], 'untracked stock counts as zero and says so', j['untracked'])
+    h = await page.evaluate("""()=>({ok: bcFindHeader([['x'],['Product','Quantity','Unit','Unit price','Supplier / notes']]), bad: bcFindHeader([['Name','Colour']]), alt: bcFindHeader([['Description','Qty','UOM']])})""")
+    check(h['ok'] and h['ok']['row']==1 and h['ok']['product']==0 and h['ok']['qty']==1 and h['ok']['unit']==2 and h['ok']['price']==3 and h['ok']['note']==4 and h['bad'] is None and h['alt']['unit']==2, 'the template header is found on any row, other sheets are refused', h)
+    # the screens, with a small history behind them
+    await page.evaluate(BUY_SEED)
+    await page.evaluate("async()=>{ location.hash='#/insights'; await render(); }")
+    await page.wait_for_timeout(500)
+    check(await page.locator('a[href="#/insights/buy"]').count() >= 1, 'Insights has a Buy check button')
+    await page.evaluate("async()=>{ location.hash='#/insights/buy'; await render(); }")
+    await page.wait_for_timeout(300)
+    start = await page.locator('#main').inner_text()
+    check('Empty template' in start and 'Template with my products' in start and await page.locator('#bc_file').count()==1, 'the start screen offers both templates and an upload', start[:200])
+    await page.evaluate("""async()=>{
+      const ctx = await bcLoadContext();
+      const raws = [{desc:'Test Rice A', qty:200, unit:'KG', price:2}, {desc:'Test Flour B', qty:100, unit:'KG', price:null}, {desc:'Test Salt D', qty:5000, unit:'KG', price:null},
+                    {desc:'Test Oil E', qty:20, unit:'L', price:null}, {desc:'Zzz unknown thing', qty:1, unit:'KG', price:null}]
+        .map((r,i)=>{ const p = ctx.matcher.match(r.desc); return Object.assign({id:i}, r, {productId: p ? p.id : null}); });
+      _bc = {ctx, raws, fileName:'t.xlsx', T:3, skipped:0}; bcDrawResult(); }""")
+    rows = await page.evaluate("""()=>Object.fromEntries(_bc.rows.map(r=>[r.raw.desc, {key:r.key, cover:r.cover, suggested:r.suggested}]))""")
+    check(rows['Test Rice A']['key']=='good' and abs(rows['Test Rice A']['cover']-2.5)<0.01, 'Rice: 50 in stock + 200 lasts 2.5 months → good', rows['Test Rice A'])
+    check(rows['Test Flour B']['key']=='dead', 'Flour stopped being ordered → flagged, not "good"', rows['Test Flour B'])
+    check(rows['Test Salt D']['key']=='over', 'Salt: 1000 held + 5000 more is far too much', rows['Test Salt D'])
+    check(rows['Test Oil E']['key']=='unit' and rows['Zzz unknown thing']['key']=='nomatch', 'litres for a kg product and an unknown name are held back for review', (rows['Test Oil E'], rows['Zzz unknown thing']))
+    body = await page.locator('#main').inner_text()
+    check('Running low but not on this list' in body and 'Test Sugar C' in body.split('Running low but not on this list')[1], 'Sugar (10 left, sells 100/month) is flagged as missing from the list', body[-400:])
+    check('Test Salt D' not in body.split('Running low but not on this list')[1], 'Salt (plenty in stock) is not', '')
+    check("couldn't be matched" in body and 'Choose product' in body, 'unmatched names offer "Choose product…"', '')
+    check('List total' in body, 'a priced line shows the list total', '')
+    await page.evaluate("async()=>{ _bc.T = 12; bcDrawResult(); }")
+    r2 = await page.evaluate("()=>Object.fromEntries(_bc.rows.map(r=>[r.raw.desc, r.key]))")
+    check(r2['Test Rice A']=='short', 'the wanted cover changes the judgement (2.5 months is short of 12)', r2)
+    # the template and the Excel result, written through a recorder (no real ExcelJS needed)
+    x = await page.evaluate("""async()=>{
+      const sheets = [];
+      const mkSheet = name => { const rows = []; const ws = {name, rows, columns:null, cells:{}, addRow: v => { rows.push(v); return {getCell:()=>({}), eachCell(){}}; }, getRow: () => ({eachCell(){}}), getColumn: () => ({}), getCell: a => ws.cells[a] || (ws.cells[a] = {})}; sheets.push(ws); return ws; };
+      window.ExcelJS = {Workbook: function(){ this.addWorksheet = n => mkSheet(n); this.xlsx = {writeBuffer: async () => new ArrayBuffer(1)}; }};
+      const saved = []; window.saveFile = async (name) => { saved.push(name); };
+      await bcDownloadTemplate(true);
+      const t = sheets.splice(0, sheets.length);
+      _bc.T = 3; bcDrawResult(); await bcExport();
+      const e = sheets.splice(0, sheets.length);
+      return {saved, tNames:t.map(s=>s.name), tHead:t[0].columns.map(c=>c.header), tRows:t[0].rows.map(r=>r.p), unitList:t[0].cells['C2'].dataValidation.formulae[0], qtyRule:t[0].cells['B2'].dataValidation.type,
+        eNames:e.map(s=>s.name), eFirst:e[0].rows.map(r=>r[0]), eVerdicts:e[0].rows.map(r=>r[10]), eMissing:e[1].rows.map(r=>r[0])}; }""")
+    check(x['saved'][0]=='buy-check-template-with-products.xlsx' and x['tNames']==['Buy list','How to use'], 'the template has a Buy list sheet and a How to use sheet', x['saved'])
+    check(x['tHead']==['Product','Quantity','Unit','Unit price','Supplier / notes'], 'template columns', x['tHead'])
+    check('Test Rice A' in x['tRows'] and 'Test Salt D' in x['tRows'], 'the "with my products" template lists the active products', x['tRows'])
+    check('KG' in x['unitList'] and x['qtyRule']=='decimal', 'unit drop-down and quantity rule are on the sheet', (x['unitList'], x['qtyRule']))
+    check(x['saved'][1].startswith('buy-check-') and x['saved'][1].endswith('.xlsx') and x['eNames']==['Buy check','Running low, not on list'], 'the result downloads as buy-check-<date>.xlsx with both sheets', (x['saved'], x['eNames']))
+    check('Test Rice A' in x['eFirst'] and 'Good amount' in x['eVerdicts'] and 'Test Sugar C' in x['eMissing'], 'the Excel result carries every line, its verdict and the missing list', x)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live', 'buy'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -767,6 +857,7 @@ async def main():
         if args.only in (None, 'twins'): await run('same product on several order lines:', test_twins(pw, url))
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'live'): await run('live refresh after sync:', test_live(pw, url))
+        if args.only in (None, 'buy'): await run('buy check:', test_buy(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()
