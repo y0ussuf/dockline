@@ -662,6 +662,9 @@ function openModifyModal(it, product, onDone, twins){
         <div class="mod-qty"><button type="button" class="mod-step" id="m_minus" aria-label="Less">${qIc('minus')}</button><input type="number" id="m_qty" value="${prefillQty}" step="any" inputmode="decimal"><button type="button" class="mod-step" id="m_plus" aria-label="More">${qIc('plus')}</button></div>
         <input type="text" id="m_unit" value="${esc(prefillUnit)}" class="mod-unit" aria-label="Unit">
       </div>
+      <div class="mod-round" id="m_round"></div>
+      <div style="display:none"><div>
+      </div></div>
     </div>
     <label class="mod-toggle" for="m_sub">${qIc('swap2')}<span>Substitute with a different product<small>Customer got something else instead</small></span><input type="checkbox" id="m_sub" ${it.status==='substituted'?'checked':''}><i class="mod-sw"></i></label>
     <div id="m_subwrap" style="display:${it.status==='substituted'?'block':'none'};">
@@ -678,9 +681,18 @@ function openModifyModal(it, product, onDone, twins){
       <button class="qa-primary mod-save" id="m_save">${qIc('check')}Save &amp; continue</button>
       <button class="mod-cancel" onclick="closeModal()">Cancel</button>
     </div></div>`);
-  $('#m_minus').onclick = ()=>{ const v=parseFloat($('#m_qty').value)||0; $('#m_qty').value = Math.max(0, +(v-1).toFixed(6)); };
-  $('#m_plus').onclick = ()=>{ const v=parseFloat($('#m_qty').value)||0; $('#m_qty').value = +(v+1).toFixed(6); };
+  $('#m_minus').onclick = ()=>{ const v=parseFloat($('#m_qty').value)||0; $('#m_qty').value = Math.max(0, Number.isInteger(+v.toFixed(6)) ? +(v-1).toFixed(6) : Math.floor(v)); drawRound(); };
+  $('#m_plus').onclick = ()=>{ const v=parseFloat($('#m_qty').value)||0; $('#m_qty').value = Number.isInteger(+v.toFixed(6)) ? +(v+1).toFixed(6) : Math.ceil(v); drawRound(); };
   wireExpiryField('m', 'm_prod');
+  // − / + snap to the next whole number first (7.86: − gives 7, + gives 8), then step by 1 as usual
+  function drawRound(){
+    const v = parseFloat($('#m_qty').value), box = $('#m_round');
+    if(isNaN(v) || Math.abs(v-Math.round(v))<1e-9){ box.innerHTML=''; return; }
+    box.innerHTML = `Tap <b>−</b> for <b>${Math.floor(v)}</b> or <b>+</b> for <b>${Math.ceil(v)}</b>`;
+  }
+  $('#m_qty').addEventListener('input', drawRound);
+  $('#m_qty').addEventListener('focus', e=>{ const el=e.target; setTimeout(()=>el.select(),0); });
+  drawRound();
   // one row per replacement product: {productId, name, qty, unit}
   let subs = replacementsOf(it).map(r=>({productId:r.productId, name:r.name, qty:r.qty, unit:r.unit}));
   let pickerProducts=null, pickerWhMap=null, pickerSecMap=null;

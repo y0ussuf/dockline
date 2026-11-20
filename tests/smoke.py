@@ -688,6 +688,18 @@ async def test_twins(pw, url):
     await page.locator('#pk_added').click(); await page.wait_for_timeout(500)
     rows = await page.evaluate("async()=>(await getAll('orderItems')).filter(x=>x.orderId==='twin1').map(x=>[x.sr,x.actualQty,x.status])")
     check(rows[0] == ['26', 12, 'completed'] and rows[3] == ['48', 8, 'completed'], '"Product Added" completes both lines with their own quantities', rows)
+    await page.evaluate("""async()=>{ const p=(await getAll('products')).find(p=>p.warehouseId); await put('orders',{id:'r1',vessel:'MV T',imo:'1',orderNumber:'N',orderDate:'2026-11-10',status:'picking',queue:['r1i']});
+      await put('orderItems',{id:'r1i',orderId:'r1',sr:'5',importIndex:1,excelDesc:'Yoghurt cup',requestedQty:7.86,requestedUnit:'CUP',excelQty:7.86,excelUnit:'CUP',status:'pending',productId:null,warehouseId:p.warehouseId,sortKey:[1,1,1]});
+      location.hash='#/order/r1/pick/all'; await render(); }""")
+    await page.wait_for_timeout(500)
+    await page.locator('#pk_modify').click(); await page.wait_for_timeout(300)
+    check(await page.locator('#m_round').inner_text() != '', 'Modify: a decimal quantity shows the "tap - for 7 or + for 8" hint')
+    await page.locator('#m_plus').click()
+    check(await page.locator('#m_qty').input_value() == '8' and await page.locator('#m_round').inner_text() == '', '+ on 7.86 goes to 8, and the hint goes away')
+    await page.locator('#m_plus').click(); await page.locator('#m_minus').click(); await page.locator('#m_minus').click()
+    check(await page.locator('#m_qty').input_value() == '7', 'whole numbers still step by one (8 → 9 → 8 → 7)', await page.locator('#m_qty').input_value())
+    await page.locator('#m_qty').fill('8.7'); await page.locator('#m_minus').click()
+    check(await page.locator('#m_qty').input_value() == '8', '- on 8.7 goes to 8')
     check(not errors, 'no page errors', errors[:1])
     await browser.close()
     return failed
