@@ -635,6 +635,19 @@ async def test_polish(pw, url):
     check(await page.locator('#pc_tip').is_visible(), 'Product page: tapping a bar shows its value')
     await go('insights/vessel/' + seed[1].replace(' ', '%20'))
     check(await page.locator('.ins-kpis .wm-kpi').count() == 4 and await page.locator('#va_pick').count() <= 1, 'Vessel page: icon tiles render')
+    await page.evaluate("""async()=>{ const oid='os1'; await put('orders',{id:oid,vessel:'MV T',imo:'1',orderNumber:'N-1',orderDate:'2026-11-10',status:'completed',destination:'Port Said',driverName:'D',carLicense:'C'});
+      const rows=[['A',10,'KG','completed',10],['B',115,'PC','modified',100],['C',5,'KG','not_available',null]];
+      let i=0; for(const r of rows){ i++; await put('orderItems',{id:'osi'+i,orderId:oid,sr:String(i),importIndex:i,excelDesc:r[0],requestedQty:r[1],requestedUnit:r[2],status:r[3],actualQty:r[4],actualUnit:r[2],productId:null,sortKey:[1,1,i]}); } }""")
+    await page.evaluate("document.querySelector('#modal-root').innerHTML=''")   # the bulk-import dialog from above is still open
+    await go('order/os1/summary')
+    check(await page.locator('.os-head .os-ic svg').count() == 6 and await page.locator('.os-hd').count() == 1, 'Order summary: one info card with icons, and a header row over the list')
+    check(await page.locator('.os-q2.chg').count() == 2, 'Order summary: changed / missing picked quantities are highlighted', await page.locator('.os-q2.chg').count())
+    await page.locator('.os-k[data-f=modified]').click()
+    vis = await page.locator('.os-row[data-st]:visible').count()
+    check(vis == 1, 'Order summary: tapping "Modified" shows only modified lines', vis)
+    await page.locator('.os-k[data-f=modified]').click()
+    check(await page.locator('.os-row[data-st]:visible').count() == 3, 'Order summary: tapping it again shows everything')
+    check(await page.locator('#editDelivery, #editDestination, #exportXls, #toggleDispatch').count() == 4, 'Order summary: edit / export / dispatch buttons are still there')
     await page.set_viewport_size({'width':390,'height':800})
     await go('insights')
     check(await page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), 'Insights on a phone: the page does not scroll sideways')
