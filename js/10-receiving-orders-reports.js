@@ -320,60 +320,55 @@ async function orderSummary(orderId){
   items.forEach(it=>{ counts[it.status]=(counts[it.status]||0)+1; });
   $('#main').innerHTML = `
     <div class="topbar"><h1>Order summary</h1><div style="display:flex; gap:8px; flex-wrap:wrap;">${order.status==='completed' ? `<a class="btn btn-ghost btn-sm" href="#/invoice/order/${order.id}">🧾 Invoices</a>` : ''}${typeof canMoney==='function' && canMoney() ? `<a class="btn btn-ghost btn-sm" href="#/money/${order.id}"><span data-ico="chart-no-axes-combined"></span> Profit</a>` : ''}<button class="btn btn-signal btn-sm" id="exportXls">⬇ Export to Excel</button></div></div>
-    <div class="card" style="margin-bottom:18px;">
-      <div class="row2">
-        <div><b>Vessel</b><div>${esc(order.vessel)}</div></div>
-        <div><b>IMO</b><div>${esc(order.imo)||'—'}</div></div>
+    <div class="card os-head">
+      <div class="os-grid">
+        <div class="os-f"><span class="os-ic" data-ico="ship"></span><div><small>Vessel</small><b>${esc(order.vessel)}</b></div></div>
+        <div class="os-f"><span class="os-ic" data-ico="tag"></span><div><small>IMO</small><b>${esc(order.imo)||'—'}</b></div></div>
+        <div class="os-f"><span class="os-ic" data-ico="clipboard-list"></span><div><small>Order</small><b>${esc(order.orderNumber)}</b></div></div>
+        <div class="os-f"><span class="os-ic" data-ico="calendar"></span><div><small>Date</small><b>${fmtDate(order.orderDate)}</b></div></div>
+        <div class="os-f"><span class="os-ic" data-ico="map-pin"></span><div><small>Destination</small>${order.destination ? destinationBadge(order.destination) : '<span class="subtle">Not set</span>'}</div></div>
+        <div class="os-f"><span class="os-ic" data-ico="truck"></span><div><small>Driver · Car</small><b>${esc(order.driverName)||'—'}</b><span class="subtle"> · ${esc(order.carLicense)||'—'}</span></div></div>
       </div>
-      <div class="row2" style="margin-top:12px;">
-        <div><b>Order</b><div>${esc(order.orderNumber)}</div></div>
-        <div><b>Date</b><div>${fmtDate(order.orderDate)}</div></div>
-      </div>
-      <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <div><b>Destination</b><div style="margin-top:4px;">${order.destination ? destinationBadge(order.destination) : '<span class="subtle">Not set</span>'}</div></div>
-        <button class="btn btn-ghost btn-sm" id="editDestination" style="margin-left:auto;">✎ Edit</button>
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <div class="row2" style="flex:1;">
-        <div><b>Driver</b><div>${esc(order.driverName)||'—'}</div></div>
-        <div><b>Car license</b><div>${esc(order.carLicense)||'—'}</div></div>
-      </div>
-      <button class="btn btn-ghost btn-sm" id="editDelivery">✎ Edit delivery details</button>
+      <div class="os-acts"><button class="btn btn-ghost btn-sm" id="editDestination"><span data-ico="pencil"></span> Destination</button><button class="btn btn-ghost btn-sm" id="editDelivery"><span data-ico="pencil"></span> Delivery details</button></div>
     </div>
     ${order.status==='completed' ? `
-    <div class="card" style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+    <div class="card os-disp">
+      <span class="os-ic" data-ico="${isAwaitingDispatch(order)?'hourglass':'truck'}"></span>
       <div style="flex:1; min-width:200px;">
-        <b>Dispatch</b>
-        <div style="margin-top:4px;">${orderBadgeHtml(order)}${isAwaitingDispatch(order) && order.awaitingDispatchSince ? ` <span class="subtle">since ${fmtDate(order.awaitingDispatchSince)}</span>` : ''}${!isAwaitingDispatch(order) && order.sentAt ? ` <span class="subtle">sent ${fmtDate(order.sentAt)}</span>` : ''}</div>
-        <div class="subtle" style="margin-top:4px;">${isAwaitingDispatch(order) ? 'Picked and waiting in the warehouse for the ship. Everyone sees it on Home and Orders.' : 'Mark it if this order is picked but still in the warehouse until the ship arrives.'}</div>
+        <b>${isAwaitingDispatch(order) ? 'Picked, waiting in the warehouse' : 'Dispatch'}</b>${isAwaitingDispatch(order) && order.awaitingDispatchSince ? ` <span class="subtle">since ${fmtDate(order.awaitingDispatchSince)}</span>` : ''}${!isAwaitingDispatch(order) && order.sentAt ? ` <span class="subtle">· sent ${fmtDate(order.sentAt)}</span>` : ''}
+        <div class="subtle">${isAwaitingDispatch(order) ? 'Everyone sees it on Home and Orders until the ship arrives.' : 'Mark it if this order is picked but still in the warehouse until the ship arrives.'}</div>
       </div>
       <button class="btn ${isAwaitingDispatch(order)?'btn-signal':'btn-ghost'} btn-sm" id="toggleDispatch">${isAwaitingDispatch(order) ? '✓ Mark as sent' : '⏳ Mark as picked, not sent'}</button>
     </div>` : ''}
-    <div class="grid-stats">
-      <div class="stat"><b>${items.length}</b><div class="lbl">Total products</div></div>
-      <div class="stat"><b>${counts.completed||0}</b><div class="lbl">Completed</div></div>
-      <div class="stat"><b>${counts.modified||0}</b><div class="lbl">Modified</div></div>
-      <div class="stat"><b>${counts.substituted||0}</b><div class="lbl">Substituted</div></div>
-      <div class="stat"><b>${counts.from_supplier||0}</b><div class="lbl">From supplier</div></div>
-      <div class="stat"><b>${counts.not_available||0}</b><div class="lbl">Not available</div></div>
+    <div class="wm-kpis os-kpis" id="osFilters">
+      ${[['all','Total products',items.length,'list',''],['completed','Completed',counts.completed||0,'circle-check','ok'],['modified','Modified',counts.modified||0,'pencil','warn'],['substituted','Substituted',counts.substituted||0,'arrow-left-right','warn'],['from_supplier','From supplier',counts.from_supplier||0,'truck',''],['not_available','Not available',counts.not_available||0,'triangle-alert','bad']].map(k=>`<button type="button" class="wm-kpi os-k ${k[4]} ${k[0]==='all'?'on':''}" data-f="${k[0]}" ${k[0]!=='all'&&!k[2]?'disabled':''}><span class="wm-ic" data-ico="${k[3]}"></span><div class="wm-txt"><b>${k[2]}</b><div class="lbl">${k[1]}</div></div></button>`).join('')}
     </div>
-    <div class="card">
-      ${items.slice().sort((a,b)=>importOrderCompare(a,b)).map(it=>`
-        <div class="list-row">
-          <div style="width:50px;" class="subtle">${esc(it.sr||'—')}</div>
-          <div style="flex:1;"><b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}${matchNote(it)?`<div class="subtle">${esc(matchNote(it))}</div>`:''}${it.actualExpiryDate?`<div class="subtle">exp ${fmtDate(it.actualExpiryDate)}${it.actualProductionDate?' · prod '+fmtDate(it.actualProductionDate):''} (set for this order)</div>`:''}</div>
-          <div class="subtle" style="width:120px;">${it.requestedQty} ${esc(it.requestedUnit)}</div>
-          <div class="subtle" style="width:120px;">${replacementsOf(it).length>1 && it.status==='substituted' ? replacementsOf(it).map(r=>`${r.qty} ${esc(r.unit||'')}`).join(' + ') : `${it.actualQty ?? '—'} ${esc(it.actualUnit||'')}`}</div>
-          <span class="badge b-${it.status}">${it.status.replace('_',' ')}</span>
-          ${order.status==='completed' && it.productId ? `<button class="iconbtn" data-relink="${it.id}" title="Wrong product? Change it (stock is corrected too)">⇄</button>` : ''}
-        </div>`).join('')}
+    <div class="card os-list">
+      <div class="os-row os-hd"><span>#</span><span>Product</span><span class="r">Requested</span><span class="r">Picked</span><span>Status</span><span></span></div>
+      ${items.slice().sort((a,b)=>importOrderCompare(a,b)).map(it=>{
+        const pk = replacementsOf(it).length>1 && it.status==='substituted' ? replacementsOf(it).map(r=>`${r.qty} ${esc(r.unit||'')}`).join(' + ') : `${it.actualQty ?? '—'} ${esc(it.actualUnit||'')}`;
+        const diff = it.actualQty!=null && (+it.actualQty!==+it.requestedQty || (it.actualUnit||it.requestedUnit)!==it.requestedUnit);
+        return `<div class="os-row" data-st="${it.status}">
+          <span class="os-sr">${esc(it.sr||'—')}</span>
+          <div class="os-p"><b>${esc(it.excelDesc)}</b> ${it.addedManually?'<span class="badge b-modified">added manually</span>':''}${matchNote(it)?`<div class="subtle">${esc(matchNote(it))}</div>`:''}${it.actualExpiryDate?`<div class="subtle">exp ${fmtDate(it.actualExpiryDate)}${it.actualProductionDate?' · prod '+fmtDate(it.actualProductionDate):''} (set for this order)</div>`:''}</div>
+          <span class="r os-q os-q1" data-l="Requested">${it.requestedQty} ${esc(it.requestedUnit)}</span>
+          <span class="r os-q os-q2 ${diff||it.status==='not_available'?'chg':''}" data-l="Picked">${pk}</span>
+          <span class="os-s"><span class="badge b-${it.status}">${it.status.replace('_',' ')}</span></span>
+          <span class="os-x">${order.status==='completed' && it.productId ? `<button class="iconbtn" data-relink="${it.id}" title="Wrong product? Change it (stock is corrected too)">⇄</button>` : ''}</span>
+        </div>`; }).join('')}
+      <div class="subtle os-none" style="display:none; padding:18px 4px;">No products with this status.</div>
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
       <a href="#/orders" class="btn btn-ghost">Back to Orders</a>
       <a href="#/order/${orderId}/boxes" class="btn btn-ghost">📦 Supplier deliveries</a>
     </div>`;
   document.querySelectorAll('[data-relink]').forEach(b=>b.onclick=()=> changeItemProduct(b.dataset.relink, ()=>orderSummary(orderId)));
+  document.querySelectorAll('#osFilters .os-k').forEach(k=>k.onclick=()=>{
+    const f=k.dataset.f; const already=k.classList.contains('on')&&f!=='all'; const use=already?'all':f;
+    document.querySelectorAll('#osFilters .os-k').forEach(x=>x.classList.toggle('on', x.dataset.f===use));
+    let n=0; document.querySelectorAll('.os-row[data-st]').forEach(r=>{ const show=use==='all'||r.dataset.st===use; r.style.display=show?'':'none'; n+=show; });
+    document.querySelector('.os-none').style.display=n?'none':'block';
+  });
   if($('#toggleDispatch')) $('#toggleDispatch').onclick = async ()=>{
     const fresh = await getOne('orders', orderId);
     if(fresh.awaitingDispatch){
