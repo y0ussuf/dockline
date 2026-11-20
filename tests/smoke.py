@@ -705,8 +705,42 @@ async def test_twins(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 13. live refresh: data pulled from the cloud shows without a reload
+async def test_live(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  live/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    await page.evaluate("async()=>{ location.hash='#/products'; await render(); }")
+    await page.wait_for_timeout(400)
+    # another device's change lands in the local database (what pullChanges does) while the person looks at the list
+    await page.evaluate("async()=>{ await put('products',{id:'live1', name:'Live refresh probe', unit:'PCS', supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, costPrice:'', sellPrice:'1'}); }")
+    check('Live refresh probe' not in await page.locator('#main').inner_text(), 'before the refresh the list is still the old one')
+    await page.evaluate("async()=>{ SYNC_TOUCHED = new Set(['products']); await refreshScreenAfterSync(); }")
+    check('Live refresh probe' in await page.locator('#main').inner_text(), 'after a pull the open list shows the new product without a reload')
+    # nothing the person is doing may be interrupted
+    g = await page.evaluate("""()=>{
+      const out = {}; _lastTouch = 0;
+      out.plain = liveRefreshAllowed();
+      document.querySelector('#modal-root').innerHTML = '<div>open</div>'; out.modal = liveRefreshAllowed(); document.querySelector('#modal-root').innerHTML = '';
+      const i = document.createElement('input'); document.body.appendChild(i); i.focus(); out.typing = liveRefreshAllowed(); i.remove();
+      _lastTouch = Date.now(); out.justTouched = liveRefreshAllowed(); _lastTouch = 0;
+      location.hash = '#/order/abc/pick/all'; out.picking = liveRefreshAllowed();
+      location.hash = '#/prices'; out.prices = liveRefreshAllowed();
+      return out; }""")
+    check(g['plain'] is True, 'allowed on an idle list screen', g)
+    check(g['modal'] is False and g['typing'] is False and g['justTouched'] is False, 'not while a pop-up is open, a field is focused or the screen was just touched', g)
+    check(g['picking'] is False and g['prices'] is False, 'never on screens that hold work in progress (picking, price import)', g)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -732,6 +766,7 @@ async def main():
         if args.only in (None, 'polish'): await run('settings / products / insights layout:', test_polish(pw, url))
         if args.only in (None, 'twins'): await run('same product on several order lines:', test_twins(pw, url))
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
+        if args.only in (None, 'live'): await run('live refresh after sync:', test_live(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()

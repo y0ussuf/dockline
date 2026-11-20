@@ -177,7 +177,9 @@ async function pushHistory(cfg){
   }
   return pushed;
 }
+let SYNC_TOUCHED = new Set();   // stores that received someone else's changes in the latest pull
 async function pullChanges(cfg){
+  SYNC_TOUCHED = new Set();
   let cursorRec = await getOne('settings','syncCursor');
   let cursor = (cursorRec && cursorRec.value) || '1970-01-01T00:00:00Z';
   let pulled = 0, unsyncedHist = null;
@@ -197,12 +199,12 @@ async function pullChanges(cfg){
           if(row.deleted) histDel[row.store].push(row.id);
           else histPut[row.store].push(Object.assign({}, row.data, {id:row.id, synced:true}));
         }
-        pulled++; continue;
+        SYNC_TOUCHED.add(row.store); pulled++; continue;
       }
       if(row.store==='productPrices'){      // kept aside; applied to the product once the switch-over flag is on
         await rawPut('settings', {id:'pp:'+row.id, data:row.data, deleted:!!row.deleted, at:row.updated_at});
         if(PRICES_SPLIT) await applyStashedPrices(row.id);
-        pulled++; continue;
+        SYNC_TOUCHED.add(row.store); pulled++; continue;
       }
       const key = row.store+':'+row.id;
       const pendingLocal = await getOne('syncQueue', key);
@@ -222,7 +224,7 @@ async function pullChanges(cfg){
         }
       }
       await rawPut('syncMeta', {key, store:row.store, id:row.id, updatedAt:row.updated_at});
-      pulled++;
+      SYNC_TOUCHED.add(row.store); pulled++;
     }
     for(const s of HISTORY_STORES){ await bulkPut(s, histPut[s]); await bulkDelete(s, histDel[s]); }
     cursor = rows[rows.length-1].updated_at;
@@ -245,11 +247,12 @@ async function syncNow(){
     if(fresh) AUTH = fresh;
     await pushChanges(cfg);
     await pushHistory(cfg);
-    await pullChanges(cfg);
+    const got = await pullChanges(cfg);
     await loadFeatureFlags();
     if(typeof refreshPerms==='function') await refreshPerms();
     await rawPut('settings', {id:'syncStatus', lastSyncedAt:new Date().toISOString(), ok:true, error:null});
     renderSyncIndicator('ok');
+    if(got>0) refreshScreenAfterSync();   // someone else changed data: show it now, without a manual reload
   }catch(e){
     if(e && e.code==='unauthorized'){
       // the session's been revoked or genuinely expired (refresh didn't save it) — rather than
@@ -265,11 +268,49 @@ async function syncNow(){
     syncInFlight = false;
   }
 }
+/* ---- live refresh: when the pull brings in changes made on another device, the screen the person is looking at is
+   drawn again from the new data. Only list / overview screens are redrawn (they hold no unsaved work), and never while a
+   pop-up is open, a field is focused, or the person has just touched the screen — so nothing they are doing is interrupted.
+   Screens that hold work in progress (picking, order import, price import, editable tables, invoices…) are left alone:
+   they show the new data the next time they are opened. */
+const LIVE_REFRESH_ROUTES = ['home','products','warehouses','warehouse','stock','suppliers','orders','history','deliveries','invoices','money','reliability','boxtypes','activity'];
+let _lastTouch = 0;
+['pointerdown','keydown','touchstart','wheel'].forEach(ev=> window.addEventListener(ev, ()=>{ _lastTouch = Date.now(); }, {passive:true, capture:true}));
+function liveRefreshAllowed(){
+  if(document.visibilityState!=='visible') return false;
+  const parts = (location.hash||'#/').replace('#/','').split('/').filter(Boolean);
+  if(parts.length>1 || !LIVE_REFRESH_ROUTES.includes(parts[0]||'home')) return false;
+  const mr = document.getElementById('modal-root'); if(mr && mr.children.length) return false;
+  if(document.getElementById('firstSync')) return false;
+  const a = document.activeElement;
+  if(a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return false;
+  if(Date.now()-_lastTouch < 1500) return false;
+  return true;
+}
+let _liveRefreshWaiting = false;
+async function refreshScreenAfterSync(){
+  if(typeof render!=='function' || _liveRefreshWaiting) return;
+  _liveRefreshWaiting = true;
+  try{
+    // if the person is in the middle of something, wait a moment and look again (up to ~20 s), then give up quietly
+    for(let i=0; i<10 && !liveRefreshAllowed(); i++) await new Promise(r=>setTimeout(r, 2000));
+    if(!liveRefreshAllowed()) return;
+    const y = window.scrollY;
+    await render();
+    window.scrollTo(0, y);   // render() jumps to the top; put the person back where they were
+  }catch(_){} finally{ _liveRefreshWaiting = false; }
+}
+let _lastSyncTry = 0;
+function syncSoon(){ if(Date.now()-_lastSyncTry > 3000){ _lastSyncTry = Date.now(); syncNow(); } }
 function startSyncLoop(){
   if(DEMO_MODE) return; // nothing to loop — see syncNow()
   if(syncIntervalHandle) return;
-  syncIntervalHandle = setInterval(syncNow, 20000);
+  syncIntervalHandle = setInterval(()=>{ if(document.visibilityState==='visible') syncNow(); }, 10000);
   window.addEventListener('online', syncNow);
+  // coming back to the app (switching tabs, unlocking the phone) pulls the latest straight away instead of waiting for the next tick
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') syncSoon(); });
+  window.addEventListener('focus', syncSoon);
+  window.addEventListener('pageshow', syncSoon);
   syncNow();
 }
 // updates the small status line on the Home screen in place, if it's currently on screen —
