@@ -7,6 +7,20 @@ const qIc = k=>`<svg class="qi" viewBox="0 0 24 24">${QI[k]}</svg>`;
    them straight from the supplier. They count as handled for the order, but are NOT
    deducted from stock (applyStockDeductions only counts completed/modified/substituted),
    because nothing physically left our shelves. */
+/* The same product asked for twice in one order (e.g. ketchup on Sr. 26 and again on Sr. 48): the other pending lines of
+   that product, so they can be picked together in one go. */
+function pickTwins(items, it, order){
+  if(!it.productId) return [];
+  const inQueue = new Set(order.queue||[]);
+  return items.filter(x=>x.id!==it.id && x.productId===it.productId && x.status==='pending' && inQueue.has(x.id)).sort(importOrderCompare);
+}
+/* total of several lines in one unit, or null when their units differ */
+function twinsTotal(lines, product){
+  const vals = lines.map(x=>resolveAddedValues(x, product));
+  const unit = String(vals[0].actualUnit||'').trim().toUpperCase();
+  if(vals.some(v=>String(v.actualUnit||'').trim().toUpperCase()!==unit)) return null;
+  return {qty: round2(vals.reduce((a,v)=>a+(+v.actualQty||0),0)), unit: vals[0].actualUnit};
+}
 function markFromSupplier(it, product){
   const vals = resolveAddedValues(it, product);
   it.status = 'from_supplier';
@@ -426,6 +440,9 @@ async function pickingItemScreen(orderId, warehouseId){
   const storeLabel = warehouseId ? (it.warehouseName || 'Unassigned') : 'All stores';
   const prevItem = findPreviousItem(scopeItems, it, order);
   const batchInfo = product ? await pickBatchCardHtml(it, product) : {html:'', sug:null};
+  const twins = pickTwins(items, it, order);
+  const twinTot = twins.length ? twinsTotal([it, ...twins], product) : null;
+  const twinHtml = twins.length ? `<div class="pick-twin"><span class="pick-twin-ic" data-ico="link"></span><div><b>Requested again in this order</b>${twins.map(x=>{ const v=resolveAddedValues(x, product); return `<div class="pick-twin-l">Sr. ${esc(x.sr||'—')} · ${esc(x.excelDesc)} · <b>${v.actualQty} ${esc(v.actualUnit||'')}</b></div>`; }).join('')}<div class="pick-twin-t">${twinTot ? `Pick <b>${twinTot.qty} ${esc(twinTot.unit||'')}</b> in total — one trip, split between the lines automatically` : 'Pick them together — one trip'}</div></div></div>` : '';
 
   $('#main').innerHTML = `
     <div class="pick-wrap">
@@ -452,6 +469,7 @@ async function pickingItemScreen(orderId, warehouseId){
         ` : `
           <div class="pick-qty">${it.requestedQty} × ${esc(it.requestedUnit||'')}</div>
         `}
+        ${twinHtml}
         ${batchInfo.html}
         <div class="pick-meta">
           <div><b>Warehouse</b>${esc(it.warehouseName)||'—'}</div>
@@ -466,7 +484,7 @@ async function pickingItemScreen(orderId, warehouseId){
         <button class="btn btn-ghost btn-sm" id="pk_editline" style="margin-bottom:6px;">✎ Customer changed this line</button>
         <button class="btn btn-ghost btn-sm" id="pk_dates" style="margin-bottom:6px;">📅 Set production / expiry date</button>
         <div class="pick-actions">
-          <button class="btn btn-success btn-lg" id="pk_added">✓ Product Added</button>
+          <button class="btn btn-success btn-lg" id="pk_added">✓ Product Added${twins.length ? ` ×${twins.length+1}` : ''}</button>
           <button class="btn btn-ghost btn-lg" id="pk_modify">✎ Modify</button>
           <button class="btn btn-ghost btn-lg" id="pk_supplier">🚚 From Supplier</button>
           <button class="btn btn-ghost btn-lg" id="pk_later">⏭ Pick Later</button>
@@ -492,22 +510,25 @@ async function pickingItemScreen(orderId, warehouseId){
     });
   };
   $('#pk_added').onclick = async ()=>{
-    const vals = resolveAddedValues(it, product);
-    it.status='completed'; it.actualQty=vals.actualQty; it.actualUnit=vals.actualUnit; lookFeedback('ok');
-    await put('orderItems', it);
+    for(const x of [it, ...twins]){
+      const vals = resolveAddedValues(x, product);
+      x.status='completed'; x.actualQty=vals.actualQty; x.actualUnit=vals.actualUnit;
+      await put('orderItems', x);
+    }
+    lookFeedback('ok');
     await advance();
   };
   $('#pk_later').onclick = async ()=>{
     order.postponed = order.postponed || [];
-    order.postponed.push(it.id);
-    order.queue = (order.queue||[]).filter(id=>id!==it.id);
+    const gone = [it, ...twins].map(x=>x.id);
+    gone.forEach(id=>{ if(!order.postponed.includes(id)) order.postponed.push(id); });
+    order.queue = (order.queue||[]).filter(id=>!gone.includes(id));
     await put('orders', order);
     await advance();
   };
-  $('#pk_modify').onclick = ()=> openModifyModal(it, product, async ()=>{ await advance(); });
+  $('#pk_modify').onclick = ()=> openModifyModal(it, product, async ()=>{ await advance(); }, twins);
   $('#pk_supplier').onclick = async ()=>{
-    markFromSupplier(it, product);
-    await put('orderItems', it);
+    for(const x of [it, ...twins]){ markFromSupplier(x, product); await put('orderItems', x); }
     await advance();
   };
 
@@ -625,13 +646,16 @@ async function pickingBatchScreen(orderId, warehouseId){
   if($('#pk_prev')) $('#pk_prev').onclick = ()=> openItemActionModal(orderId, prevItem.id, refresh);
 }
 
-function openModifyModal(it, product, onDone){
+function openModifyModal(it, product, onDone, twins){
+  twins = twins || [];
   const conv = product ? computeUnitConversion(it.requestedUnit, product.unit, it.requestedQty) : null;
-  const prefillQty = conv ? round2(conv.convertedQty) : it.requestedQty;
-  const prefillUnit = conv ? (product.unit||'') : it.requestedUnit;
+  const twinTot = twins.length ? twinsTotal([it, ...twins], product) : null;
+  if(twins.length && !twinTot) twins = [];   // different units: nothing sensible to add up, modify just this line
+  const prefillQty = twinTot ? twinTot.qty : (conv ? round2(conv.convertedQty) : it.requestedQty);
+  const prefillUnit = twinTot ? (twinTot.unit||'') : (conv ? (product.unit||'') : it.requestedUnit);
   showModal(`<div class="mod-pop"><h3>Modify</h3>
     <p class="mod-sub">${esc(it.excelDesc)}${matchNote(it) ? ' · '+esc(matchNote(it)).replace(/^Matched to:\s*/i,'matched to ') : ''}</p>
-    ${conv ? `<div class="mod-info">${qIc('info')}<div>Ordered as <b>${it.requestedQty} × ${esc(it.requestedUnit)}</b>, converted to <b>${prefillQty} × ${esc(prefillUnit)}</b>. Adjust below if needed.</div></div>` : ''}
+    ${twins.length ? `<div class="mod-info">${qIc('info')}<div>This product is on <b>${twins.length+1} lines</b> (${[it,...twins].map(x=>resolveAddedValues(x, product).actualQty).join(' + ')} = <b>${twinTot.qty} ${esc(twinTot.unit||'')}</b>). Enter what you picked <b>in total</b> — it is split between the lines automatically, filling them in order.</div></div>` : conv ? `<div class="mod-info">${qIc('info')}<div>Ordered as <b>${it.requestedQty} × ${esc(it.requestedUnit)}</b>, converted to <b>${prefillQty} × ${esc(prefillUnit)}</b>. Adjust below if needed.</div></div>` : ''}
     <div id="m_normalqty" style="display:${it.status==='substituted'?'none':''};">
       <div class="qa-lbl">What you picked</div>
       <div class="mod-grid">
@@ -716,6 +740,28 @@ function openModifyModal(it, product, onDone){
       if(subs.some(r=> typeof r.qty!=='number' || !(r.qty>0))){ showAlert('Enter a quantity for every replacement product.'); return; }
     }
     const qty = parseFloat($('#m_qty').value);
+    if(!subbing && twins.length){
+      // one total for several lines: fill the lines in order, any extra goes on the last one
+      const unit = $('#m_unit').value.trim();
+      let rem = isNaN(qty) ? prefillQty : qty;
+      const all = [it, ...twins];
+      for(let i=0;i<all.length;i++){
+        const x = all[i], own = +resolveAddedValues(x, product).actualQty || 0;
+        const give = i===all.length-1 ? rem : Math.min(own, rem);
+        rem = round2(rem - give);
+        x.actualQty = round2(give); x.actualUnit = unit;
+        x.notes = $('#m_notes').value.trim();
+        x.actualProductionDate = $('#m_prod').value;
+        x.actualExpiryDate = $('#m_edate').value;
+        x.actualExpiryMode = expiryModeOf('m');
+        x.actualExpiryShelfAmount = $('#m_shelf_amount').value ? parseFloat($('#m_shelf_amount').value) : '';
+        x.actualExpiryShelfUnit = $('#m_shelf_unit').value;
+        x.replacements = []; x.replacementProductId = ''; x.replacementName = '';
+        x.status = x.actualQty===own ? 'completed' : (x.actualQty===0 ? 'not_available' : 'modified');
+        await put('orderItems', x);
+      }
+      closeModal(); onDone(); return;
+    }
     it.actualQty = isNaN(qty) ? prefillQty : qty;
     it.actualUnit = $('#m_unit').value.trim();
     if(subbing){ it.actualQty = subs[0].qty; it.actualUnit = (subs[0].unit||'').trim(); } // kept for older screens/reports
