@@ -829,8 +829,71 @@ async def test_buy(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 15. Graphite is the default theme; the site name can be changed
+async def test_brand(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  brand/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    d = await page.evaluate("""()=>({look: document.documentElement.getAttribute('data-look'), id: lookResolvedThemeId(), def: LOOK_DEFAULTS.theme,
+      signal: getComputedStyle(document.documentElement).getPropertyValue('--signal').trim().toLowerCase()})""")
+    check(d['look']=='graphite' and d['id']=='graphite' and d['def']=='graphite', 'a fresh install opens in Graphite', d)
+    check(d['signal']=='#2f6bff', 'with the Graphite accent colour', d['signal'])
+    await page.evaluate("async()=>{ await saveLook({theme:'harbor'}); }")
+    check(await page.evaluate("lookResolvedThemeId()")=='harbor', 'a theme someone chose is still respected')
+    await page.evaluate("async()=>{ await saveLook({theme:'graphite'}); }")
+    b = await page.evaluate("""()=>{ const s = document.querySelector('#sidebar .brand'); return {text:s.textContent, accent:s.querySelector('span').textContent, title:document.title,
+      color:getComputedStyle(s.querySelector('span')).color, plain: brandPlain()}; }""")
+    check(b['text']=='Dockline' and b['accent']=='line' and b['title'].startswith('Dockline') and b['plain']=='Dockline', 'the name starts as Dockline', b)
+    check(b['color']=='rgb(47, 107, 255)', '"line" takes the theme colour', b['color'])
+    # change it in Settings
+    await page.evaluate("async()=>{ location.hash='#/settings'; await render(); }")
+    await page.wait_for_timeout(400)
+    check(await page.locator('#brandCard').count()==1, 'Settings has a Site name card')
+    await page.fill('#br_name', 'Gold ')
+    await page.fill('#br_accent', 'Star')
+    prev = await page.evaluate("document.querySelector('#br_preview').textContent")
+    check(prev=='Gold Star', 'the preview updates while typing', prev)
+    await page.click('#br_save')
+    await page.wait_for_timeout(400)
+    await page.evaluate("document.querySelector('#modal-root').innerHTML=''")
+    r = await page.evaluate("""()=>{ const all = [...document.querySelectorAll('.brand')];
+      return {texts: all.map(e=>e.textContent), spans: all.map(e=>e.querySelector('span').textContent), title: document.title, stored: JSON.parse(localStorage.getItem('dk_brand')||'null'),
+        banner: document.querySelector('#updateBanner .brandPlain').textContent, color: getComputedStyle(all[0].querySelector('span')).color}; }""")
+    check(r['texts']==['Gold Star']*len(r['texts']) and len(r['texts'])>=3, 'login screen, mobile bar and menu all show the new name', r['texts'])
+    check(set(r['spans'])=={'Star'} and r['title'].startswith('Gold Star') and r['banner']=='Gold Star', 'only "Star" is the coloured part; tab title and update banner follow', r)
+    check(r['stored']=={'name':'Gold ','accent':'Star'}, 'the name is remembered for the next start (login screen, before sync)', r['stored'])
+    await page.evaluate("async()=>{ await saveLook({theme:'rose'}); }")
+    c2 = await page.evaluate("getComputedStyle(document.querySelector('#sidebar .brand span')).color")
+    check(c2=='rgb(225, 29, 116)', 'the coloured part follows a theme change (Rose)', c2)
+    saved = await page.evaluate("getOne('sharedSettings','brand')")
+    check(saved and saved['name']=='Gold ' and saved['accent']=='Star', 'saved as one shared record for the whole crew', saved)
+    # a rename made on another device arrives with the next sync
+    await page.evaluate("async()=>{ await put('sharedSettings', {id:'brand', name:'Blue', accent:'Fin'}); await loadBrand(); }")
+    check(await page.evaluate("document.querySelector('#sidebar .brand').textContent")=='BlueFin', 'a rename from another device shows after the sync', '')
+    # limits and fallbacks
+    e = await page.evaluate("""()=>({empty: brandClean({name:'  ', accent:''}), long: brandClean({name:'x'.repeat(60), accent:'y'}).name.length, html: (()=>{ applyBrand({name:'<b>A</b>', accent:'&'}); return document.querySelector('#sidebar .brand').innerHTML; })()})""")
+    check(e['empty']=={'name':'Dock','accent':'line'} and e['long']==24, 'an empty name falls back to Dockline; each part is capped at 24 characters', e)
+    check('<b>' not in e['html'] and '&lt;b&gt;' in e['html'], 'a name with HTML in it is shown as plain text', e['html'])
+    can_ = await page.evaluate("()=>{ const c = window.can; window.can = ()=>false; const h = brandCardHtml(); window.can = c; return h; }")
+    check(can_=='', 'people who may not change settings do not see the card', can_)
+    # back to the original
+    await page.evaluate("async()=>{ await saveLook({theme:'graphite'}); location.hash='#/settings'; await render(); }")
+    await page.wait_for_timeout(300)
+    await page.click('#br_reset')
+    await page.wait_for_timeout(300)
+    z = await page.evaluate("()=>({text: document.querySelector('#sidebar .brand').textContent, title: document.title, stored: localStorage.getItem('dk_brand')})")
+    check(z['text']=='Dockline' and z['title'].startswith('Dockline') and z['stored'] is None, '"Back to Dockline" restores the name and forgets the saved copy', z)
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live', 'buy'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live', 'buy', 'brand'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -858,6 +921,7 @@ async def main():
         if args.only in (None, 'units'): await run('units:', test_units(pw, url))
         if args.only in (None, 'live'): await run('live refresh after sync:', test_live(pw, url))
         if args.only in (None, 'buy'): await run('buy check:', test_buy(pw, url))
+        if args.only in (None, 'brand'): await run('theme default + site name:', test_brand(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()

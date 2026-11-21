@@ -405,7 +405,7 @@ route('table', async ()=>{
   $('#pt_export').onclick = async ()=>{
     if(!(await ensureLibOrAlert('exceljs'))) return;
     const list = rows(), cs = cols();
-    const wb = new ExcelJS.Workbook(); wb.creator = 'Dockline'; const ws = wb.addWorksheet('Products');
+    const wb = new ExcelJS.Workbook(); wb.creator = brandPlain(); const ws = wb.addWorksheet('Products');
     ws.columns = [{header:'Product', width:48}].concat(cs.map(c=>({header:c.label, width:c.kind==='dec'||c.kind==='markup' ? 14 : 16})));
     ws.getRow(1).font = {bold:true}; ws.views = [{state:'frozen', ySplit:1, xSplit:1}];
     for(const p of list){

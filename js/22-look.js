@@ -26,7 +26,7 @@ const LOOK_TOGGLES = [
   ['sound',     'Sounds',                 'A soft tick when you pick an item, a different tone for warnings.'],
   ['haptics',   'Vibration',              'A short buzz on a successful pick (phones only).']
 ];
-const LOOK_DEFAULTS = {theme:'harbor', mode:'auto', rotate:false, motion:true, celebrate:true, greeting:true, gradient:true, whColors:true, emptyArt:true, themeBtn:true, sound:false, haptics:false};
+const LOOK_DEFAULTS = {theme:'graphite', mode:'auto', rotate:false, motion:true, celebrate:true, greeting:true, gradient:true, whColors:true, emptyArt:true, themeBtn:true, sound:false, haptics:false};
 
 let _look = Object.assign({}, LOOK_DEFAULTS);
 let _lookCustomAccent = null;   // an accent picked by hand wins over the theme's own accent
@@ -36,8 +36,8 @@ const lookMayTheme = ()=> typeof can!=='function' || can('themes');
 const lookCls = k=> k==='themeBtn' ? 'lk-showthemebtn' : 'lk-'+k.toLowerCase();
 function lookResolvedThemeId(){
   if(_look.rotate && lookMayTheme()){ const d = new Date(), doy = Math.floor((d - new Date(d.getFullYear(),0,0))/864e5); return LOOK_THEMES[doy % LOOK_THEMES.length].id; }
-  if(!lookMayTheme()) return 'harbor';
-  return LOOK_THEMES.some(t=>t.id===_look.theme) ? _look.theme : 'harbor';
+  if(!lookMayTheme()) return 'graphite';
+  return LOOK_THEMES.some(t=>t.id===_look.theme) ? _look.theme : 'graphite';
 }
 function lookResolvedMode(){
   if(_look.mode==='light' || _look.mode==='dark') return _look.mode;

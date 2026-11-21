@@ -214,6 +214,7 @@ function applyAccent(hex){
   document.documentElement.style.setProperty('--signal-text', pickTextColor(hex));
 }
 async function loadAndApplyTheme(){
+  if(typeof loadBrand==='function') await loadBrand();
   if(typeof loadLook==='function'){ await loadLook(); installThemeButtons(); return; }
   const rec = await getOne('settings', 'theme');
   applyAccent(rec && rec.accent ? rec.accent : DEFAULT_ACCENT);
