@@ -892,8 +892,48 @@ async def test_brand(pw, url):
     return failed
 
 
+# ---------------------------------------------------------------- 10. stock history
+async def test_stockhistory(pw, url):
+    errors = []
+    browser, page, net = await fresh_page(pw, url, errors)
+    failed = 0
+    def check(ok, label, detail=''):
+        nonlocal failed
+        print(f"  {'PASS' if ok else 'FAIL'}  stockhistory/{label}" + ('' if ok else f'   ({detail})'))
+        failed += (not ok)
+    await page.evaluate("""async () => {
+      await put('products', {id:'sy1', name:'Yeast dry 450 GM', unit:'PKT', supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, stockQty:40, trackBatches:true, costPrice:'', sellPrice:''});
+      await put('batches', {id:'sb1', productId:'sy1', productName:'Yeast dry 450 GM', batchNo:'YD-2291', qtyReceived:30, qtyRemaining:20, receivedAt:'2026-11-01', kind:'delivery', expiryDate:'2027-06-01'});
+      await put('batches', {id:'sb2', productId:'sy1', productName:'Yeast dry 450 GM', batchNo:'YD-2305', qtyReceived:50, qtyRemaining:20, receivedAt:'2026-11-12', kind:'delivery', expiryDate:'2027-08-01'});
+      await put('receivingInvoices', {id:'sri1', number:'1182', supplierName:'Gulf Foods', receivedAt:'2026-11-12'});
+      await put('productReceipts', {id:'srr1', productId:'sy1', invoiceId:'sri1', qty:50, unit:'PKT', stockDelta:50, batchId:'sb2', batchNo:'YD-2305', receivedAt:'2026-11-12'});
+      const O = (id, vessel, no, at, applied) => put('orders', {id, vessel, orderNumber:no, orderDate:at, completedAt:at+'T10:00:00Z', status:'completed', stockApplied:applied});
+      await O('so1','KOTA SATRIA','ORD-0412','2026-11-18',true); await O('so2','MAGMA','ORD-0409','2026-11-17',true); await O('so3','SAI','ORD-0401','2026-11-15',true); await O('so4','OTHER','ORD-0500','2026-11-19',false);
+      const I = (id, orderId, qty, allocs) => put('orderItems', {id, orderId, productId:'sy1', status:'completed', actualQty:qty, actualUnit:'PKT', requestedQty:qty, requestedUnit:'PKT', batchAllocs:allocs});
+      await I('si1','so1',2,[{batchId:'sb1', batchNo:'YD-2291', qty:2}]); await I('si2','so2',3,[{batchId:'sb1', batchNo:'YD-2291', qty:3}]);
+      await I('si3','so3',10,[{batchId:'sb1', batchNo:'YD-2291', qty:6},{batchId:'sb2', batchNo:'YD-2305', qty:4}]); await I('si4','so4',7,[]);
+      location.hash = '#/stockhistory/sy1';
+    }""")
+    await page.wait_for_selector('.bt-row', timeout=8000)
+    txt = await page.locator('#main').inner_text()
+    check('KOTA SATRIA' in txt or 'Kota Satria' in txt, 'a finished order shows its vessel', txt[:200])
+    check('YD-2291' in txt and 'YD-2305' in txt and '(6)' in txt and '(4)' in txt, 'batch numbers are shown, split batches with their quantities')
+    check('Gulf Foods' in txt and '+ 50' in txt, 'a delivery shows supplier and quantity')
+    check('ORD-0500' not in txt and 'OTHER' not in txt, 'an order that is not finished is not listed')
+    left = await page.evaluate("[...document.querySelectorAll('.bt-row')].map(r=>(r.innerText.match(/Left (\\S+)/)||[])[1])")
+    check(left[:4] == ['40','42','45','55'], 'the "left after" column is worked back from the stock on hand (40, 42, 45, 55)', left)
+    await page.locator('[data-sh="vessel"]').click(); await page.wait_for_function("document.querySelector('#main').innerText.includes('Went to 3 vessel')", timeout=5000)
+    vt = await page.locator('#main').inner_text()
+    check('SAI' in vt and '10' in vt and 'MAGMA' in vt, 'by vessel: totals per vessel')
+    await page.locator('[data-sh="batch"]').click(); await page.wait_for_function("document.querySelector('#main').innerText.includes('YD-2305')", timeout=5000)
+    check('20 PKT left' in await page.locator('#main').inner_text(), 'by batch: remaining quantity per batch')
+    check(not errors, 'no page errors', errors[:1])
+    await browser.close()
+    return failed
+
+
 async def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live', 'buy', 'brand'])
+    ap = argparse.ArgumentParser(); ap.add_argument('--only', choices=['pages', 'tidy', 'libs', 'packs', 'markup', 'invprice', 'sizes', 'settings', 'invedit', 'units', 'report', 'polish', 'twins', 'live', 'buy', 'brand', 'stockhistory'])
     args = ap.parse_args()
     srv, url = serve()
     failed = 0
@@ -922,6 +962,7 @@ async def main():
         if args.only in (None, 'live'): await run('live refresh after sync:', test_live(pw, url))
         if args.only in (None, 'buy'): await run('buy check:', test_buy(pw, url))
         if args.only in (None, 'brand'): await run('theme default + site name:', test_brand(pw, url))
+        if args.only in (None, 'stockhistory'): await run('stock history:', test_stockhistory(pw, url))
         if args.only in (None, 'packs'): await run('pack pricing:', test_packs(pw, url))
         if args.only in (None, 'settings'): await run('settings (app version, waiting to send):', test_settings(pw, url))
     srv.shutdown()

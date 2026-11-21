@@ -58,7 +58,7 @@ const LEGACY_STAFF_PERMS = ALL_PERMS.filter(p=>p!=='backup' && p!=='settings.edi
 const ROUTE_PERMS = {
   orders:['orders.view'], order:['orders.view'], history:['history.view'], splitter:['splitter'], qcheck:['qcheck'],
   products:['products.view'], productsetup:['products.edit'], table:['products.view'], warehouses:['products.view','warehouses.edit'], warehouse:['receiving','stock.view'],
-  stock:['stock.view'], deliveries:['receiving'], boxtypes:['receiving'], receiving:['receiving'], batches:['receiving','stock.view'], reliability:['receiving','suppliers.view'],
+  stock:['stock.view'], stockhistory:['stock.view','receiving'], deliveries:['receiving'], boxtypes:['receiving'], receiving:['receiving'], batches:['receiving','stock.view'], reliability:['receiving','suppliers.view'],
   suppliers:['suppliers.view'], prices:['prices.view'], invoices:['invoices.view'], invoice:['invoices.view'], money:['finance'],
   insights:['reports.view'], forecast:['reports.view'], lastyear:['reports.view'], duplicates:['merge'], merge:['merge'], mergemany:['merge'],
   activity:['activity.view'], mapcheck:['products.edit'], team:['__admin']

@@ -194,6 +194,7 @@ route('stock', async (parts)=>{
                 <div style="font-weight:700; font-family:var(--font-d);">${p.stockQty}</div>
                 <div class="subtle" style="font-size:.72rem;">limit ${stockLimitOf(p)}</div>
               </div>` : ''}
+            <a class="btn btn-ghost btn-sm" href="#/stockhistory/${p.id}" style="text-decoration:none;">History</a>
             <button class="btn btn-ghost btn-sm" data-edit="${p.id}">${isStockTracked(p)?'Update':'Set stock'}</button>
           </div>`).join('') : `<div class="empty"><div class="ic">▣</div>${
             window.__stockSearch ? 'No product matches your search.' :
