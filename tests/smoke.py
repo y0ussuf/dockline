@@ -420,8 +420,8 @@ async def test_invedit(pw, url):
       await put('products', P('ivp1','Cottage cheese 950 GM','PKT','212.5'));
       await put('products', P('ivp2','Food color blue','PKT','40'));
       await put('products', P('ivp3','Food color green','PKT','45'));
-      await put('orderItems', {id:'ivi1', orderId:'ivo1', status:'picked', requestedQty:6, requestedUnit:'PKT', actualQty:5, actualUnit:'PKT', excelDesc:'COTTAGE CHEESE 6 X 950GM', productId:'ivp1', productName:'Cottage cheese 950 GM'});
-      await put('orderItems', {id:'ivi2', orderId:'ivo1', status:'picked', requestedQty:40, requestedUnit:'PKT', actualQty:40, actualUnit:'PKT', excelDesc:'FOOD COLOR GREEN', productId:'ivp2', productName:'Food color blue'});
+      await put('orderItems', {id:'ivi1', orderId:'ivo1', status:'completed', requestedQty:6, requestedUnit:'PKT', actualQty:5, actualUnit:'PKT', excelDesc:'COTTAGE CHEESE 6 X 950GM', productId:'ivp1', productName:'Cottage cheese 950 GM'});
+      await put('orderItems', {id:'ivi2', orderId:'ivo1', status:'completed', requestedQty:40, requestedUnit:'PKT', actualQty:40, actualUnit:'PKT', excelDesc:'FOOD COLOR GREEN', productId:'ivp2', productName:'Food color blue'});
       const L = (id, itemId, productId, desc, qty, price, sysName) => ({id, itemId, productId, desc, qty, unit:'PKT', cost:'', sell:price, price, pack:null, priceUnit:'PKT', ref:null, nameSize:null, lump:'', discType:'', disc:'', include:true, substituted:false, ordered:desc, sysName, packBasis:'', doubt:''});
       await put('invoices', {id:'ivinv', orderId:'ivo1', type:'Provision', status:'draft', number:'', priceBasis:'sell', invoiceDate:'2026-11-18', taxOn:false, taxRate:'', taxLabel:'Tax', notes:'', lumps:[], createdAt:new Date().toISOString(),
         lines:[L('l1','ivi1','ivp1','COTTAGE CHEESE 6 X 950GM','5','212.5','Cottage cheese 950 GM'), L('l2','ivi2','ivp2','FOOD COLOR GREEN','40','40','Food color blue')]});
@@ -431,6 +431,7 @@ async def test_invedit(pw, url):
     txt = await page.locator('#iv_lines').inner_text()
     check('Ordered 6, picked 5' in txt and '1 short' in txt, 'short pick is flagged (ordered 6, picked 5)', txt[:200])
     check('Ordered 40' not in txt, 'a full pick is not flagged')
+    check(await page.evaluate("async()=>{ const i=await getOne('orderItems','ivi1'); return i.status; }") == 'completed', 'test data uses the real item status (completed)')
     check(await page.locator('.iv-kpis .wm-kpi').count() == 4, 'the draft shows the four summary tiles')
     check('EGP' in await page.locator('.pr-bar .bar-tot').inner_text(), 'the sticky bar shows the invoice total')
     kpi_total = (await page.locator('.iv-kpis .wm-kpi').nth(3).locator('b').inner_text()).strip()
@@ -498,7 +499,7 @@ async def test_units(pw, url):
     check(r['caseP']['g'] == '1800' and r['caseP']['bu'] == 'PKT', '3 CASE x 12 PKT x 50 = 1800', r['caseP'])
     await page.evaluate("""async () => {
       await put('products', {id:'up1', name:'Samosa', unit:'PKT', supplierId:'', warehouseId:'', sectionId:'', priority:1, active:true, costPrice:'', sellPrice:'62'});
-      await put('orderItems', {id:'ui1', orderId:'uo1', status:'picked', requestedQty:115, requestedUnit:'PC', actualQty:115, actualUnit:'PC', excelDesc:'SAMOSA', productId:'up1'});
+      await put('orderItems', {id:'ui1', orderId:'uo1', status:'completed', requestedQty:115, requestedUnit:'PC', actualQty:115, actualUnit:'PC', excelDesc:'SAMOSA', productId:'up1'});
       await put('invoices', {id:'uinv', orderId:'uo1', type:'Provision', status:'draft', number:'', priceBasis:'sell', invoiceDate:'2026-11-18', taxOn:false, taxRate:'', taxLabel:'Tax', notes:'', lumps:[], createdAt:new Date().toISOString(),
         lines:[{id:'u1', itemId:'ui1', productId:'up1', desc:'SAMOSA', qty:'115', unit:'PC', cost:'', sell:'62', price:'62', pack:null, priceUnit:'PKT', ref:null, nameSize:null, lump:'', discType:'', disc:'', include:true, substituted:false, ordered:'SAMOSA', sysName:'Samosa', packBasis:'', doubt:''}]});
       location.hash = '#/invoice/uinv';
@@ -575,8 +576,8 @@ async def test_report(pw, url):
       window.ExcelJS = {Workbook: function(){ this.addWorksheet = () => ws; this.xlsx = {writeBuffer: async () => new ArrayBuffer(1)}; }};
       let savedAs = ''; window.saveFile = async (name) => { savedAs = name; };
       await put('orders', {id:'ro1', vessel:'MV Test', imo:'PGH-ALL-31', orderNumber:'31', status:'completed', destination:'Port Said'});
-      await put('orderItems', {id:'ri1', orderId:'ro1', sr:'1', excelDesc:'OLIVE OIL', excelQty:5, excelUnit:'LTR', status:'picked', actualQty:5, actualUnit:'LTR', notes:'-12 PKT cheese\\r\\n-24 PKT ham\\r\\n-6 PKT butter\\r\\n'});
-      await put('orderItems', {id:'ri2', orderId:'ro1', sr:'2', excelDesc:'RICE', excelQty:1, excelUnit:'BAG', status:'picked', actualQty:1, actualUnit:'BAG', notes:''});
+      await put('orderItems', {id:'ri1', orderId:'ro1', sr:'1', excelDesc:'OLIVE OIL', excelQty:5, excelUnit:'LTR', status:'completed', actualQty:5, actualUnit:'LTR', notes:'-12 PKT cheese\\r\\n-24 PKT ham\\r\\n-6 PKT butter\\r\\n'});
+      await put('orderItems', {id:'ri2', orderId:'ro1', sr:'2', excelDesc:'RICE', excelQty:1, excelUnit:'BAG', status:'completed', actualQty:1, actualUnit:'BAG', notes:''});
       await exportOrderExcel('ro1');
       const data = rows.find(x => x.values && x.values[1] === 'OLIVE OIL'), plain = rows.find(x => x.values && x.values[1] === 'RICE');
       const labels = rows.map(x => x.values && x.values[0]);
