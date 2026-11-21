@@ -308,6 +308,7 @@ async function productBatchesScreen(productId){
     <div class="bt-card" style="margin-bottom:16px;">
       <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;"><span class="bt-big">${isStockTracked(p)?esc(p.stockQty):'—'}</span><span class="subtle">${unit} in stock</span></div>
       <div class="subtle">${batchTracked(p)?`${list.length} batch${list.length===1?'':'es'} · picked earliest expiry first`:'Batch tracking is off for this product.'}</div>
+      <a class="btn btn-ghost btn-sm" href="#/stockhistory/${productId}" style="text-decoration:none; margin-top:8px;">Stock history</a>
       ${all.some(b=>b.productId===productId && b.packLabel) ? '<button class="btn btn-ghost btn-sm" id="bt_sizes" style="margin-top:8px;">Pack sizes & prices</button>' : ''}
     </div>
     ${list.map((b,i)=>{ const pct = b.kind==='opening' ? 100 : Math.max(0, Math.min(100, b.qtyReceived>0 ? b.qtyRemaining/b.qtyReceived*100 : 0)); return `
