@@ -238,6 +238,7 @@ route('insights', async (parts)=>{
   if(parts[0]==='product') return productInsightScreen(parts[1]);
   if(parts[0]==='vessel') return vesselProfileScreen(parts[1]);
   if(parts[0]==='live') return insightsLiveScreen();
+  if(parts[0]==='buy') return buyCheckScreen();
   if(parts[0]==='order') return insightsOrderScreen(parts[1]);
   return insightsHome();
 });
@@ -530,7 +531,7 @@ async function insightsHome(){
   };
 
   $('#main').innerHTML = `
-    <div class="topbar"><h1>Insights</h1><div style="display:flex; gap:8px; flex-wrap:wrap;"><a href="#/forecast" class="btn btn-signal btn-sm"><span data-ico="calendar"></span> Demand forecast</a><a href="#/lastyear" class="btn btn-ghost btn-sm"><span data-ico="history"></span> Last year at this time</a><a href="#/insights/import" class="btn btn-ghost btn-sm"><span data-ico="upload"></span> Import orders</a></div></div>
+    <div class="topbar"><h1>Insights</h1><div style="display:flex; gap:8px; flex-wrap:wrap;"><a href="#/forecast" class="btn btn-signal btn-sm"><span data-ico="calendar"></span> Demand forecast</a><a href="#/insights/buy" class="btn btn-signal btn-sm"><span data-ico="package"></span> Buy check</a><a href="#/lastyear" class="btn btn-ghost btn-sm"><span data-ico="history"></span> Last year at this time</a><a href="#/insights/import" class="btn btn-ghost btn-sm"><span data-ico="upload"></span> Import orders</a></div></div>
     <div class="wm-kpis ins-kpis">
       <div class="wm-kpi"><span class="wm-ic" data-ico="clipboard-list"></span><div class="wm-txt"><b>${hOrders.length}</b><div class="lbl">Past orders</div></div></div>
       <div class="wm-kpi ok"><span class="wm-ic" data-ico="ship"></span><div class="wm-txt"><b>${vesselRows.length}</b><div class="lbl">Vessels</div></div></div>
