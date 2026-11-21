@@ -308,7 +308,7 @@ async function invoiceScreen(id){
   const itemsById = new Map((await getAll('orderItems')).map(x=>[x.id, x]));
   /* ordered more than was picked (same unit): shown on the first line of that order item, as a warning only */
   function shortOf(l, firstOf){
-    const it = l.itemId ? itemsById.get(l.itemId) : null; if(!it || it.status!=='picked' || firstOf.get(l.itemId)!==l) return null;
+    const it = l.itemId ? itemsById.get(l.itemId) : null; if(!it || (it.status!=='completed' && it.status!=='modified') || firstOf.get(l.itemId)!==l) return null;
     const req = Dec.parse(it.requestedQty), act = Dec.parse(it.actualQty) || Dec.ZERO;
     if(!req || Dec.cmp(req, act)<=0) return null;
     const ru = normalize(it.requestedUnit||''), au = normalize(it.actualUnit||'');
