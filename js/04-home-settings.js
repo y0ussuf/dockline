@@ -98,7 +98,7 @@ function appVersionCardHtml(){
   return `
     <div class="card" style="margin-top:24px;" id="versionCard">
       <div class="sec-h"><span class="sec-ic" data-ico="refresh-cw"></span><div class="section-title">App version</div></div>
-      <p style="margin:6px 0 0;">Dockline <b id="verNow">${esc(APP_VERSION)}</b></p>
+      <p style="margin:6px 0 0;"><span class="brandPlain">${esc(brandPlain())}</span> <b id="verNow">${esc(APP_VERSION)}</b></p>
       <p id="verStatus" class="subtle" style="margin:8px 0 0; min-height:1.3em;" aria-live="polite"></p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
         <button class="btn btn-ghost btn-sm" id="verCheck">Check for updates</button>
@@ -136,6 +136,7 @@ route('settings', async ()=>{
         ${can('backup') ? `<label class="btn btn-ghost btn-sm" style="cursor:pointer;">⬆ Restore from backup<input type="file" id="restoreFile" accept=".json" style="display:none;"></label>` : `<span class="subtle">Restoring a backup is admin-only — it overwrites everything on this device.</span>`}
       </div>
     </div>
+    ${brandCardHtml()}
     ${companyCardHtml(company)}
     <div class="card" style="margin-top:24px;" id="syncCard">
       <div class="sec-h"><span class="sec-ic" data-ico="users"></span><div class="section-title">Crew sync</div></div>
@@ -157,6 +158,7 @@ route('settings', async ()=>{
     ${lookCardHtml()}`;
   $('#doBackup').onclick = downloadBackup;
   bindAppVersionCard();
+  bindBrandCard();
   bindCompanyCard(company);
   if($('#restoreFile')) $('#restoreFile').onchange = e=>{
     const file = e.target.files[0];

@@ -446,7 +446,7 @@ async function deliveryDetailScreen(id){
 
       <div style="margin-top:28px; padding-top:16px; border-top:1px dashed var(--line); display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; font-size:.85rem; color:var(--ink-soft);">
         <div>
-          Dockline Warehouse Management System · Goods Inward Post
+          ${esc(brandPlain())} Warehouse Management System · Goods Inward Post
         </div>
         <div>
           Received & Verified By: __________________________

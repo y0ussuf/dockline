@@ -951,3 +951,6 @@ b.neg{color:var(--danger,#c0392b)}b.pos{color:var(--success)}
 .pick-twin-l{margin-top:3px; color:var(--ink-soft); font-size:.92rem;} .pick-twin-t{margin-top:6px; font-size:.95rem;}
 .mod-round{display:flex; align-items:center; gap:8px; margin:-2px 2px 14px; font-size:.86rem; color:var(--ink-soft);}
 .mod-round:empty{display:none;} .mod-round svg{width:16px; height:16px; color:var(--signal); flex-shrink:0;} .mod-round b{color:var(--ink);}
+/* the site name keeps the spaces typed in Settings (e.g. "Gold " + "Star") */
+.brand, .brand span{white-space:pre-wrap;}
+#brandCard .brand{font-family:var(--font-d); font-weight:700;} #brandCard .brand span{color:var(--signal);}

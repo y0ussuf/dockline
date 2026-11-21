@@ -473,7 +473,7 @@ async function exportOrderExcel(orderId){
   items.sort((a,b)=>importOrderCompare(a,b));
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Dockline';
+  wb.creator = brandPlain();
   wb.created = new Date();
   const ws = wb.addWorksheet('Order Report');
 
@@ -658,7 +658,7 @@ async function exportLowStockExcel(lowProducts, supMap){
   for(const g of sorted) g.products.sort((a,b)=>a.name.localeCompare(b.name));
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Dockline';
+  wb.creator = brandPlain();
   wb.created = new Date();
   const ws = wb.addWorksheet('Low Stock');
   const COLS = ['PRODUCT','AVAILABLE STOCK','UNIT','LOW STOCK LIMIT'];

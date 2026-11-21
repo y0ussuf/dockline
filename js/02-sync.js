@@ -249,6 +249,7 @@ async function syncNow(){
     await pushHistory(cfg);
     const got = await pullChanges(cfg);
     await loadFeatureFlags();
+    if(typeof loadBrand==='function') await loadBrand();   // the site name is shared: pick up a rename made on another device
     if(typeof refreshPerms==='function') await refreshPerms();
     await rawPut('settings', {id:'syncStatus', lastSyncedAt:new Date().toISOString(), ok:true, error:null});
     renderSyncIndicator('ok');

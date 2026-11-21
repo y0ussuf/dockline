@@ -9,7 +9,7 @@
 async function exportSplitterExcel(groups, sourceLabel, sourceCode){
   if(!(await ensureLibOrAlert('exceljs'))) return;
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Dockline';
+  wb.creator = brandPlain();
   wb.created = new Date();
   const ws = wb.addWorksheet('Order by warehouse');
   const showOrdered = groups.some(g=>g.items.some(i=>i.ordered!=null));
@@ -146,7 +146,7 @@ route('splitter', async ()=>{
     if(!fileRows){
       $('#main').innerHTML = `
         <div class="topbar"><h1>Order Splitter</h1></div>
-        <p class="subtle" style="margin-top:-10px; max-width:680px;">A standalone tool, separate from the rest of Dockline: upload an order sheet and it splits the items by which warehouse each product is stored in, ready to send straight to a supplier. It doesn't touch orders, stock, or anything else — nothing here is saved. Quantities are exported exactly as ordered; to check them against pack sizes use <a href="#/qcheck">Quantity Check</a>.</p>
+        <p class="subtle" style="margin-top:-10px; max-width:680px;">A standalone tool, separate from the rest of ${esc(brandPlain())}: upload an order sheet and it splits the items by which warehouse each product is stored in, ready to send straight to a supplier. It doesn't touch orders, stock, or anything else — nothing here is saved. Quantities are exported exactly as ordered; to check them against pack sizes use <a href="#/qcheck">Quantity Check</a>.</p>
         <div class="card" style="max-width:520px;">
           <div class="field"><label>Excel file (.xlsx)</label><input type="file" id="sp_file" accept=".xlsx,.xls"></div>
           <p class="subtle" id="sp_hint">Same format as a normal order upload — Sr. / Description / Quantity / Unit, with the vessel name and order code anywhere above the header row.</p>

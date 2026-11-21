@@ -467,7 +467,7 @@ async function insightsHome(){
       ${badDatesCardHtml(badOrders)}
       <div class="card empty-card">
         <div class="sec-h"><span class="sec-ic" data-ico="chart-column"></span><div class="section-title">Learn from past orders</div></div>
-        <p class="subtle">Import your old order sheets (the same Excel files you use to start an order) and Dockline will show how demand for each product and each vessel has been changing — the first step toward knowing what to buy and what not to.</p>
+        <p class="subtle">Import your old order sheets (the same Excel files you use to start an order) and ${esc(brandPlain())} will show how demand for each product and each vessel has been changing — the first step toward knowing what to buy and what not to.</p>
         <p class="subtle">What the vessel <b>asked for</b> is what counts, not what was picked. Past orders are kept separate: they never touch your stock, your live orders or reports.</p>
         <a href="#/insights/import" class="btn btn-signal">Import past orders</a>
         ${ignoredLive ? `<p class="subtle" style="margin-top:14px;">${ignoredLive} finished order${ignoredLive===1?' is':'s are'} hidden from Insights. <a href="#/insights/live">Choose which to include</a></p>` : ''}
